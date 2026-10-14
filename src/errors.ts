@@ -24,7 +24,6 @@ export type ErrorCode =
   | 'BAD_COLUMN_NAME'
   | 'TIMEOUT'
   // money_check_double_entry (SPEC.md §4.7).
-  | 'FORMAT_UNKNOWN'
   | 'PARSE_ERROR'
   | 'COLUMN_NOT_FOUND'
   | 'COLUMN_AMBIGUOUS'

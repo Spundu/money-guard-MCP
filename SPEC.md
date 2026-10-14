@@ -494,7 +494,7 @@ Those functions throw at the first problem. This tool returns **every** problem.
 | `columns` (required) | object (strict) | | Which column (CSV) or field (JSON) holds what (below). |
 | `amount_format` | `"minor_units"` or `"decimal"` | `"minor_units"` | `minor_units`: integers (`1234` = £12.34). `decimal`: `12.34`. |
 | `decimal_places` | integer 0-4 | 2 | Decimal places allowed in `decimal` format (0 for JPY, 3 for BHD). |
-| `format` | `"csv"`, `"json"` or `"jsonl"` | from the extension | Only needed for an unusual extension. |
+| `format` | `"csv"`, `"json"` or `"jsonl"` | from the extension (`.csv`/`.tsv` csv, `.json` json, `.jsonl`/`.ndjson` jsonl) | Overrides the extension, e.g. for a `.json` file that holds one object per line. |
 | `delimiter` | `","`, `";"`, `"\t"` or `"\|"` | `","` (`"\t"` for `.tsv`) | CSV only. |
 | `records_pointer` | string (a JSON Pointer) | `""` (the root must be an array) | JSON only: where the array of records is, e.g. `"/data/entries"`. |
 | `offset` | integer ≥ 0 | 0 | The first finding to return. |
@@ -540,9 +540,11 @@ Those functions throw at the first problem. This tool returns **every** problem.
 ### 4.4 Amounts (exact: no floating point anywhere)
 - **`minor_units`:** an integer.
   - Accepted: a JSON number with no fractional part, or a string `-?[0-9]+`.
-  - A fraction (`10.5`) is `FRACTIONAL_MINOR_UNITS`.
+  - A fraction (`10.5`) is `FRACTIONAL_MINOR_UNITS`. So is text with a decimal point even when the
+    fraction is zero (`12.00`): it usually means the column holds pounds, so use `decimal`.
 - **`decimal`:** a string or number of the form `-?[0-9]+(\.[0-9]+)?`.
-  - At most `decimal_places` digits after the point. More is `FRACTIONAL_MINOR_UNITS`.
+  - Digits past `decimal_places` must be zeros: with 2 places `12.340` is 1234, and `12.345` is
+    `FRACTIONAL_MINOR_UNITS`.
   - Converted to integer minor units with exact string arithmetic: `12.3` with 2 places is `1230`.
   - A JSON number is read through its shortest round-trip text. One that needs more than 15
     significant digits is `BAD_AMOUNT` ("write it as a string").
@@ -568,7 +570,9 @@ Those functions throw at the first problem. This tool returns **every** problem.
 | `BAD_ROW` | error | row | A JSON or JSONL record that is not an object, or a JSONL line that is not JSON. |
 
 A transaction with any row error is **not checked** for `UNBALANCED` or `TOO_FEW_LEGS`; its sum would
-be noise. It is counted in `transactions_not_checked`.
+be noise. It is counted in `transactions_not_checked`. A transaction with fewer than two non-zero legs is
+reported as `TOO_FEW_LEGS` only: its imbalance follows from that. A row without a transaction id is
+reported on its own (`MISSING_VALUE`, `transaction_id: null`).
 
 **Finding:**
 | Field | Type | Meaning |
@@ -578,7 +582,7 @@ be noise. It is counted in `transactions_not_checked`.
 | `lines` | integer[] | CSV and JSONL: the rows involved, at most 20. |
 | `pointers` | string[] | JSON: the records involved, at most 20. |
 | `more_rows` | integer | How many rows were left out of `lines`/`pointers`. |
-| `field` | string | For row findings: `amount`, `side`, `debit`, `credit`, `currency` or `transaction_id`. |
+| `field` | string | For row findings: `amount`, `side`, `debit`, `credit`, `currency`, `transaction_id`, or `debit/credit` when both are empty. |
 | `value` | string | The offending text, ≤ 40 characters. |
 | `nets` | `{ currency: string or null, net: string }[]` | For `UNBALANCED`. |
 | `message` | string | ≤ 120 characters, e.g. "GBP legs net to -1, not 0". |
@@ -602,7 +606,6 @@ Findings are sorted by their first location, then by code.
 ### 4.7 Errors (besides §2.5)
 | Code | When |
 |---|---|
-| `FORMAT_UNKNOWN` | The extension does not say the format and `format` is not given. |
 | `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields) or invalid JSON (`json` format). Gives the line and column. |
 | `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header. Lists up to 30 header names (each ≤ 40 characters) and the closest match. |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
@@ -635,7 +638,7 @@ T4,vat,-500,GBP
 Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", "amount": "amount_pence", "currency": "currency" } }`:
 ```json
 {
-  "summary": "Not balanced: 3 errors and 1 warning. 4 transactions: 2 balanced, 1 unbalanced, 1 not checked (unreadable amounts).",
+  "summary": "Not balanced: 3 errors and 1 warning. 4 transactions: 2 balanced, 1 unbalanced, 1 not checked (rows with unreadable values).",
   "file": "exports/journal.csv",
   "format": "csv",
   "file_sha256": "41d7…",
