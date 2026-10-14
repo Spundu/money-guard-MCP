@@ -23,4 +23,6 @@ Rules:
   `clip` (src/echo.ts).
 - HMAC keys come only from `MONEY_GUARD_AUDIT_KEYS`; they never appear in a result, an error or a log.
 - Every new test must fail without the code it covers (stash the source, run, pop).
+- The README shows real things: its example is `examples/demo.mjs`, and `test/readme.test.ts` checks
+  that the README shows that file, its output and the demo lint result exactly. Change them together.
 - Verify before done: `npm run typecheck && npm run lint && npm test && npm run build`.

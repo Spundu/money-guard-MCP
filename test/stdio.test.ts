@@ -2,24 +2,18 @@
 // stdio client, then a raw byte-level check that stdout carries nothing but protocol messages, even
 // when a migration raises NOTICEs and WARNINGs.
 
-import { execFileSync, spawn } from 'node:child_process';
-import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { FIXTURE_KEY_HEX, SHOP } from '../scripts/fixtures.mjs';
 import { tempDir, writeTree } from './support/tmp.js';
 
 const REPO = path.resolve(import.meta.dirname, '..');
+// What ships: test/support/build.ts builds it from the current source before the tests run.
 const ENTRY = path.join(REPO, 'dist', 'index.js');
-
-beforeAll(() => {
-  // The tests import src/; this one runs what ships, so build it first.
-  const tsc = createRequire(import.meta.url).resolve('typescript/bin/tsc');
-  execFileSync(process.execPath, [tsc, '-p', 'tsconfig.json'], { cwd: REPO, stdio: 'pipe' });
-}, 120_000);
 
 async function connect(era: 'modern' | 'legacy', env: Record<string, string>): Promise<Client> {
   const transport = new StdioClientTransport({ command: process.execPath, args: [ENTRY], env: { ...getDefaultEnvironment(), ...env }, stderr: 'pipe' });

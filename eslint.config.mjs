@@ -15,6 +15,11 @@ export default tseslint.config(
     languageOptions: { globals: { console: 'readonly' } },
   },
   {
+    // The README examples, written as a reader would write them, with Node's globals.
+    files: ['examples/**/*.mjs'],
+    languageOptions: { globals: { console: 'readonly', process: 'readonly', URL: 'readonly' } },
+  },
+  {
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'warn',
