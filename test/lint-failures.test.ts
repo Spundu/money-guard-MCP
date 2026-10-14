@@ -142,9 +142,14 @@ describe('money_lint_schema: platforms', () => {
     expect([listed.files_applied_count, listed.error_count]).toEqual([1, 1]);
   });
 
-  it('says that nothing was checked when every table comes from setup', async () => {
+  it('says that nothing was checked when every table comes from setup, also when a migration adds a partition to one', async () => {
     const r = await lint({ 'setup.sql': 'create table platform (fee double precision);', 'db/migrations/0001.sql': 'select 1;' }, { setup: 'setup.sql' });
-    expect(r.summary).toBe('No table was created or changed by the 1 migration file, so nothing was checked: the tables that exist come from setup or the preset.');
+    expect(r.summary).toBe('Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent).');
+    const p = await lint(
+      { 'setup.sql': 'create table sales (day date, total double precision) partition by range (day);', 'db/migrations/0001.sql': "create table sales_2024 partition of sales for values from ('2024-01-01') to ('2025-01-01');" },
+      { setup: 'setup.sql' },
+    );
+    expect(p.summary).toBe(r.summary);
   });
 
   it('has pgvector', async () => {

@@ -33,7 +33,7 @@ const MONEY = [
   // ... or that starts with a long money word (review round 2): Stripe's amount_due, total_tax and
   // balance_after, written in CamelCase without quotes.
   'amountdue', 'totaltax', 'balanceafter', 'amountpaid',
-  'minor_units', 'amount_minor_units', 'price_cents_usd',
+  'amount_minor_units', 'price_cents_usd',
   // Ledger and finance words (review round 2).
   'debit', 'credit', 'net', 'gross', 'commission', 'deposit', 'interest', 'principal', 'expense', 'income',
   'profit', 'earnings', 'budget', 'credit_limit', 'msrp', 'mrr', 'amount_pennies', 'amount_paise',
@@ -41,6 +41,11 @@ const MONEY = [
   'hourly_rate', 'pay_rate', 'day_rate', 'bill_rate', 'bonus', 'allowance', 'stipend', 'per_diem', 'shipping', 'tip',
   'rent', 'fare', 'ad_spend', 'premium', 'deductible', 'donation', 'penalty', 'pnl', 'cogs', 'totalpennies',
   'amountinpaise', 'amount_sats', 'amount_kobo',
+  // Review round 4: folded names split into known words; amounts "in" a currency; priced rates; what an
+  // order is worth; Indian and Australian price and tax words.
+  'platformfee', 'servicefee', 'latefee', 'salestax', 'hourlyrate', 'creditlimit', 'totaldiscount', 'linetotal',
+  'openingbalance', 'debit_in_account_currency', 'amount_in_company_currency', 'room_rate', 'overtime_rate',
+  'mileage_rate', 'rate_per_hour', 'mrp', 'gst', 'order_value', 'cart_value', 'amount_in_smallest_unit',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -60,6 +65,13 @@ const NOT_MONEY = [
   'total_calories', 'total_energy', 'gross_weight_lbs', 'net_weight_lbs', 'total_rating', 'net_tonnage',
   'fee_per_txn_bps', 'commission_per_sale_pct', 'os_minor', 'app_minor', 'exchange_rate', 'shipping_address',
   'payment_intent', 'balance_transaction', 'fare_class',
+  // Review round 4: folded names ending in a short non-money word; counts of nights, guests, users and
+  // units; measures; shares; ISO 4217's minor unit (a currency's exponent); a rate per second; values
+  // that are not money; look-alikes a folded split must not turn into money.
+  'totalqty', 'totalkwh', 'totalkg', 'totalpct', 'paymentday', 'priceid', 'total_nights', 'total_guests',
+  'total_area', 'revenue_share', 'minor_unit', 'minor_units', 'total_users', 'total_weeks', 'net_units', 'gross_area',
+  'total_usage', 'total_power', 'rate_per_second', 'metric_value', 'setting_value', 'value', 'price_unit',
+  'payment_method_currency', 'network', 'farewell', 'online', 'baseline', 'cashflow', 'creditscore', 'interestrate',
 ];
 
 describe('looksLikeMoney', () => {
@@ -71,8 +83,8 @@ describe('looksLikeMoney', () => {
     expect(looksLikeMoney(name)).toBe(false);
   });
 
-  it('has the table of about 200 names that SPEC.md §3.5 promises', () => {
-    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(200);
+  it('has the table of about 250 names that SPEC.md §3.5 promises', () => {
+    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(250);
   });
 });
 

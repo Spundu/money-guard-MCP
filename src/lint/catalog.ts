@@ -59,13 +59,14 @@ export const DETAIL_SQL = `
             JOIN pg_catalog.pg_constraint k ON k.conrelid = fa.attrelid AND k.contype = 'c' AND fa.attnum = ANY (k.conkey)
             WHERE fa.attname = a.attname AND NOT fa.attisdropped
               AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS checks,
-           EXISTS (SELECT 1 FROM pg_catalog.pg_attribute fa
-                   JOIN pg_catalog.pg_index i ON i.indrelid = fa.attrelid AND (i.indisunique OR i.indisexclusion)
-                     AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
-                   JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
-                     AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = fa.attrelid AND p.refobjsubid = fa.attnum
-                   WHERE fa.attname = a.attname AND NOT fa.attisdropped
-                     AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS in_index_expr
+           (SELECT pg_catalog.array_agg(pg_catalog.concat_ws(' AND ', pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid)))
+            FROM pg_catalog.pg_attribute fa
+            JOIN pg_catalog.pg_index i ON i.indrelid = fa.attrelid AND (i.indisunique OR i.indisexclusion)
+              AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
+            JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
+              AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = fa.attrelid AND p.refobjsubid = fa.attnum
+            WHERE fa.attname = a.attname AND NOT fa.attisdropped
+              AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS index_exprs
     ${USER_TABLES}
       AND NOT c.relispartition AND a.attislocal
       AND NOT EXISTS (
@@ -94,7 +95,7 @@ export const DETAIL_SQL = `
     ORDER BY ch.start, ch.depth DESC
   )
   SELECT cols.col, cols.schema_name, cols.table_name, cols.column_name, cols.declared, cols.generated, cols.inherited,
-         cols.defaults, cols.checks, cols.in_index_expr,
+         cols.defaults, cols.checks, cols.index_exprs,
          base.via_array, base.domain_name, base.base_name, base.base_schema, base.base_kind
   FROM cols JOIN base ON base.start = cols.typid
   ORDER BY cols.schema_name, cols.table_name, cols.column_name`;
@@ -113,8 +114,8 @@ export interface DetailRow {
   defaults: string[] | null;
   /** Each CHECK constraint on the column (in its table, partitions and children) as written back; null for one that also uses another column. Null when there are none. */
   checks: Array<string | null> | null;
-  /** Whether a unique or exclusion index with an expression or a WHERE clause depends on the column, in its table or a partition or child. */
-  in_index_expr: boolean;
+  /** The expressions and WHERE clauses, as written back, of each unique or exclusion index that has either and uses the column, in its table, partitions and children; null when there are none. */
+  index_exprs: string[] | null;
   via_array: boolean;
   domain_name: string | null;
   base_name: string;
@@ -203,13 +204,21 @@ export function isZeroOrNullDefault(expr: string): boolean {
 }
 
 /**
- * Whether a CHECK expression, as PostgreSQL writes it back, can hold no amount: no number but zero
- * ("(total >= (0)::double precision)", "IS NOT NULL") and no function call, whose result could be one.
- * Converting the column keeps such a check right; "amount <= 1000.00" or "amount <= max_total()" would
- * turn into a cap a hundred times lower.
+ * Whether a CHECK expression or an index's condition, as PostgreSQL writes it back, can hold no amount:
+ * no number but zero ("(total >= (0)::double precision)", "IS NOT NULL") and no function call, whose
+ * result could be one. Converting the column keeps such a condition right; "amount <= 1000.00" or
+ * "amount <= max_total()" would turn into a cap a hundred times lower. Digits in a name ("q1_revenue")
+ * or a type's size ("numeric(10,2)") are not amounts, and neither are the places of a two-decimal
+ * guard: "total = round(total, 2)" and "scale(total) <= 2" hold for pence as they did for pounds.
  */
 export function holdsNoAmount(expr: string): boolean {
-  return !/[1-9]/.test(expr) && !/[\p{L}\p{N}_"]\(/u.test(expr);
+  const rest = expr
+    .replace(/"(?:[^"]|"")*"/g, 'x') // a quoted name
+    .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?(?:\[\])?/g, '') // a cast and its type's size
+    .replace(/\b(?:round|trunc)\(((?:[^()]|\([^()]*\))*),\s*\d+\)/g, '($1)') // round(x, 2): places
+    .replace(/\bscale\(((?:[^()]|\([^()]*\))*)\)\s*(?:<=|<|=)\s*\d+/g, '($1)') // scale(x) <= 2: places
+    .replace(/\b[a-z_][a-z0-9_$]*\b(?!\s*\()/gi, 'x'); // a bare name, which may hold digits
+  return !/[1-9]/.test(rest) && !/[\p{L}\p{N}_"]\(/u.test(rest);
 }
 
 /**
@@ -242,16 +251,18 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   const head = `ALTER TABLE ${quoteIdent(row.schema_name, reserved)}.${quoteIdent(row.table_name, reserved)} ALTER COLUMN ${c} TYPE bigint`;
   const minor = namesMinorUnits(row.column_name);
   const checkHoldsAmount = (row.checks ?? []).some((expr) => expr === null || !holdsNoAmount(expr));
-  const keepsOldUnit = checkHoldsAmount || row.in_index_expr || (row.defaults ?? []).some((expr) => !isZeroOrNullDefault(expr));
+  const indexHoldsAmount = (row.index_exprs ?? []).some((expr) => !holdsNoAmount(expr));
+  const keepsOldUnit = checkHoldsAmount || indexHoldsAmount || (row.defaults ?? []).some((expr) => !isZeroOrNullDefault(expr));
   const times100 = (using: string) => (keepsOldUnit ? null : `${head} USING ${using};`);
   const convert = minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
   switch (code) {
     case 'SMALLINT_MONEY':
       return `${head};`;
     case 'MONEY_TYPE':
-      // The money type holds major units with 2 decimals. A default written as a money value (0::money)
-      // cannot be cast to bigint, so the ALTER would fail: that one needs writing by hand.
-      if ((row.defaults ?? []).some((expr) => /::money$/.test(expr))) return null;
+      // The money type holds major units with 2 decimals. A default, a CHECK or an index condition that
+      // holds a money value (0::money) cannot work on a bigint, so the ALTER would fail: that one needs
+      // writing by hand.
+      if ([...(row.defaults ?? []), ...(row.checks ?? []), ...(row.index_exprs ?? [])].some((expr) => expr !== null && /::money\b/.test(expr))) return null;
       return times100(`(${c}::numeric * 100)::bigint`);
     case 'FLOAT_MONEY':
       return convert;

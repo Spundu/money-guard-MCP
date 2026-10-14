@@ -174,7 +174,17 @@ describe('money_check_double_entry: the rules', () => {
 
   it('names a currency column that is not mapped, since every row then counts as one currency', () => {
     const r = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence' } });
-    expect(r.summary).toBe('Balanced: the 1 transaction nets to zero in whole minor units. The file has a column "Currency" that is not mapped: map it as currency to check each currency on its own (now every row counts as one).');
+    expect(r.summary).toBe('Balanced: the 1 transaction nets to zero in whole minor units. "Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).');
+    // Payment processors' names for it, and a currency beside a nested amount (review round 4).
+    const columns = { transaction_id: 't', amount: 'a' };
+    for (const header of ['Gross Currency', 'Currency ISO Code', 'iso_currency_code', 'presentment_currency', 'currencyCode', 'ccy']) {
+      const csv = check('.csv', `t,a,${header}\nT1,10000,EUR\nT1,-10000,USD\n`, { columns });
+      expect(csv.summary, header).toMatch(new RegExp(` "${header}" looks like a currency and is not mapped`));
+    }
+    const nested = check('.jsonl', '{"t":"T1","amount":{"value":100,"currency":"EUR"}}\n{"t":"T1","amount":{"value":-100,"currency":"USD"}}\n', { columns: { transaction_id: 't', amount: '/amount/value' } });
+    expect(nested.summary).toMatch(/ "\/amount\/currency" looks like a currency and is not mapped/);
+    // A rate or an amount named after a currency is not one.
+    expect(check('.csv', 't,a,currency_rate\nT1,1,1.2\nT1,-1,1.2\n', { columns }).summary).not.toMatch(/looks like a currency/);
     const mapped = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'Currency' } });
     expect(mapped.findings[0]?.code).toBe('UNBALANCED');
   });

@@ -1,9 +1,8 @@
-// money_lint_schema (SPEC.md §3): the documented example, and how each column is judged and fixed.
-// test/lint-files.test.ts covers which files run, links, failures, platforms and safety.
+// money_lint_schema (SPEC.md §3): the documented example, and how each column is judged. fix_sql is in
+// lint-fix.test.ts; lint-files.test.ts and lint-failures.test.ts cover which files run, links,
+// failures, platforms and safety.
 import { createHash } from 'node:crypto';
-import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
-import { NULL_FIX_NOTE, holdsNoAmount, isZeroOrNullDefault } from '../src/lint/catalog.js';
 import { SPEC_FILES, codeOf, failure, lastDir, lint } from './support/lint.js';
 
 describe('money_lint_schema: the SPEC.md §3.10 example', () => {
@@ -143,125 +142,19 @@ describe('money_lint_schema: judging columns', () => {
 
   it('says so when no column looks like money, pointing at the float columns', async () => {
     const r = await lint({ 'db/migrations/0001.sql': 'create table places (lat double precision, lng double precision);' });
-    expect(r.summary).toBe('No money columns found in 1 table; 2 float columns in other_float_columns, in case one holds money. 1 migration file applied.');
+    expect(r.summary).toBe('No money columns found in 1 table. 1 migration file applied. 2 float columns (other_float_columns): check that none holds money.');
+  });
+
+  it('does not say no money column was found when one was ignored, or held as text', async () => {
+    const ignored = await lint({ 'db/migrations/0001.sql': 'create table o (total double precision);' }, { ignore_columns: ['o.total'] });
+    expect(ignored.summary).toBe('No money columns left to check in 1 table. 1 migration file applied. 1 ignored.');
+    const text = await lint({ 'db/migrations/0001.sql': 'create table o (total text);' });
+    expect(text.summary).toBe('No money columns of a number type found in 1 table. 1 migration file applied. 1 money-named column of text, JSON or another type was not checked.');
   });
 
   it('refuses a badly written column list', async () => {
     expect(await codeOf(SPEC_FILES, { money_columns: ['orders'] })).toBe('BAD_COLUMN_NAME');
     expect(await codeOf(SPEC_FILES, { ignore_columns: ['a.b.c.d'] })).toBe('BAD_COLUMN_NAME');
-  });
-
-  it('gives a fix_sql that converts the stored amounts correctly, and none where the unit needs a decision', async () => {
-    const r = await lint({
-      'db/migrations/0001.sql':
-        'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, ' +
-        'fee numeric(10,2), total numeric, amount numeric(12,0), unit_price numeric(12,4), amount_pence numeric(10,1), refund money, charge smallint, deposit numeric(10,-2));',
-    });
-    const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
-    // Finer than a penny (a tenth of one, in pence): choose the unit first.
-    expect([fix.unit_price, fix.amount_pence]).toEqual([null, null]);
-    expect(r.fixes.NUMERIC_MONEY).toContain(NULL_FIX_NOTE.trim());
-    expect(r.fixes.FLOAT_MONEY).not.toContain('Where fix_sql is null');
-    // Run each fix on real rows: pounds become pence, minor units and whole numbers stay as they are.
-    const db = await PGlite.create();
-    try {
-      await db.exec(
-        'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, fee numeric(10,2), total numeric, amount numeric(12,0), refund money, charge smallint, deposit numeric(10,-2));' +
-          "insert into p values (19.99, 1999, 1999, 12.34, 0.1, 1500, '-5.50', 550, 1500);",
-      );
-      const columns = ['price', 'amount_minor_units', 'price_cents_usd', 'fee', 'total', 'amount', 'refund', 'charge', 'deposit'];
-      for (const column of columns) await db.exec(fix[column] ?? 'fix_sql missing');
-      const row = (await db.query<Record<string, string>>(`select ${columns.map((c) => `${c}::text`).join(', ')} from p`)).rows[0];
-      // deposit is numeric(10,-2): whole hundreds, kept as they are.
-      expect(row).toEqual({ price: '1999', amount_minor_units: '1999', price_cents_usd: '1999', fee: '1234', total: '10', amount: '1500', refund: '-550', charge: '550', deposit: '1500' });
-    } finally {
-      await db.close();
-    }
-  });
-
-  it('gives no fix_sql that would leave a default, a CHECK constraint or a unique index condition in pounds', async () => {
-    // ALTER COLUMN ... TYPE converts stored rows with USING, but a default of 2.50 would become 3 pence,
-    // CHECK (amount_cap <= 1000.00) a cap of £10, and a unique index's condition would admit other rows,
-    // with the next lint seeing nothing wrong.
-    const r = await lint({
-      'db/migrations/0001.sql':
-        'create table o (id int, delivery_fee numeric(10,2) not null default 2.50, amount_cap numeric(10,2) check (amount_cap <= 1000.00), ' +
-        "subtotal double precision, total double precision default 0, discount numeric(10,2) default null, refund money default 0, price money default '1.50', refund_typed money default 0::money, " +
-        'fee_pence double precision default 2.5);\n' +
-        'create unique index big_orders on o (id) where subtotal > 100;\n',
-    });
-    const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
-    // refund_typed: PostgreSQL cannot cast a money default to bigint, so that ALTER would fail.
-    expect([fix.delivery_fee, fix.amount_cap, fix.subtotal, fix.price, fix.refund_typed]).toEqual([null, null, null, null, null]);
-    expect([fix.total, fix.discount, fix.refund, fix.fee_pence]).toEqual([
-      'ALTER TABLE public.o ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
-      'ALTER TABLE public.o ALTER COLUMN discount TYPE bigint USING round(discount * 100)::bigint;',
-      'ALTER TABLE public.o ALTER COLUMN refund TYPE bigint USING (refund::numeric * 100)::bigint;',
-      'ALTER TABLE public.o ALTER COLUMN fee_pence TYPE bigint USING round(fee_pence)::bigint;', // minor units already: the default keeps its meaning
-    ]);
-    for (const code of ['FLOAT_MONEY', 'NUMERIC_MONEY', 'MONEY_TYPE'] as const) expect(r.fixes[code]).toContain('a default, CHECK constraint or unique index condition that may hold amounts in the old unit');
-  });
-
-  it('offers fix_sql beside a CHECK that holds no amount and an ordinary index with a condition, and keeps them right', async () => {
-    const schema =
-      "create function max_total() returns numeric language sql immutable as 'select 1000';\n" +
-      'create table t (id int, status text, total double precision check (total >= 0), fee numeric(10,2) check (fee is not null and fee <> 0), ' +
-      'amount_cap numeric(10,2) check (amount_cap <= max_total()), net numeric(10,2), subtotal numeric(10,2), check (net >= subtotal));\n' +
-      "create index t_open on t (total) where status = 'open';\n";
-    const r = await lint({ 'db/migrations/0001.sql': schema });
-    const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
-    expect([fix.amount_cap, fix.net, fix.subtotal]).toEqual([null, null, null]); // a function's result; a CHECK across two columns
-    expect([fix.total, fix.fee]).toEqual([
-      'ALTER TABLE public.t ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
-      'ALTER TABLE public.t ALTER COLUMN fee TYPE bigint USING round(fee * 100)::bigint;',
-    ]);
-    const db = await PGlite.create();
-    try {
-      await db.exec(`${schema}insert into t (status, total, fee) values ('open', 19.99, 2.5);`);
-      await db.exec(`${fix.total}\n${fix.fee}`);
-      expect((await db.query('select total::text, fee::text from t')).rows).toEqual([{ total: '1999', fee: '250' }]);
-      await expect(db.exec('insert into t (total, fee) values (-1, 1);')).rejects.toThrow(/violates check constraint/); // the checks still hold
-    } finally {
-      await db.close();
-    }
-  });
-
-  it('weighs the defaults, CHECKs and unique indexes of partitions and inheritance children too', async () => {
-    // An ALTER of the parent changes the children's column; their own defaults and CHECKs stay in pounds.
-    const r = await lint({
-      'db/migrations/0001.sql': [
-        'create table payments (id int, region text, amount numeric(10,2)) partition by list (region);',
-        "create table payments_eu partition of payments (amount default 9.99) for values in ('eu');",
-        'create table fees (amount numeric(10,2));',
-        'create table child_fees (note text, check (amount < 50.00)) inherits (fees);',
-        'create table charges (amount numeric(10,2));',
-        'create table charges_old () inherits (charges);',
-        'alter table charges_old alter column amount set default 0;',
-        'alter table charges_old add check (amount >= 0);',
-        // A child that declares the column again has it as its own too: reported, but changed only on the parent.
-        'create table rents (amount numeric(10,2));',
-        'create table rents_old (amount numeric(10,2)) inherits (rents);',
-      ].join('\n'),
-    });
-    expect(r.findings.map((f) => [f.table, f.fix_sql])).toEqual([
-      ['public.charges', 'ALTER TABLE public.charges ALTER COLUMN amount TYPE bigint USING round(amount * 100)::bigint;'], // a zero default and a check of zero: fine
-      ['public.fees', null],
-      ['public.payments', null],
-      ['public.rents', 'ALTER TABLE public.rents ALTER COLUMN amount TYPE bigint USING round(amount * 100)::bigint;'],
-      ['public.rents_old', null],
-    ]);
-  });
-
-  it('tells a CHECK that holds no amount from one that may', () => {
-    for (const safe of ['(total >= (0)::double precision)', '((fee IS NOT NULL) AND (fee <> (0)::numeric))', '(amount > 0)']) expect(holdsNoAmount(safe), safe).toBe(true);
-    for (const amount of ['((fee > (0)::numeric) AND (fee <= 99.99))', '(cap <= max_total())', '(amount <= (1000)::numeric)', '(round(amount) = amount)']) {
-      expect(holdsNoAmount(amount), amount).toBe(false);
-    }
-  });
-
-  it('knows a zero or NULL default, however PostgreSQL writes it back, and nothing else', () => {
-    for (const zero of ['0', '0.00', '0.0', "'0'::numeric", '(0)::numeric', "'0'::double precision", 'NULL::numeric', '-0.00']) expect(isZeroOrNullDefault(zero), zero).toBe(true);
-    for (const other of ['2.50', "'1.50'::money", '(1 - 1)', '0.01', "'0x'::text", 'now()', "''"]) expect(isZeroOrNullDefault(other), other).toBe(false);
   });
 
   it('checks and counts a column of the money type whatever its name', async () => {
@@ -346,44 +239,5 @@ describe('money_lint_schema: judging columns', () => {
     const shown = r.findings[0]?.introduced_in ?? '';
     expect([...shown].length).toBeLessThanOrEqual(400); // PATH_MAX (SPEC.md §2.4)
     expect(shown).toMatch(/^p\d+\/db\/migrations\/(?:\\u00(?:01|85))+…(?:\\u00(?:01|85))+\/0001\.sql$/);
-  });
-
-  it('writes fix_sql itself, quoting every name: a migration that redefines quote_ident cannot change it', async () => {
-    const r = await lint({
-      'db/migrations/0001.sql':
-        'create table "user" (total double precision, "q""price" double precision);\n' +
-        "create or replace function pg_catalog.quote_ident(text) returns text language sql as $$ select 'x; DROP TABLE users; --' $$;\n",
-    });
-    expect(r.findings.map((f) => f.fix_sql)).toEqual([
-      'ALTER TABLE public."user" ALTER COLUMN "q""price" TYPE bigint USING round("q""price" * 100)::bigint;',
-      'ALTER TABLE public."user" ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
-    ]);
-    // The statements run as written: a keyword and a double quote are quoted as PostgreSQL quotes them.
-    const db = await PGlite.create();
-    try {
-      await db.exec('create table "user" (total double precision, "q""price" double precision); insert into "user" values (1.5, 2.25);');
-      for (const f of r.findings) await db.exec(f.fix_sql ?? 'fix_sql missing');
-      expect((await db.query('select total::text, "q""price"::text as q from "user"')).rows).toEqual([{ total: '150', q: '225' }]);
-    } finally {
-      await db.close();
-    }
-  });
-
-  it('quotes every keyword quote_ident quotes, not only the fully reserved ones', async () => {
-    // "left" may name a function or a type but not a column: written bare, the fix would not run.
-    const table = 'create table t ("left" double precision, "between" double precision);';
-    const r = await lint({ 'db/migrations/0001.sql': table }, { money_columns: ['t.left', 't.between'] });
-    const fixes = r.findings.map((f) => f.fix_sql ?? 'fix_sql missing');
-    expect(fixes).toEqual([
-      'ALTER TABLE public.t ALTER COLUMN "between" TYPE bigint USING round("between" * 100)::bigint;',
-      'ALTER TABLE public.t ALTER COLUMN "left" TYPE bigint USING round("left" * 100)::bigint;',
-    ]);
-    const db = await PGlite.create();
-    try {
-      await db.exec(table);
-      for (const fix of fixes) await db.exec(fix);
-    } finally {
-      await db.close();
-    }
   });
 });

@@ -2,9 +2,11 @@
 // money word and its LAST word is not a word that turns it into something else (an id, a date, a
 // count, a rate): "amount_due" is money, "amount_currency" and "price_id" are not. Words after "per"
 // only say what the amount is for ("price_per_month" is money), unless the name ends in a ratio
-// ("fee_per_txn_bps"); a pay rate is money ("hourly_rate"); and a one-word name that PostgreSQL
-// folded to lowercase ("TotalAmount" became "totalamount", "AmountDue" "amountdue") is money when it
-// ends in a long money word, or starts with one and does not end in a long non-money word.
+// ("fee_per_txn_bps"); a pay rate or a priced rate is money ("hourly_rate", "rate_per_hour"); so is
+// what an order or a cart is worth ("order_value"). A one-word name that PostgreSQL folded to
+// lowercase ("TotalAmount" became "totalamount") is split into known words first ("total", "amount"),
+// so it gets the answer its snake_case form gets; one that cannot be split is money when it ends in a
+// long money word, or starts with one and does not end in a long non-money word.
 
 const MONEY_WORDS: ReadonlySet<string> = new Set([
   'amount', 'amounts', 'amt', 'balance', 'balances', 'charge', 'charges', 'cost', 'costs', 'discount',
@@ -15,7 +17,7 @@ const MONEY_WORDS: ReadonlySet<string> = new Set([
   // ledgers and finance
   'debit', 'debits', 'credit', 'credits', 'net', 'gross', 'commission', 'commissions', 'deposit',
   'deposits', 'interest', 'principal', 'expense', 'expenses', 'income', 'profit', 'profits', 'earnings',
-  'budget', 'budgets', 'msrp', 'mrr', 'arr',
+  'budget', 'budgets', 'msrp', 'mrr', 'arr', 'mrp', 'gst', 'cgst', 'sgst', 'igst',
   // pay, commerce and insurance
   'bonus', 'bonuses', 'allowance', 'allowances', 'stipend', 'stipends', 'diem', 'rent', 'rents', 'fare',
   'fares', 'spend', 'premium', 'premiums', 'deductible', 'deductibles', 'donation', 'donations', 'penalty',
@@ -31,15 +33,18 @@ const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   'mode', 'reason', 'note', 'notes', 'description', 'desc', 'label', 'name', 'title', 'text', 'url', 'hash',
   'flag', 'enabled', 'version', 'address', 'carrier', 'class', 'intent', 'transaction', 'transactions',
   // dates and times
-  'date', 'at', 'on', 'time', 'ts', 'timestamp', 'year', 'month', 'week', 'day', 'days', 'hour', 'hours',
-  'minutes', 'seconds', 'ms',
-  // counts and order
-  'count', 'number', 'num', 'no', 'qty', 'quantity', 'items', 'attempts', 'retries', 'rank', 'tier', 'level',
-  'band', 'position', 'priority', 'index', 'seq', 'sequence', 'step', 'stage',
+  'date', 'at', 'on', 'time', 'ts', 'timestamp', 'year', 'years', 'month', 'months', 'week', 'weeks', 'day',
+  'days', 'night', 'nights', 'hour', 'hours', 'minutes', 'seconds', 'ms',
+  // counts and order: of things, and of people
+  'count', 'number', 'num', 'no', 'qty', 'quantity', 'items', 'attempts', 'retries', 'rank', 'ranks', 'tier',
+  'tiers', 'level', 'levels', 'band', 'position', 'priority', 'index', 'seq', 'sequence', 'step', 'steps',
+  'stage', 'stages', 'unit', 'units', 'orders', 'rooms', 'seats', 'shares', 'guests', 'users', 'members',
+  'customers', 'people', 'persons', 'visits', 'views', 'clicks', 'impressions', 'sessions',
   // rates and measures
-  'percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'weight', 'score',
-  'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
-  'elasticity', 'calories', 'kcal', 'energy', 'lb', 'lbs', 'rating', 'ratings', 'tonnage',
+  'percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'weight', 'score', 'share',
+  'split', 'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
+  'elasticity', 'calories', 'kcal', 'energy', 'lb', 'lbs', 'rating', 'ratings', 'tonnage', 'area', 'size',
+  'length', 'width', 'height', 'depth', 'power', 'usage', 'capacity', 'speed', 'temperature',
   // groupings and terms
   'category', 'categories', 'list', 'lists', 'center', 'centre', 'terms', 'period',
 ]);
@@ -51,10 +56,33 @@ const MINOR_UNIT_WORDS: ReadonlySet<string> = new Set([
 ]);
 
 /** Last words that make a name a ratio even after "per": "fee_per_txn_bps", "commission_per_sale_pct". */
-const RATIO_WORDS: ReadonlySet<string> = new Set(['percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'score']);
+const RATIO_WORDS: ReadonlySet<string> = new Set(['percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'score', 'share', 'split']);
 
-/** Words before "rate" that make it a pay rate, which is money: "hourly_rate", "day_rate". */
-const PAY_RATE_WORDS: ReadonlySet<string> = new Set(['hourly', 'daily', 'nightly', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour']);
+/** Words before "rate" that make it the price of a stay, an hour or a mile, which is money: "hourly_rate", "room_rate". */
+const PAY_RATE_WORDS: ReadonlySet<string> = new Set([
+  'hourly', 'daily', 'nightly', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour', 'room', 'overtime', 'mileage', 'rental', 'hire',
+]);
+
+/** What "rate_per_..." can be priced by: "rate_per_hour" is a price; "rate_per_second" stays a rate. */
+const PRICED_UNITS: ReadonlySet<string> = new Set(['hour', 'day', 'night', 'week', 'month', 'mile', 'km', 'unit', 'item', 'kg', 'lb', 'person', 'guest', 'visit', 'session']);
+
+/** Words before "value" that make it what something is worth: "order_value", "cart_value". */
+const VALUE_WORDS: ReadonlySet<string> = new Set([
+  'order', 'orders', 'cart', 'basket', 'invoice', 'contract', 'deal', 'transaction', 'purchase', 'sale', 'sales', 'voucher', 'coupon',
+  'gift', 'card', 'item', 'lifetime', 'portfolio', 'inventory', 'stock', 'trade', 'loan', 'asset', 'assets', 'claim', 'policy',
+]);
+
+/**
+ * Words that often stand beside a money word in a column name, known only to split a folded name
+ * ("platformfee" into platform and fee). Words that would also split ordinary words into money words
+ * ("work": network; "well": farewell) are kept out.
+ */
+const OTHER_WORDS: ReadonlySet<string> = new Set([
+  'platform', 'service', 'late', 'sales', 'sale', 'base', 'retail', 'wholesale', 'delivery', 'handling', 'processing', 'booking',
+  'cancellation', 'setup', 'transfer', 'exchange', 'monthly', 'annual', 'yearly', 'initial', 'final', 'original', 'max', 'min',
+  'limit', 'due', 'paid', 'owed', 'outstanding', 'remaining', 'pending', 'grand', 'line', 'item', 'order', 'invoice', 'account',
+  'opening', 'closing', 'current', 'available', 'card', 'cash', 'per', 'in', 'value', 'after', 'before', 'smallest',
+]);
 
 /**
  * Money words long enough to find at the end of a folded one-word name. The short ones (fee, tax, vat,
@@ -77,6 +105,28 @@ function withoutUnit(word: string): string {
   return unit === undefined ? word : word.slice(0, -unit.length);
 }
 
+/** Every word the rule knows, to split a folded name by. */
+const VOCABULARY: ReadonlySet<string> = new Set([
+  ...MONEY_WORDS, ...NOT_MONEY_LAST_WORDS, ...MINOR_UNIT_WORDS, ...RATIO_WORDS, ...PAY_RATE_WORDS, ...PRICED_UNITS, ...VALUE_WORDS, ...OTHER_WORDS,
+]);
+
+/**
+ * A folded name split into known words, in as few as can be ("totaldiscount": total + discount, not
+ * total + dis + count); undefined when it cannot be split entirely into known words.
+ */
+function split(word: string): string[] | undefined {
+  const best: Array<string[] | undefined> = [[]]; // best[i]: the fewest words that make up word[0, i)
+  for (let end = 1; end <= word.length; end += 1) {
+    for (let start = 0; start < end; start += 1) {
+      const head = best[start];
+      if (head === undefined || !VOCABULARY.has(word.slice(start, end))) continue;
+      const current = best[end];
+      if (current === undefined || head.length + 1 < current.length) best[end] = [...head, word.slice(start, end)];
+    }
+  }
+  return best[word.length];
+}
+
 /**
  * The lowercase words of a column name: split at "_", "-", spaces and dots, at camelCase boundaries
  * ("amountMinor", "GBPAmount") and between letters and digits ("price2").
@@ -94,18 +144,34 @@ export function words(name: string): string[] {
 
 export function looksLikeMoney(name: string): boolean {
   const all = words(name);
-  if (RATIO_WORDS.has(all.at(-1) ?? '') && all.includes('per')) return false; // "fee_per_txn_bps": a ratio
-  if (all.at(-1) === 'rate' && PAY_RATE_WORDS.has(all.at(-2) ?? '')) return true; // "hourly_rate": a price of time
+  const only = all.length === 1 ? all[0] : undefined;
+  const parts = only === undefined ? undefined : split(only); // "totaldiscount": total, discount
+  return judgeWords(parts !== undefined && parts.length > 1 ? parts : all);
+}
+
+function judgeWords(all: readonly string[]): boolean {
+  const end = all.at(-1) ?? '';
+  // "debit_in_account_currency": the debit is the column; the rest says which currency it is in.
+  const inAt = all.indexOf('in');
+  if ((end === 'currency' || end === 'ccy') && inAt > 0) return judgeWords(all.slice(0, inAt));
+  if (RATIO_WORDS.has(end) && all.includes('per')) return false; // "fee_per_txn_bps": a ratio
+  if (end === 'rate' && PAY_RATE_WORDS.has(all.at(-2) ?? '')) return true; // "hourly_rate": a price of time
   const per = all.indexOf('per');
+  if (per === 1 && all[0] === 'rate' && PRICED_UNITS.has(all[2] ?? '')) return true; // "rate_per_hour": a price
   const ws = per > 0 ? all.slice(0, per) : all; // "price_per_month": the price is the column, the month what it is for
   const last = ws.at(-1);
-  if (last === undefined || NOT_MONEY_LAST_WORDS.has(last)) return false;
-  // "minor" says the unit of an amount ("amount_minor", "minor_units"); without one it is a version part
-  // ("version_minor", "os_minor"), and alone a version number.
+  if (last === undefined) return false;
+  // "amount_minor_units", "amount_in_smallest_unit": the unit of an amount, not a count of units.
+  const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest'].includes(ws.at(-2) ?? '');
+  if (NOT_MONEY_LAST_WORDS.has(last) && !unitOfAmount) return false;
+  if ((last === 'value' || last === 'values') && VALUE_WORDS.has(ws.at(-2) ?? '')) return true; // "order_value"
+  // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
+  // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
+  // exponent), it is not an amount.
   const moneyWords = ws.filter((w) => MONEY_WORDS.has(w));
-  const onlyMinor = moneyWords.every((w) => w === 'minor') && !ws.includes('unit') && !ws.includes('units');
-  if (moneyWords.length > 0 && !onlyMinor) return true;
+  if (moneyWords.some((w) => w !== 'minor')) return true;
   if (ws.length !== 1 || last === 'minor') return false;
+  // A folded name the known words cannot split: the long money words at either end.
   const word = withoutUnit(last);
   if (FOLDED_MONEY_ENDINGS.some((ending) => word.endsWith(ending))) return true;
   return FOLDED_MONEY_ENDINGS.some((start) => word.startsWith(start)) && !FOLDED_NOT_MONEY_ENDINGS.some((ending) => word.endsWith(ending));

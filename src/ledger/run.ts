@@ -135,8 +135,12 @@ function poundsHint(format: AmountFormat, amounts: { decimalPoint: number; plain
 /** A column that looks like a currency but is not mapped: every row then counts as one currency. */
 function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   if (columns.currency !== undefined) return '';
-  const name = names.find((n) => /^(?:currency(?:[_ -]?code)?|ccy|cur)$/i.test(n.trim()));
-  return name === undefined ? '' : ` The file has a column "${clip(name)}" that is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
+  // "Currency", "Gross Currency", "Currency ISO Code", "iso_currency_code", "presentment_currency",
+  // "currencyCode", "ccy", "/amount/currency": a currency word last, or before "code" or "ISO code".
+  const looksLikeCurrency = (name: string) =>
+    /(?:^|[^a-z])(?:currency|ccy|cur)(?:[ _-]?(?:iso[ _-]?)?code)?$/i.test(name.trim().replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
+  const name = names.find(looksLikeCurrency);
+  return name === undefined ? '' : ` "${clip(name)}" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }
 
 function summarise(

@@ -443,29 +443,46 @@ The name looks like money when **any word is a money word** and **the last word 
 word**, with these refinements:
 - **"per":** only the words before "per" count, because the rest says what the amount is for:
   `price_per_month` and `cost_per_hour` are money; `tax_rate_per_year` is not. A name that still
-  ends in a ratio word (percent, percentage, pct, rate, ratio, bps, factor, multiplier, score) is not
-  money: `fee_per_txn_bps`, `commission_per_sale_pct`.
-- **Pay rates:** "rate" after hourly, daily, nightly, weekly, pay, day, bill, billing, labor or labour
-  is a price of time, so money: `hourly_rate`, `day_rate`. Other rates (`tax_rate`,
-  `exchange_rate`) are not.
+  ends in a ratio word (percent, percentage, pct, rate, ratio, bps, factor, multiplier, score, share,
+  split) is not money: `fee_per_txn_bps`, `commission_per_sale_pct`.
+- **Rates that are prices:** "rate" after hourly, daily, nightly, weekly, pay, day, bill, billing,
+  labor, labour, room, overtime, mileage, rental or hire is the price of an hour, a stay or a mile, so
+  money: `hourly_rate`, `room_rate`; so is "rate per" an hour, day, night, week, month, mile, km,
+  unit, item, kg, lb, person, guest, visit or session (`rate_per_hour`). Other rates (`tax_rate`,
+  `exchange_rate`, `rate_per_second`) are not.
+- **"value"** after order, orders, cart, basket, invoice, contract, deal, transaction, purchase, sale,
+  sales, voucher, coupon, gift, card, item, lifetime, portfolio, inventory, stock, trade, loan, asset,
+  assets, claim or policy is what that is worth, so money (`order_value`). Other values are not.
+- **An amount "in" a currency:** a name that ends in currency or ccy after "in" is judged by the words
+  before "in": `debit_in_account_currency` is money; `amount_currency` and `payment_method_currency`
+  are not.
+- **Units:** unit and units are non-money last words (`net_units`, `price_unit`), except after minor
+  or smallest, where they name the unit of an amount (`amount_minor_units`, `amount_in_smallest_unit`).
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
-  `totalamount`. A one-word name also counts when it ends in a long money word (amount, balance, cost,
-  payment, payout, price, refund, revenue, salary, subtotal, surcharge, total), maybe followed by a
-  minor-unit word (below, except the short cent, sat and wei): `totalamount`, `unitprice`,
-  `amountminor`, `totalpennies`. It counts too when it starts with one of those words and does not
-  end in a non-money word of four letters or more: `amountdue`, `totaltax`, `balanceafter`, but not
-  `totalcount` or `pricelist`. The short money words (fee, tax, vat, cent, charge) are left out,
-  because they also end coffee, syntax, percent and discharge.
-- **"minor"** says the unit of an amount: it counts beside another money word (`amount_minor`) or
-  beside unit or units (`minor_units`). Without one it is a version part (`version_minor`,
-  `os_minor`), and alone a version number.
+  `totalamount`. A one-word name is first split into the words the rule knows (the lists below, and
+  words that often stand beside a money word: platform, service, late, sales, sale, base, retail,
+  wholesale, delivery, handling, processing, booking, cancellation, setup, transfer, exchange, monthly,
+  annual, yearly, initial, final, original, max, min, limit, due, paid, owed, outstanding, remaining,
+  pending, grand, line, item, order, invoice, account, opening, closing, current, available, card,
+  cash, per, in, value, after, before, smallest), in as few words as it can be: `totaldiscount` is
+  total + discount, `platformfee` platform + fee, `totalqty` total + qty. The split name gets the
+  answer its snake_case form gets. A name that cannot be split into known words still counts when it
+  ends in a long money word (amount, balance, cost, payment, payout, price, refund, revenue, salary,
+  subtotal, surcharge, total), maybe followed by a minor-unit word (below, except the short cent, sat
+  and wei), or starts with one and does not end in a non-money word of four letters or more. Words
+  that would also split ordinary words into money words ("work": network) are not in the list, so
+  coffee, syntax, network and discharge stay what they are.
+- **"minor"** says the unit of an amount beside another money word (`amount_minor`,
+  `amount_minor_units`). Beside a version it is a version part (`version_minor`, `os_minor`); alone,
+  or with unit (`minor_unit`, ISO 4217's currency exponent), it is not an amount.
 
 - **Money words:** amount, amounts, amt, balance, balances, charge, charges, cost, costs, discount,
   discounts, fee, fees, money, payment, payments, payout, payouts, pence, penny, pennies, cent, cents,
   paise, minor, price, prices, refund, refunds, revenue, salary, salaries, subtotal, surcharge, tax,
   taxes, total, totals, vat, wage, wages, gbp, usd, eur; the ledger and finance words debit, debits,
   credit, credits, net, gross, commission, commissions, deposit, deposits, interest, principal,
-  expense, expenses, income, profit, profits, earnings, budget, budgets, msrp, mrr, arr; the pay,
+  expense, expenses, income, profit, profits, earnings, budget, budgets, msrp, mrr, arr, mrp, gst,
+  cgst, sgst, igst; the pay,
   commerce and insurance words bonus, bonuses, allowance, allowances, stipend, stipends, diem, rent,
   rents, fare, fares, spend, premium, premiums, deductible, deductibles, donation, donations, penalty,
   penalties, pnl, cogs, shipping, tip, tips; and the minor units of other currencies paisa, kobo, sats,
@@ -474,25 +491,30 @@ word**, with these refinements:
   - identifiers and labels: id, ids, uuid, key, ref, code, currency, ccy, type, kind, status, state,
     method, mode, reason, note, notes, description, desc, label, name, title, text, url, hash, flag,
     enabled, version, address, carrier, class, intent, transaction, transactions
-  - dates and times: date, at, on, time, ts, timestamp, year, month, week, day, days, hour, hours,
-    minutes, seconds, ms
-  - counts and order: count, number, num, no, qty, quantity, items, attempts, retries, rank, tier, level,
-    band, position, priority, index, seq, sequence, step, stage
+  - dates and times: date, at, on, time, ts, timestamp, year, years, month, months, week, weeks, day,
+    days, night, nights, hour, hours, minutes, seconds, ms
+  - counts and order: count, number, num, no, qty, quantity, items, attempts, retries, rank, ranks,
+    tier, tiers, level, levels, band, position, priority, index, seq, sequence, step, steps, stage,
+    stages, unit, units, orders, rooms, seats, shares, guests, users, members, customers, people,
+    persons, visits, views, clicks, impressions, sessions
   - rates and measures: percent, percentage, pct, rate, ratio, bps, factor, multiplier, weight, score,
-    distance, duration, km, kg, kwh, volume, points, votes, miles, ml, margin, elasticity, calories,
-    kcal, energy, lb, lbs, rating, ratings, tonnage
+    share, split, distance, duration, km, kg, kwh, volume, points, votes, miles, ml, margin, elasticity,
+    calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
+    power, usage, capacity, speed, temperature
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
 - **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, paisa, kobo,
   sat, sats, satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport,
   lamports, minor; and "smallest" beside unit or units (`amount_in_smallest_unit`).
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
   `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`,
-  `amountdue`, `debit`, `credit_limit`, `net`, `hourly_rate`, `shipping`.
+  `amountdue`, `platformfee`, `totaldiscount`, `debit`, `credit_limit`, `net`, `hourly_rate`,
+  `rate_per_hour`, `order_value`, `debit_in_account_currency`, `shipping`.
 - **Examples that are not:** `stripe_price_id`, `amount_currency`, `price_updated_at`, `total_count`,
   `tax_rate`, `fee_bps`, `total_items`, `payment_method`, `minor`, `version_minor`, `total_kwh`,
-  `costcenter`, `gross_margin`, `credit_score`, `fee_per_txn_bps`, `payment_intent`.
+  `costcenter`, `gross_margin`, `credit_score`, `fee_per_txn_bps`, `payment_intent`, `totalqty`,
+  `total_nights`, `revenue_share`, `minor_unit`, `rate_per_second`.
 
-The lists are tested against a table of about 200 column names, most of them real (Stripe, Shopify,
+The lists are tested against a table of about 250 column names, most of them real (Stripe, Shopify,
 Supabase templates, ledgers, payroll and the author's own apps), with look-alikes the rule must not
 take for money (coffee, syntax, discharge), in `test/names.test.ts`. A name rule cannot know every
 schema: a real money column it misses that is a float still shows in `other_float_columns`, which every
@@ -537,11 +559,16 @@ conversion follows the name and the declared scale; the test suite runs each kin
   something else may hold amounts of the column in the old unit, in its table or in any partition or
   inheritance child (an ALTER of the parent changes their column too): a default other than zero or
   `NULL`; a CHECK constraint that holds a number other than zero, calls a function or also uses
-  another column; or a unique or exclusion index with an expression or a `WHERE` clause (it decides
+  another column; or a unique or exclusion index whose expression or `WHERE` clause does (it decides
   which rows may exist together). `ALTER COLUMN ... TYPE` converts the stored rows with `USING`, but
   leaves those as written: a default of 2.50 becomes 3 pence, and `CHECK (amount <= 1000.00)` a cap of
-  £10. The next lint could not see that, so such a fix is not offered. A CHECK such as `amount >= 0`,
-  and an ordinary index with a condition (it only decides which rows it speeds up), are fine.
+  £10. The next lint could not see that, so such a fix is not offered. Fine, and the fix is offered: a
+  CHECK such as `amount >= 0`; digits in a name (`q1_revenue >= 0`) or a type's size
+  (`0::numeric(10,2)`); a two-decimal guard (`total = round(total, 2)`, `scale(total) <= 2`), which
+  holds for pence as it did for pounds; a unique index whose condition holds no amount (`WHERE
+  deleted_at IS NULL`); and an ordinary index with a condition (it only decides which rows it speeds
+  up). A `money` column whose default, CHECK or index condition holds a money value (`0::money`) gets
+  `null`: such a value cannot work on a `bigint`, so the ALTER would fail.
 
 When any finding of a code has a null `fix_sql`, that code's text in `fixes` ends with a sentence
 that says why. If a fix fails, for example because a view depends on the column, the next lint run
@@ -550,7 +577,7 @@ shows it: the tool runs the new migration too.
 ### 3.7 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "No table was created or changed by the 1 migration file, so nothing was checked: ...". When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." "N money columns in M tables" counts only the tables that hold a money column. |
+| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found). "N money columns in M tables" counts only the tables that hold a money column. |
 | `migrations` | string | The path as given, normalised. |
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
@@ -778,8 +805,10 @@ Those functions throw at the first problem. This tool returns **every** problem.
     says so ("12.00 has a decimal point; minor units are whole numbers without one"). When at least as
     many amounts are plain decimals such as `12.34` as are whole numbers (zeros aside; a JSON `12.00`
     counts, though it is read as 12; `£12.00` and `1,234.50` do not, as `decimal` refuses them too),
-    the summary ends: "Most amounts have a decimal point: if the file holds pounds or dollars (12.34),
-    call again with amount_format "decimal"." With amount_format `decimal` it never does.
+    the summary adds: "Most amounts have a decimal point: if the file holds pounds or dollars (12.34),
+    call again with amount_format "decimal"." With amount_format `decimal` it never does. A file of
+    mostly whole pounds with a few decimals gets no hint: it looks the same as a pence file with a few
+    wrong rows, and read as pounds that file would balance, hiding its errors.
   - Text that is not plain digits (`1e3`, `+5`, `(5)`, `1,000`) is `BAD_AMOUNT`, "is not written in plain
     digits, such as 1234"; a JSON object or array is "an object" or "an array".
 - **`decimal`:** a string or number of the form `-?[0-9]+(\.[0-9]+)?`.
@@ -806,7 +835,7 @@ Those functions throw at the first problem. This tool returns **every** problem.
 | `UNBALANCED` | error | transaction | In some currency the legs do not net to zero. `nets` lists each currency that is off. |
 | `TOO_FEW_LEGS` | error | transaction | Fewer than two non-zero legs. |
 | `ZERO_LEG` | warning | row | A leg of exactly 0. It moves nothing, and integer-pence-ledger refuses one. |
-| `MISSING_VALUE` | error | row | A mapped value is missing or empty (`field` says which). |
+| `MISSING_VALUE` | error | row | A mapped value is missing or empty, or is something that cannot be an id, a side or a currency: an object, an array, true or false (`field` says which; the message says what it is). |
 | `BAD_AMOUNT` | error | row | Not a number in the chosen format (`value` shown). |
 | `FRACTIONAL_MINOR_UNITS` | error | row | A fraction of a minor unit, or more decimal places than allowed. |
 | `AMOUNT_TOO_LARGE` | error | row | Outside ±(2^53 − 1) minor units. |
@@ -838,7 +867,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (a currency word last, or before "code" or "ISO code": `Currency`, `Gross Currency`, `iso_currency_code`, `currencyCode`; in JSON also a field beside a mapped JSON Pointer, such as `/amount/currency`): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -1090,7 +1119,7 @@ The tests are in `test/` (Vitest, about 550); each file starts with a comment sa
   anchors from an earlier run (grown, emptied, replaced, and broken at the entry right after the
   anchor, honestly or after a replacement); and a scan of the library's code that fails if it can
   return a reason this server does not map.
-- **Every error code** and every finding code is produced by a test. **Names:** about 200 column names,
+- **Every error code** and every finding code is produced by a test. **Names:** about 250 column names,
   most of them real, with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (the file-link cases skip
   on Windows without Developer Mode, and the test run says so); secret files, also behind a link in a

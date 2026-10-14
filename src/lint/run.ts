@@ -221,18 +221,19 @@ function summarise(c: Counts): string {
     // Nothing was checked: say so, as the ledger tool does for an empty file. A file that holds its own
     // down step in a format money-guard does not know would have dropped what it created.
     const ran = c.files === 1 ? 'the 1 migration file' : `the ${c.files} migration files`;
-    if (c.setupTables) return `No table was created or changed by ${ran}, so nothing was checked: the tables that exist come from setup or the preset.`;
+    if (c.setupTables) return `Nothing was checked: every table that exists after ${ran} comes from setup or the preset (a partition counts as part of its parent).`;
     return `No tables exist after ${c.files === 1 ? 'the 1 migration file' : `the ${c.files} migration files`}, so nothing was checked. If a file also holds its down step, that step dropped what the file created: pass files, or lint a copy without the down steps.`;
   }
   // Float columns the name rule did not take for money are where money it misses would be: say so
   // wherever the summary would otherwise read as all clear.
-  const floatsNote = c.floats > 0 ? ` ${plural(c.floats, 'other float column')} (other_float_columns): check that none holds money.` : '';
+  const floatsNote = c.floats > 0 ? ` ${plural(c.floats, c.money > 0 ? 'other float column' : 'float column')} (other_float_columns): check that none holds money.` : '';
   if (c.problems > 0) {
     return `${plural(c.problems, 'problem')} in ${plural(c.problems, 'money column')} (${plural(c.errors, 'error')}, ${plural(c.warnings, 'warning')}). ${applied}${ignoredNote}${otherNote}${floatsNote}`;
   }
   if (c.money > 0) return `No problems: ${plural(c.money, 'money column')} in ${plural(c.moneyTables, 'table')} ${c.money === 1 ? 'uses a safe type' : 'use safe types'}. ${applied}${ignoredNote}${otherNote}${floatsNote}`;
-  const floats = c.floats > 0 ? `; ${plural(c.floats, 'float column')} in other_float_columns, in case one holds money` : '';
-  return `No money columns found in ${plural(c.tables, 'table')}${floats}. ${applied}${ignoredNote}${otherNote}`;
+  // Ignored columns and money-named columns of other types were money columns too: say what was not found.
+  const which = c.moneyOther > 0 ? 'No money columns of a number type' : 'No money columns';
+  return `${which} ${c.ignored > 0 ? 'left to check' : 'found'} in ${plural(c.tables, 'table')}. ${applied}${ignoredNote}${otherNote}${floatsNote}`;
 }
 
 /** Money-named columns of these types hold amounts the lint does not check: text, JSON, a composite, an extension's type (citext). Not booleans, dates or ids. */

@@ -196,6 +196,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof JsonNumber);
 }
 
+/**
+ * The field names of a JSON record, for hints: its own fields, and those beside each field a JSON
+ * Pointer maps (with "/amount/value" mapped, "/amount/currency" is named too).
+ */
+function namesOf(record: Record<string, unknown> | undefined, columns: ColumnMap): string[] {
+  if (record === undefined) return [];
+  const names = Object.keys(record);
+  for (const [, name] of mappedEntries(columns)) {
+    if (!name.startsWith('/') || name.lastIndexOf('/') === 0) continue;
+    const parent = name.slice(0, name.lastIndexOf('/'));
+    const node = resolvePointer(record, parent);
+    if (isRecord(node)) names.push(...Object.keys(node).map((key) => `${parent}/${key.replaceAll('~', '~0').replaceAll('/', '~1')}`));
+  }
+  return names;
+}
+
 function valuesOf(record: Record<string, unknown>, columns: ColumnMap): Partial<Record<MappedField, unknown>> {
   const values: Partial<Record<MappedField, unknown>> = {};
   for (const [field, name] of mappedEntries(columns)) {
@@ -262,7 +278,7 @@ function readJson(text: string, columns: ColumnMap, recordsPointer: string): Led
   });
   const first = records.find(isRecord);
   requireMappedFields(rows, columns, first);
-  return { rows, names: first === undefined ? [] : Object.keys(first) };
+  return { rows, names: namesOf(first, columns) };
 }
 
 function readJsonl(text: string, columns: ColumnMap): Ledger {
@@ -288,7 +304,7 @@ function readJsonl(text: string, columns: ColumnMap): Ledger {
     rows.push(isRecord(value) ? { ...base, values: valuesOf(value, columns) } : { ...base, values: {}, bad: 'the line is not a JSON object' });
   }
   requireMappedFields(rows, columns, first);
-  return { rows, names: first === undefined ? [] : Object.keys(first) };
+  return { rows, names: namesOf(first, columns) };
 }
 
 /** The rows of a ledger export, and the column or field names it has (the CSV header, or the first record's fields). */
