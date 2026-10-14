@@ -1,0 +1,69 @@
+{
+  "manifest_version": "0.3",
+  "name": "money-guard-mcp",
+  "display_name": "money-guard",
+  "version": "0.1.0",
+  "description": "Checks how a project handles money: float money columns in SQL migrations, unbalanced ledger exports and tampered audit logs. Read-only and offline.",
+  "long_description": "money-guard lets Claude check a project that handles money. It runs the project's SQL migrations in a throwaway in-memory PostgreSQL and reports money columns stored as floats; it proves that every transaction in a ledger export (CSV, JSON or JSONL) nets to zero in whole minor units; and it verifies audit logs written with sealed-audit-chain. It only reads files inside the project folder you choose. It never edits files, never connects to a database and never uses the network.",
+  "author": {
+    "name": "Davide Pistone Celestino",
+    "url": "https://github.com/Spundu"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Spundu/money-guard-mcp.git"
+  },
+  "homepage": "https://github.com/Spundu/money-guard-mcp",
+  "documentation": "https://github.com/Spundu/money-guard-mcp#readme",
+  "support": "https://github.com/Spundu/money-guard-mcp/issues",
+  "server": {
+    "type": "node",
+    "entry_point": "node_modules/money-guard-mcp/dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/node_modules/money-guard-mcp/dist/index.js"],
+      "env": {
+        "MONEY_GUARD_ROOT": "${user_config.project_folder}",
+        "MONEY_GUARD_AUDIT_KEYS": "${user_config.audit_keys}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "money_lint_schema",
+      "description": "Runs the project's SQL migrations in a throwaway PostgreSQL and reports money columns stored as float, numeric, smallint or the money type."
+    },
+    {
+      "name": "money_check_double_entry",
+      "description": "Checks that every transaction in a ledger export (CSV, JSON or JSONL) nets to zero in whole minor units."
+    },
+    {
+      "name": "audit_verify_chain",
+      "description": "Proves an audit log written with sealed-audit-chain was not edited, reordered, forged or cut short."
+    }
+  ],
+  "user_config": {
+    "project_folder": {
+      "type": "directory",
+      "title": "Project folder",
+      "description": "The project the tools may read: its migrations, ledger exports and audit logs. Nothing outside it is read.",
+      "required": true
+    },
+    "audit_keys": {
+      "type": "string",
+      "title": "Audit log keys (optional)",
+      "description": "Only for verifying audit logs: the HMAC keys as id=hex pairs separated by commas, such as k1=<64 hex digits>. Leave it blank otherwise.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    }
+  },
+  "keywords": ["money", "postgres", "migrations", "double-entry", "ledger", "audit-log"],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=22.12"
+    }
+  }
+}

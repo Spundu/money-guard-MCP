@@ -85,8 +85,12 @@ internet and never touches a real database.
   { "mcpServers": { "money-guard": { "type": "stdio", "command": "npx", "args": ["-y", "money-guard-mcp"],
       "env": { "MONEY_GUARD_AUDIT_KEYS": "${MONEY_GUARD_AUDIT_KEYS:-}" } } } }
   ```
-- Claude Desktop (MCPB): `user_config` gives a folder picker for the root and a field for the
-  keys, marked `sensitive`.
+- **Claude Desktop (MCPB):** `mcpb/manifest.json` (manifest version 0.3) gives a folder picker for the
+  root (`project_folder`, required) and a field for the keys (`audit_keys`, `sensitive`). The keys
+  field has `default: ""`, so a blank field reaches the server as an empty value, not as a placeholder.
+  `npm run bundle` builds `money-guard-mcp-<version>.mcpb` from the packed npm tarball, with
+  production dependencies only. It then unpacks the bundle and starts it as its manifest says (§7).
+  Anthropic's directory no longer accepts MCPB submissions, so the bundle ships on GitHub Releases.
 
 ### 2.3 Which files the tools may read
 Every path argument:
@@ -211,7 +215,8 @@ Shared error codes:
 | `sealed-audit-chain` | Tool 3, and `parseJson` for tool 2. Comes from npm once published; until then `github:Spundu/audit-chain#5fd1fec` | MIT (same author) |
 | `csv-parse` ^7 | RFC 4180 CSV with line numbers | MIT |
 
-Dev only: `@modelcontextprotocol/client` (tests), typescript, vitest, eslint, typescript-eslint, and the
+Dev only: `@modelcontextprotocol/client` (tests), typescript, vitest, eslint, typescript-eslint, the
+mcpb CLI (`@anthropic-ai/mcpb` 2.1.2 exactly, which builds the Claude Desktop bundle), and the
 Inspector (pinned in CI through `npx`). The agent evaluation script uses `@anthropic-ai/sdk`.
 
 ### 2.9 Stability promise
@@ -856,6 +861,10 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
   - spawned-stdio tests in both eras;
   - an Inspector CLI job in CI: `tools/list --strict` reports nothing, one `tools/call` per tool, and a
     refused path exits 5.
+- **Claude Desktop bundle:** a CI job builds it (`mcpb validate` must pass), unpacks it into an empty
+  folder, holds it to production files only, starts it from its manifest and calls each tool, with
+  the keys set and with them left blank. A unit test keeps the manifest in step with `package.json`
+  (name, version, Node.js range, entry point) and with the tool list.
 - **Input edge cases:** every optional parameter sent as `null` behaves as if omitted. Unknown
   parameters are refused.
 - **Determinism:** the same input twice gives identical bytes. **Size:** worst-case inputs (63-character

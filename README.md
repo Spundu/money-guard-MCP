@@ -194,6 +194,12 @@ project `.mcp.json`. The file holds only a reference to the variable, so you can
 
 Never paste a key into the chat. The server does not need it there, and it never shows a key.
 
+**Claude Desktop:** in the clone, `npm run bundle` builds `money-guard-mcp-0.1.0.mcpb` and tests it.
+Open that file with Claude Desktop: double-click it, or use Settings → Extensions → Advanced settings
+→ Install Extension. Choose the project folder. Add audit keys only if you verify audit logs; Claude
+Desktop keeps them in the system keychain. The bundle passes the official `mcpb` validator, and CI
+starts it the way its manifest says, but it has not yet been tried in Claude Desktop itself.
+
 **Other MCP clients:** run `node /path/to/money-guard-mcp/dist/index.js` over stdio, with
 `MONEY_GUARD_ROOT` set to the project folder.
 
@@ -280,6 +286,8 @@ Never paste a key into the chat. The server does not need it there, and it never
 - CI also runs the official [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 2.11.0
   in both protocol eras: `--strict` finds no schema-portability problem.
 - CI installs the packed npm tarball into an empty project and starts it over stdio.
+- CI builds the Claude Desktop bundle, unpacks it into an empty folder, starts it from its manifest and
+  calls each tool, with the audit keys set and with them left blank.
 
 ## Development
 

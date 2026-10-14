@@ -23,6 +23,7 @@ Thumbs.db
 # logs
 npm-debug.log*
 
-# npm pack output
+# npm pack and bundle output
 *.tgz
 pack.json
+*.mcpb
