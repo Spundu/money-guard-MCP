@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { clip } from '../echo.js';
+import { clip, clipPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { formatMib, formatSize, isInside, isSensitive, resolveInRoot, toPosix, type Root } from '../paths.js';
 
@@ -184,6 +184,7 @@ function readScript(real: string, rel: string, size: number, budget: { total: nu
 
 export function collectSources(root: Root, args: { migrations: string; files?: readonly string[] | undefined; setup?: string | undefined }): Sources {
   const target = resolveInRoot(root, args.migrations, { kind: 'either', extensions: ['.sql'] });
+  const folder = clipPath(target.rel); // as messages show it
   const hash = createHash('sha256');
   const budget = { total: 0 };
 
@@ -201,7 +202,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     chosen = [target];
   } else if (args.files !== undefined) {
     chosen = args.files.map((entry) => {
-      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `"${clip(entry, 120)}" is not a file in "${target.rel}".`, `Every entry of files is a path relative to "${target.rel}". Check the spelling.`);
+      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `"${clip(entry, 120)}" is not a file in "${folder}".`, `Every entry of files is a path relative to "${folder}". Check the spelling.`);
       const lexical = path.resolve(target.real, entry);
       if (!isInside(target.real, lexical)) throw notInFolder;
       try {
@@ -219,10 +220,10 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     walk(root, target.real, target.real, found, new Set(), seen);
     if (found.length === 0 && seen.down > 0) {
       const files = seen.down === 1 ? 'Its 1 .sql file is a down step' : `Its ${seen.down} .sql files are down steps`;
-      throw new ToolError('NO_SQL_FILES', `"${target.rel}" holds no migrations to run. ${files} (down.sql, *.down.sql, *.undo.sql, *.rollback.sql), which money-guard leaves out.`, 'Point migrations at the folder of up migrations, or pass files with the ones to run.');
+      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run. ${files} (down.sql, *.down.sql, *.undo.sql, *.rollback.sql), which money-guard leaves out.`, 'Point migrations at the folder of up migrations, or pass files with the ones to run.');
     }
     if (found.length === 0) {
-      throw new ToolError('NO_SQL_FILES', `"${target.rel}" holds no .sql files. ${describeOtherFiles(target.real)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
+      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no .sql files. ${describeOtherFiles(target.real)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
     }
     found.sort(naturalCompare);
     chosen = found.map((rel) => {

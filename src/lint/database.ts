@@ -8,7 +8,7 @@ import { ToolError } from '../errors.js';
 import { DETAIL_SQL, SNAPSHOT_SQL, type DetailRow } from './catalog.js';
 
 export interface Script {
-  /** What messages call it: a path relative to the root, or "the Supabase preset". */
+  /** What messages call it, as they may show it: a path relative to the root (through clipPath), or "the Supabase preset". */
   name: string;
   text: string;
   phase: 'setup' | 'migration';
@@ -29,13 +29,15 @@ export interface DatabaseOutcome {
   detail: DetailRow[];
   /** For each column (table oid:column number), the index of the first migration after which it has had its current type; negative when setup made it. */
   since: Map<string, number>;
+  /** PostgreSQL's keywords that a name must be quoted for, read before any script ran. */
+  reserved: Set<string>;
 }
 
 /** How long the check after a file may take before the database counts as stuck. */
 const SANITY_MS = 5000;
 
 type Message =
-  | { type: 'ready'; version: string; available: string[] }
+  | { type: 'ready'; version: string; available: string[]; reserved: string[] }
   | { type: 'running'; step: number }
   | { type: 'executed'; step: number }
   | { type: 'snapshot'; step: number; rows: Array<[string, string]> }
@@ -129,6 +131,7 @@ export function runScripts(
     const since = new Map<string, { ty: string; since: number }>();
     let postgres = '';
     let available: string[] = [];
+    let reserved: string[] = [];
     let running = -1;
     let finished = false;
     let sanity: NodeJS.Timeout | undefined;
@@ -164,6 +167,7 @@ export function runScripts(
         case 'ready':
           postgres = versionOf(m.version);
           available = m.available;
+          reserved = m.reserved;
           break;
         case 'running':
           running = m.step;
@@ -195,7 +199,7 @@ export function runScripts(
           finish({ error: stopped(m.error.message) });
           break;
         case 'done':
-          finish({ ok: { postgres, detail: m.detail, since: new Map([...since].map(([col, v]) => [col, v.since])) } });
+          finish({ ok: { postgres, detail: m.detail, since: new Map([...since].map(([col, v]) => [col, v.since])), reserved: new Set(reserved) } });
           break;
       }
     });

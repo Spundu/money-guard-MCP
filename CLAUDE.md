@@ -21,8 +21,14 @@ Rules:
 - Every path argument goes through `resolveInRoot` (src/paths.ts). Every tool failure is a `ToolError`
   with a code from SPEC.md.
 - Results are deterministic and at most 20,000 characters (src/budget.ts). A value echoed from a data
-  file goes through `clip`; a name or path that must stay whole goes through `escapeUnsafe`
-  (src/echo.ts). The server escapes every outgoing string once more, but the tools must not rely on it.
+  file goes through `clip`; a database name goes through `escapeUnsafe`; a path goes through `clipPath`
+  (cut in the middle past 400 characters), in results and in error messages alike (src/echo.ts). The
+  server escapes every outgoing string once more, but the tools must not rely on it.
+- SQL that money-guard writes (`fix_sql`) is built in TypeScript from catalog names, never by SQL
+  functions in the lint database: the migrations control that database.
+- In tests, write a hidden character as `\u{200b}` (braces): tool inputs turn the four-digit form into
+  the raw character, which `test/hygiene.test.ts` then refuses. Check results with `RAW_HIDDEN`
+  (test/support/hidden.ts), not with the code under test.
 - HMAC keys come only from `MONEY_GUARD_AUDIT_KEYS`; they never appear in a result, an error or a log.
 - Every new test must fail without the code it covers (stash the source, run, pop).
 - The README shows real things: its example is `examples/demo.mjs`, and `test/readme.test.ts` checks

@@ -222,4 +222,40 @@ describe('money_lint_schema: judging columns', () => {
     expect([r.findings_truncated, r.error_count]).toEqual([true, 60]);
     expect(r.findings[0]?.column).toBe(`price_00_${'x'.repeat(54)}`);
   });
+
+  it('keeps one finding within the budget however deep its folder: a long path is cut in the middle', async () => {
+    // Folder names of characters that each show as a six-character escape: U+0085 on Windows, which
+    // refuses C0 controls in names; U+0001 elsewhere, one byte each, within the path limits of Linux
+    // (4,096 bytes) and macOS (1,024). On Linux and Windows the whole path shows as over 20,000 characters.
+    const char = process.platform === 'win32' ? '\u{85}' : '\u{1}';
+    const depth = process.platform === 'win32' ? 30 : process.platform === 'darwin' ? 4 : 18;
+    const folders = Array.from({ length: depth }, () => char.repeat(200)).join('/');
+    const r = await lint({ [`db/migrations/${folders}/0001.sql`]: 'create table t (total double precision);' });
+    expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
+    expect(r.findings.length).toBe(1);
+    const shown = r.findings[0]?.introduced_in ?? '';
+    expect([...shown].length).toBeLessThanOrEqual(400); // PATH_MAX (SPEC.md §2.4)
+    expect(shown).toMatch(/^p\d+\/db\/migrations\/(?:\\u00(?:01|85))+…(?:\\u00(?:01|85))+\/0001\.sql$/);
+  });
+
+  it('writes fix_sql from the names alone: a migration that redefines quote_ident cannot change it', async () => {
+    const r = await lint({
+      'db/migrations/0001.sql':
+        'create table "user" (total double precision, "q""price" double precision);\n' +
+        "create or replace function pg_catalog.quote_ident(text) returns text language sql as $$ select 'x; DROP TABLE users; --' $$;\n",
+    });
+    expect(r.findings.map((f) => f.fix_sql)).toEqual([
+      'ALTER TABLE public."user" ALTER COLUMN "q""price" TYPE bigint USING round("q""price" * 100)::bigint;',
+      'ALTER TABLE public."user" ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
+    ]);
+    // The statements run as written: a keyword and a double quote are quoted as PostgreSQL quotes them.
+    const db = await PGlite.create();
+    try {
+      await db.exec('create table "user" (total double precision, "q""price" double precision); insert into "user" values (1.5, 2.25);');
+      for (const f of r.findings) await db.exec(f.fix_sql ?? 'fix_sql missing');
+      expect((await db.query('select total::text, "q""price"::text as q from "user"')).rows).toEqual([{ total: '150', q: '225' }]);
+    } finally {
+      await db.close();
+    }
+  });
 });

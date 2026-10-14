@@ -26,14 +26,14 @@ function distance(a: string, b: string): number {
  * (within 2 edits, or a third of the name's length); otherwise undefined. Ties go to the first.
  */
 export function closest(name: string, candidates: Iterable<string>): string | undefined {
-  const target = name.toLowerCase().slice(0, COMPARE_MAX);
+  const target = name.slice(0, COMPARE_MAX).toLowerCase();
   const limit = Math.max(2, Math.floor(target.length / 3));
   let best: string | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
   let seen = 0;
   for (const candidate of candidates) {
     if (seen++ >= CANDIDATES_MAX) break;
-    const d = distance(candidate.toLowerCase().slice(0, COMPARE_MAX), target);
+    const d = distance(candidate.slice(0, COMPARE_MAX).toLowerCase(), target);
     if (d < bestDistance) {
       best = candidate;
       bestDistance = d;

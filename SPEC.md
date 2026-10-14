@@ -154,14 +154,21 @@ already read the files).
   a transaction id, a currency) is cut at 40 characters, `…` marking the cut. A few things are cut at
   other lengths: a log entry's `writer_key_id` at 64, a library reason at 120, a finding's `message` at
   120, and a Postgres error message at 300 (it can quote the migration's own text, such as a path the
-  migration names). Names that must stay whole for the model to act on them are not cut: database
-  table, column and type names (PostgreSQL caps a name at 63 bytes) and paths inside the project.
-  A result never holds a whole line from a file, and never any key material.
-- **Hidden characters are always escaped.** Control characters, line and paragraph separators and the
-  bidirectional overrides and isolates (the "Trojan Source" characters, which make text read
-  differently from what it is) appear as `\uXXXX` in every string a client receives: each tool escapes
-  what it copies, and the server escapes every result and error once more on the way out. Names that
-  hold such characters get no `fix_sql` (§3.6).
+  migration names). Database table, column and type names stay whole, so the model can act on them
+  (PostgreSQL caps a name at 63 bytes). A path inside the project stays whole up to 400 characters; a
+  longer one (folders can nest deep) is cut in the middle with `…`, keeping its first folders and its
+  file name, so one finding or one error always fits the budget. A result never holds a whole line
+  from a file, and never any key material.
+- **Hidden characters are always escaped,** by Unicode category: controls (Cc); format characters (Cf:
+  zero-width characters, direction marks, the bidirectional overrides and isolates of "Trojan Source",
+  which make text read differently from what it is, the byte order mark, and the TAG characters, which
+  can spell out text a person cannot see but a model reads); line and paragraph separators (Zl, Zp);
+  lone surrogates (Cs); and the other default-ignorable code points (variation selectors, the Hangul
+  and Mongolian fillers). Each appears as `\uXXXX`, or `\u{XXXXX}` above U+FFFF, in every result and
+  error money-guard writes: each tool escapes what it copies, and the server escapes every result and
+  error once more on the way out. (Text the SDK writes itself, such as an input validation error that
+  quotes the model's own argument, is not money-guard's.) Names that hold such characters get no
+  `fix_sql` (§3.6).
 - **Deterministic.** The same files and the same arguments give byte-identical results. Findings are
   sorted; there are no timestamps, durations or random ids. The tests rely on this, and so will the
   planned agent evaluation, which will cache results.
@@ -424,9 +431,12 @@ added with `money_columns` or left out with `ignore_columns`.
 checked in v1 (too many false positives); such money-named columns are not counted in
 `money_columns_checked`, and the summary says how many there are.
 
-Each finding carries a `fix_sql`: a starting point for the new migration, with identifiers quoted by
-Postgres's own `quote_ident`. Its conversion follows the name and the declared scale; the test suite
-runs each kind on stored rows.
+Each finding carries a `fix_sql`: a starting point for the new migration. Its names are quoted as
+PostgreSQL's `quote_ident` quotes them (bare when that reads back as the same name, otherwise in
+double quotes). money-guard quotes them itself, from the names in the catalog and from the list of
+keywords PostgreSQL gives before any migration runs: the migrations control the lint database, and
+one that redefined `quote_ident` could otherwise write the SQL the model is told to run. Its
+conversion follows the name and the declared scale; the test suite runs each kind on stored rows.
 - **`FLOAT_MONEY`:** `ALTER TABLE <t> ALTER COLUMN <c> TYPE bigint USING round(<c> * 100)::bigint;`,
   taking the column to hold pounds or dollars. When the name says minor units (pence, penny, cent,
   cents or minor anywhere in it), it only rounds: `USING round(<c>)::bigint`.
@@ -659,8 +669,10 @@ Those functions throw at the first problem. This tool returns **every** problem.
 - A JSON number is judged by its exact value: `1000`, `1000.0` and `1e3` are the same amount, and
   `4503599627370496.5` is not whole.
 - **Range:** every amount must fit ±(2^53 − 1) minor units (`AMOUNT_TOO_LARGE`). More than 20 whole
-  digits (after leading zeros), or an exponent that moves the decimal point more than 400 places, is
-  refused at once, before any arithmetic. Sums use `BigInt`, so they are exact for any number of rows.
+  digits (after leading zeros), or a decimal point more than 400 places from the first or last
+  significant digit, is refused at once, before any arithmetic. The exponent and the digits are
+  weighed together: `1` followed by 2,000,000 zeros and `e-1999998` is 100. Reading a number takes
+  time in proportion to its length. Sums use `BigInt`, so they are exact for any number of rows.
 
 ### 4.5 Findings
 | Code | Severity | Level | Rule |
@@ -914,7 +926,9 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 - HTTP transport, resources, prompts.
 - Audit logs in other formats.
 - A migration written to deceive the checker. It runs as a Postgres superuser and could edit the
-  system catalogs. money-guard catches mistakes; it is not a defence against hostile migrations.
+  system catalogs. money-guard catches mistakes; it is not a defence against hostile migrations. Such
+  a migration still cannot write the `fix_sql` the model is told to run: money-guard builds it from
+  the names alone (§3.6).
 
 ---
 
@@ -941,12 +955,16 @@ The tests are in `test/` (Vitest, about 370); each file starts with a comment sa
   names with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (the file-link cases skip
   on Windows without Developer Mode, and the test run says so); secret files, also behind a link in a
-  migrations folder; a hostile project whose file, table and column names hold hidden characters (no
-  raw hidden character reaches any result or error); a migration that tries to read a real file on the
-  machine three ways, or to run a program; key material never echoed, from results or from malformed
-  settings; the JSON Pointer pattern on hostile input; an oversized stdio message.
-- **Limits and time:** the 20,000-character budget with the longest names in a deep folder and with
-  long records pointers (and every ledger result in the tests is held to it); the size and row limits;
+  migrations folder; a hostile project whose file, table and column names hold hidden characters,
+  zero-width and TAG characters among them (no raw hidden character reaches any result or error,
+  checked by the tests' own Unicode-category test, not by the code under test); a migration that
+  redefines `quote_ident` (`fix_sql` does not change); a migration that tries to read a real file on
+  the machine three ways, or to run a program; key material never echoed, from results or from
+  malformed settings; the JSON Pointer pattern on hostile input; an oversized stdio message.
+- **Limits and time:** the 20,000-character budget with the longest names in a deep folder, with one
+  migration 18 to 30 folders deep (its path cut in the middle) and with long records pointers (and
+  every ledger result in the tests is held to it); a JSON number with long runs of zeros, read in
+  linear time; the size and row limits;
   an endless migration stopped at the time limit; a stand-in database thread that goes silent (caught
   within 5 seconds), answers wrongly, or runs forever (its heartbeat stops at the time limit and on a
   cancel).

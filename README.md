@@ -260,10 +260,12 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
   look like secrets (`.env`, private keys, `.npmrc`, anything in `.git`) are refused even inside the
   project.
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
-  cut to 40 characters. Table, column and file names stay whole, so the agent can act on them. In
-  every result and error, control characters and the invisible characters that can make text read
-  differently from what it is (the "Trojan Source" trick) are escaped. A result is at most 20,000
-  characters. SPEC.md §2.4 has the exact rules.
+  cut to 40 characters. Table and column names stay whole, so the agent can act on them; a path over
+  400 characters is cut in the middle. Every character that can hide text is escaped in
+  money-guard's results and errors: control characters, the zero-width and direction characters of
+  the "Trojan Source" trick, and the invisible TAG characters that can spell out instructions a
+  person cannot see but a model reads. A result is at most 20,000 characters. SPEC.md §2.4 has the
+  exact rules.
 - **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
   project that does not look like a secret.
 - **Keys never leave the server.** They come only from its environment, and never appear in a result,
@@ -284,7 +286,8 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
   pg_graphql, pg_net, pg_cron, pgsodium) make a migration fail with a clear error.
 - Money kept in text or JSON columns, per-currency decimal places, FX, or chart-of-accounts rules.
 - Defend against a hostile migration. A migration runs as a Postgres superuser and could edit the
-  catalog to hide a column. money-guard catches mistakes, not deception.
+  catalog to hide a column. money-guard catches mistakes, not deception. Such a migration cannot
+  change the SQL money-guard suggests, though: `fix_sql` is built from the names alone.
 
 ## How it is tested
 

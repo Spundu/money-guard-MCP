@@ -6,43 +6,47 @@
 /** Longest piece of file content a result may repeat, in characters (code points). */
 export const ECHO_MAX = 40;
 
+/** Longest path a result or an error shows, in characters; a longer one is cut in the middle. */
+export const PATH_MAX = 400;
+
 const ELLIPSIS = '…';
 
 /**
- * True for a code point that must not reach the model raw: C0 and C1 controls, DEL, the line and
- * paragraph separators, and the bidirectional overrides and isolates (the "Trojan Source" characters).
+ * A character that must not reach the model raw, by Unicode category: controls (Cc); format characters
+ * (Cf: zero-width characters, direction marks, the bidi overrides and isolates of "Trojan Source", the
+ * byte order mark, and the TAG characters U+E0000-E007F, which can spell out text a person cannot see
+ * but a model reads); line and paragraph separators (Zl, Zp); lone surrogates (Cs); and every other
+ * default-ignorable code point (variation selectors, the Hangul and Mongolian fillers), which shows as
+ * nothing.
  */
-function mustEscape(cp: number): boolean {
-  return (
-    cp <= 0x1f ||
-    (cp >= 0x7f && cp <= 0x9f) ||
-    cp === 0x2028 ||
-    cp === 0x2029 ||
-    (cp >= 0x202a && cp <= 0x202e) ||
-    (cp >= 0x2066 && cp <= 0x2069)
-  );
-}
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
+const EVERY_UNSAFE = new RegExp(UNSAFE.source, 'gu');
 
-/** One character as the model may see it: itself, or a six-character `\uXXXX` escape. */
-function shownChar(char: string): string {
+/** What the model sees for an unsafe character: `\u200b`, or `\u{e0041}` above U+FFFF. Plain ASCII. */
+function escapeChar(char: string): string {
   const cp = char.codePointAt(0) ?? 0;
-  return mustEscape(cp) ? `\\u${cp.toString(16).padStart(4, '0')}` : char;
+  return cp > 0xffff ? `\\u{${cp.toString(16)}}` : `\\u${cp.toString(16).padStart(4, '0')}`;
 }
 
-/** True if `text` holds a character that `escapeUnsafe` and `clip` escape. */
+/** One character as the model may see it, and how many characters that shows. */
+function shown(char: string): [piece: string, width: number] {
+  if (!UNSAFE.test(char)) return [char, 1];
+  const escape = escapeChar(char);
+  return [escape, escape.length];
+}
+
+/** True if `text` holds a character that `escapeUnsafe`, `clip` and `clipPath` escape. */
 export function hasUnsafe(text: string): boolean {
-  for (const char of text) if (mustEscape(char.codePointAt(0) ?? 0)) return true;
-  return false;
+  return UNSAFE.test(text);
 }
 
 /**
  * `text` with every character that must not reach the model raw escaped, and nothing cut. For names a
  * result must show whole so the model can act on them: database identifiers (PostgreSQL caps them at
- * 63 bytes) and paths inside the project. The escapes are plain ASCII, so applying it twice changes
- * nothing.
+ * 63 bytes). The escapes are plain ASCII, so applying it twice changes nothing.
  */
 export function escapeUnsafe(text: string): string {
-  return hasUnsafe(text) ? Array.from(text, shownChar).join('') : text;
+  return text.replace(EVERY_UNSAFE, escapeChar);
 }
 
 /**
@@ -60,15 +64,14 @@ export function escapeStrings<T>(value: T): T {
 
 /**
  * `text` made safe to repeat in a result: escaped, then cut to at most `max` characters, `…` marking a
- * cut. An escape (`\u001b`) counts as the six characters it shows, so the bound holds for the output.
- * Only the first `max + 1` characters are ever looked at, so a huge input costs nothing extra.
+ * cut. An escape (`\u001b`) counts as the characters it shows, so the bound holds for the output. Only
+ * the first `max + 1` characters are ever looked at, so a huge input costs nothing extra.
  */
 export function clip(text: string, max: number = ECHO_MAX): string {
   const pieces: Array<[piece: string, width: number]> = [];
   let width = 0;
   for (const char of text) {
-    const shown = shownChar(char);
-    const piece: [string, number] = [shown, shown === char ? 1 : 6];
+    const piece = shown(char);
     pieces.push(piece);
     width += piece[1];
     if (width > max) break; // already too long, so it will be cut: no need to read further
@@ -83,4 +86,33 @@ export function clip(text: string, max: number = ECHO_MAX): string {
     used += w;
   }
   return out + ELLIPSIS;
+}
+
+/**
+ * A path inside the project, made safe to show: escaped and, past `max` characters, cut in the middle
+ * with `…`, so it keeps its first folders and its file name. An escape is never split. A path can be
+ * far longer than any name (folders nest), so this keeps one finding or one error within bounds.
+ */
+export function clipPath(text: string, max: number = PATH_MAX): string {
+  const pieces = Array.from(text, shown);
+  if (pieces.reduce((sum, [, w]) => sum + w, 0) <= max) return pieces.map(([piece]) => piece).join('');
+
+  const room = max - 1; // one character for the ellipsis
+  let head = '';
+  let used = 0;
+  let next = 0; // the first piece not in the head
+  for (const [piece, w] of pieces) {
+    if (used + w > Math.floor(room / 2)) break;
+    head += piece;
+    used += w;
+    next += 1;
+  }
+  const tail: string[] = [];
+  for (let i = pieces.length - 1; i >= next; i -= 1) {
+    const [piece, w] = pieces[i] ?? ['', 0];
+    if (used + w > room) break;
+    tail.push(piece);
+    used += w;
+  }
+  return `${head}${ELLIPSIS}${tail.reverse().join('')}`;
 }

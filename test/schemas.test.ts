@@ -13,14 +13,15 @@ describe('the JSON Pointer rule', () => {
   });
 
   it('answers at once on a long run of slashes that cannot match (no catastrophic backtracking)', () => {
-    // The old rule took about 4 times longer for every 2 more slashes: 28 took about 1 s, 40 about an hour.
+    // The old rule took about 4 times longer for every 2 more slashes: 28 took about 1 s, 32 about 16 s,
+    // 40 about an hour. The bounds leave a wide margin for a loaded machine.
     let started = performance.now();
-    expect(POINTER.test(`${'/'.repeat(28)}~`)).toBe(false);
-    expect(performance.now() - started).toBeLessThan(100); // fails fast on the old rule, before the long inputs
+    expect(POINTER.test(`${'/'.repeat(32)}~`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1000); // fails on the old rule before the long inputs
     started = performance.now();
     expect(call({ amount: `${'/'.repeat(199)}~` }).success).toBe(false);
     expect(call({ amount: 'a' }, { records_pointer: `${'/'.repeat(255)}~` }).success).toBe(false);
-    expect(performance.now() - started).toBeLessThan(100);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });
 

@@ -7,7 +7,7 @@ import process from 'node:process';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { verifyAuditLog } from './audit/verify.js';
 import type { Config } from './config.js';
-import { escapeStrings, escapeUnsafe } from './echo.js';
+import { clipPath, escapeStrings, escapeUnsafe } from './echo.js';
 import { ToolError } from './errors.js';
 import { checkLedgerFile } from './ledger/run.js';
 import { lintSchema } from './lint/run.js';
@@ -135,7 +135,7 @@ export function createServer(config: Config, log: Log = stderrLog): McpServer {
       answer('audit_verify_chain', log, ctx.mcpReq.signal, () => {
         const target = resolveInRoot(root(), args.file, { kind: 'file', extensions: ['.jsonl', '.ndjson', '.log'], maxBytes: AUDIT_MAX_BYTES });
         if (!config.auditKeys.ok) throw config.auditKeys.error;
-        return verifyAuditLog({ file: escapeUnsafe(target.rel), bytes: readFileSync(target.real), keys: config.auditKeys.value, anchor: given(args.anchor) });
+        return verifyAuditLog({ file: clipPath(target.rel), bytes: readFileSync(target.real), keys: config.auditKeys.value, anchor: given(args.anchor) });
       }),
   );
 

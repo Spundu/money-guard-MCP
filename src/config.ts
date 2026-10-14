@@ -58,7 +58,7 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
   if (!statSync(real).isDirectory()) return invalid('is not a folder');
   // A whole disk would put every file on it in reach of the tools.
   if (path.parse(real).root === real) return invalid('is the root of a disk');
-  return { ok: true, value: { real, name: path.basename(real) } };
+  return { ok: true, value: { real, name: clip(path.basename(real), 80) } };
 }
 
 const HEX = /^[0-9a-fA-F]+$/;

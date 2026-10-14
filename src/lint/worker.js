@@ -86,7 +86,12 @@ async function main() {
   const available = (await db.query('SELECT name FROM pg_catalog.pg_available_extensions ORDER BY name')).rows.map(
     (r) => /** @type {{ name: string }} */ (r).name,
   );
-  send({ type: 'ready', version, available });
+  // The keywords a name must be quoted for, read now, before any script could redefine anything: the
+  // main thread quotes the names in fix_sql itself.
+  const reserved = (await db.query("SELECT word FROM pg_catalog.pg_get_keywords() WHERE catcode <> 'U'")).rows.map(
+    (r) => /** @type {{ word: string }} */ (r).word,
+  );
+  send({ type: 'ready', version, available, reserved });
 
   for (const [step, script] of job.scripts.entries()) {
     send({ type: 'running', step });

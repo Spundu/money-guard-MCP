@@ -213,10 +213,17 @@ export function parseLedgerJson(text: string, maxDepth: number): unknown {
 const MAX_POINT_SHIFT = 400;
 
 /**
+ * An exponent with more digits than this moves the decimal point further than any mantissa that fits
+ * in memory can move it back; up to it, the arithmetic below is exact (it stays under 2^53).
+ */
+const MAX_EXPONENT_DIGITS = 15;
+
+/**
  * The exact value of a JSON number as plain decimal text, without an exponent or redundant zeros: "1e3"
  * is "1000", "12.50" is "12.5", "-0.0" is "0", "4503599627370496.5" stays as it is. "too large" or "too
- * small" when the exponent would move the decimal point more than MAX_POINT_SHIFT digits (1e401,
- * 1e-401): such text would cost more than any amount or id is worth.
+ * small" when the decimal point would end up more than MAX_POINT_SHIFT digits away (1e401, 1e-401):
+ * such text would cost more than any amount or id is worth. Linear in the length of the text: zeros are
+ * counted with loops, never with a regular expression, which would backtrack through a long run of them.
  */
 export function plainDecimal(number: JsonNumber): string | 'too large' | 'too small' {
   const text = number.text;
@@ -229,14 +236,19 @@ export function plainDecimal(number: JsonNumber): string | 'too large' | 'too sm
   const whole = dot === -1 ? mantissa : mantissa.slice(0, dot);
   const fraction = dot === -1 ? '' : mantissa.slice(dot + 1);
 
-  let digits = whole + fraction;
-  const leading = digits.length - digits.replace(/^0+/, '').length;
-  digits = digits.slice(leading).replace(/0+$/, '');
-  if (digits === '') return '0';
+  const all = whole + fraction;
+  let leading = 0;
+  while (leading < all.length && all.charCodeAt(leading) === 48 /* 0 */) leading += 1;
+  let end = all.length;
+  while (end > leading && all.charCodeAt(end - 1) === 48) end -= 1;
+  if (leading === end) return '0';
+  const digits = all.slice(leading, end);
 
   // Bound the exponent's text before turning it into a number: "1e99999999999999999999" is legal JSON.
-  const exponentDigits = exponentText.replace(/^[+-]/, '').replace(/^0+/, '');
-  const exponent = exponentDigits.length > 6 ? (exponentText.startsWith('-') ? -Infinity : Infinity) : Number(exponentText);
+  const sign = exponentText.startsWith('-') ? -1 : 1;
+  let first = /^[+-]/.test(exponentText) ? 1 : 0;
+  while (first < exponentText.length - 1 && exponentText.charCodeAt(first) === 48) first += 1;
+  const exponent = exponentText.length - first > MAX_EXPONENT_DIGITS ? sign * Infinity : sign * Number(exponentText.slice(first));
   const point = whole.length - leading + exponent; // where the decimal point falls within `digits`
   if (point > MAX_POINT_SHIFT) return 'too large';
   if (point < -MAX_POINT_SHIFT) return 'too small';

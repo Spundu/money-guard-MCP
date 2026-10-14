@@ -75,4 +75,20 @@ describe('plainDecimal', () => {
     expect(plainDecimal(n('1e99999999999999999999'))).toBe('too large');
     expect(plainDecimal(n('-1e-99999999999999999999'))).toBe('too small');
   });
+
+  it('takes time in proportion to the length, even for a long run of zeros between other digits', () => {
+    // "1", zeros, "1": the shape on which a regular expression that strips trailing zeros backtracks
+    // through the whole run from every zero (150,000 zeros took about 14 seconds).
+    const zeros = '0'.repeat(150_000);
+    const started = performance.now();
+    expect(plainDecimal(n(`1${zeros}1`))).toBe('too large');
+    expect(plainDecimal(n(`-1${zeros}1e-150001`))).toBe(`-1.${zeros}1`);
+    expect(plainDecimal(n(`0.${zeros}1${zeros}`))).toBe('too small');
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  it('reads a long exponent that a long mantissa moves back: the value decides, not the exponent alone', () => {
+    expect(plainDecimal(n(`1${'0'.repeat(2_000_000)}e-1999998`))).toBe('100');
+    expect(plainDecimal(n(`0.${'0'.repeat(2_000_000)}1e2000003`))).toBe('100');
+  });
 });

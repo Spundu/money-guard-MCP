@@ -36,9 +36,7 @@ export const DETAIL_SQL = `
     SELECT a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
            n.nspname AS schema_name, c.relname AS table_name, a.attname AS column_name,
            pg_catalog.format_type(a.atttypid, a.atttypmod) AS declared, a.atttypid AS typid,
-           a.attgenerated::pg_catalog.text AS generated,
-           pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname) AS quoted_table,
-           pg_catalog.quote_ident(a.attname) AS quoted_column
+           a.attgenerated::pg_catalog.text AS generated
     ${USER_TABLES}
       AND NOT c.relispartition AND a.attislocal
       AND NOT EXISTS (
@@ -66,7 +64,7 @@ export const DETAIL_SQL = `
     ORDER BY ch.start, ch.depth DESC
   )
   SELECT cols.col, cols.schema_name, cols.table_name, cols.column_name, cols.declared, cols.generated,
-         cols.quoted_table, cols.quoted_column, base.via_array, base.domain_name, base.base_name, base.base_schema
+         base.via_array, base.domain_name, base.base_name, base.base_schema
   FROM cols JOIN base ON base.start = cols.typid
   ORDER BY cols.schema_name, cols.table_name, cols.column_name`;
 
@@ -78,8 +76,6 @@ export interface DetailRow {
   declared: string;
   /** '' for an ordinary column, 's' or 'v' for a generated one. */
   generated: string;
-  quoted_table: string;
-  quoted_column: string;
   via_array: boolean;
   domain_name: string | null;
   base_name: string;
@@ -153,18 +149,29 @@ export function numericScale(declared: string): number | null {
 }
 
 /**
+ * A name as PostgreSQL's quote_ident writes it: bare when it would read back as the same name (lowercase
+ * letters, digits and "_", and not a keyword in `reserved`), otherwise in double quotes with any double
+ * quote doubled. Done here, not by quote_ident in the database: the migrations control that database,
+ * and one that replaces pg_catalog.quote_ident could write the SQL the model is told to run.
+ */
+export function quoteIdent(name: string, reserved: ReadonlySet<string>): string {
+  return /^[a-z_][a-z0-9_]*$/.test(name) && !reserved.has(name) ? name : `"${name.replaceAll('"', '""')}"`;
+}
+
+/**
  * A starting point for the fix, or null where the change belongs elsewhere or needs a decision: a
  * domain (change the domain), an array, a generated column (change its expression), a numeric column
  * finer than a minor unit (choose the unit first), or a name holding a control or invisible character
  * (results show such names escaped, and SQL built from the escaped text would name a different column).
  * The conversion follows the name: amounts already in minor units (pence, cents, minor) are only
- * rounded; anything else is taken to be in pounds or dollars and multiplied by 100.
+ * rounded; anything else is taken to be in pounds or dollars and multiplied by 100. `reserved` is
+ * PostgreSQL's list of keywords that must be quoted, read before any migration ran.
  */
-export function fixSql(row: DetailRow, code: LintCode): string | null {
+export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>): string | null {
   if (row.domain_name !== null || row.via_array || row.generated !== '') return null;
-  if (hasUnsafe(row.quoted_table) || hasUnsafe(row.quoted_column)) return null;
-  const head = `ALTER TABLE ${row.quoted_table} ALTER COLUMN ${row.quoted_column} TYPE bigint`;
-  const c = row.quoted_column;
+  if ([row.schema_name, row.table_name, row.column_name].some(hasUnsafe)) return null;
+  const c = quoteIdent(row.column_name, reserved);
+  const head = `ALTER TABLE ${quoteIdent(row.schema_name, reserved)}.${quoteIdent(row.table_name, reserved)} ALTER COLUMN ${c} TYPE bigint`;
   const minor = namesMinorUnits(row.column_name);
   const convert = minor ? `${head} USING round(${c})::bigint;` : `${head} USING round(${c} * 100)::bigint;`;
   switch (code) {

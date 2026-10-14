@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { overBudget } from '../budget.js';
-import { escapeUnsafe } from '../echo.js';
+import { clipPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
 import { resolveInRoot, type Root } from '../paths.js';
@@ -95,7 +95,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
 
   const result: LedgerResult = {
     summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, all.filter((f) => f.transaction_id === null).length),
-    file: escapeUnsafe(target.rel),
+    file: clipPath(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
     rows_read: outcome.rowsRead,

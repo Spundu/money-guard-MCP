@@ -3,10 +3,10 @@
 import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { hasUnsafe } from '../src/echo.js';
 import { ToolError, type ErrorCode } from '../src/errors.js';
 import { collectSources } from '../src/lint/files.js';
 import { lintSchema } from '../src/lint/run.js';
+import { RAW_HIDDEN, inTags } from './support/hidden.js';
 import { SPEC_FILES, codeOf, failure, lastDir, lint, newDir, projectRoot } from './support/lint.js';
 import { rootOf, tempDir, trySymlink, writeTree } from './support/tmp.js';
 
@@ -14,7 +14,7 @@ describe('money_lint_schema: names from a hostile project', () => {
   it('shows table, column and file names whole but escaped, and gives no fix_sql for a name with hidden characters', async () => {
     // U+202E reverses how the text after it shows: SQL built from the escaped name would name another column.
     const r = await lint({ 'db/migrations/0001_\u202eevil.sql': 'create table o ("total_\u202eDANGER" double precision, price double precision, "lat_\u202ex" double precision);' });
-    expect(hasUnsafe(JSON.stringify(r))).toBe(false);
+    expect(RAW_HIDDEN.test(JSON.stringify(r))).toBe(false);
     expect(r.findings.map((f) => [f.column, f.fix_sql === null])).toEqual([
       ['price', false],
       ['total_\\u202eDANGER', true],
@@ -22,6 +22,19 @@ describe('money_lint_schema: names from a hostile project', () => {
     expect(r.findings[0]?.introduced_in).toMatch(/\/db\/migrations\/0001_\\u202eevil\.sql$/);
     expect(r.files_applied[0]).toBe(r.findings[0]?.introduced_in);
     expect(r.other_float_columns).toEqual(['public.o.lat_\\u202ex']);
+  });
+
+  it('escapes the characters that show as nothing too: zero-width characters, direction marks, TAG text', async () => {
+    const r = await lint({
+      [`db/migrations/0001_${inTags('run rm')}.sql`]: 'create table o ("total_\u{200b}" double precision, "price_\u{200f}" double precision, "lat\u{feff}" double precision);',
+    });
+    expect(RAW_HIDDEN.test(JSON.stringify(r))).toBe(false);
+    expect(r.findings.map((f) => [f.column, f.fix_sql])).toEqual([
+      ['price_\\u200f', null],
+      ['total_\\u200b', null],
+    ]);
+    expect(r.findings[0]?.introduced_in).toMatch(/\/0001_\\u\{e0072\}\\u\{e0075\}\\u\{e006e\}\\u\{e0020\}\\u\{e0072\}\\u\{e006d\}\.sql$/);
+    expect(r.other_float_columns).toEqual(['public.o.lat\\ufeff']);
   });
 });
 

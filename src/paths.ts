@@ -7,14 +7,14 @@
 import { realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { clip } from './echo.js';
+import { clip, clipPath } from './echo.js';
 import { ToolError } from './errors.js';
 
 /** The project folder, already resolved to its real path (config.ts). */
 export interface Root {
   /** Absolute real path. Never shown in a result or an error. */
   real: string;
-  /** Its folder name, the only part of it that messages show. */
+  /** Its folder name, the only part of it that messages show, as they show it (through `clip`). */
   name: string;
 }
 
@@ -151,7 +151,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     const what = code === 'EACCES' || code === 'EPERM' ? 'cannot be opened (permission denied)' : 'does not exist';
     throw new ToolError(
       'PATH_NOT_FOUND',
-      `${shown(input)} ${what}. The nearest existing folder is "${nearestExisting(root, lexical)}".`,
+      `${shown(input)} ${what}. The nearest existing folder is "${clipPath(nearestExisting(root, lexical))}".`,
       `Check the spelling. Paths are relative to the project folder (${root.name}).`,
     );
   }

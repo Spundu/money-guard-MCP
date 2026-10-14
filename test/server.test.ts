@@ -7,9 +7,9 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FIXTURE_KEY_HEX, SHOP } from '../scripts/fixtures.mjs';
 import { resolveConfig, type Config } from '../src/config.js';
-import { hasUnsafe } from '../src/echo.js';
 import { createServer } from '../src/server.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from '../src/text.js';
+import { RAW_HIDDEN } from './support/hidden.js';
 import { tempDir, writeTree } from './support/tmp.js';
 
 type Era = 'modern' | 'legacy';
@@ -180,9 +180,10 @@ describe('a long files list', () => {
 
 describe('a hostile project', () => {
   it('never sends a control or invisible character raw, in a result or in an error (SPEC.md §2.4)', async () => {
-    // U+202E (right-to-left override) in folder names, file names, table and column names, ids and
-    // currencies: the "Trojan Source" trick for making text read differently from what it is.
-    const RLO = '\u202e';
+    // In folder names, file names, table and column names, ids and currencies: U+202E (right-to-left
+    // override, the "Trojan Source" trick for making text read differently from what it is), a
+    // zero-width space and a TAG character (text a person cannot see but a model reads).
+    const RLO = '\u{202e}\u{200b}\u{e0041}';
     const dir = tempDir();
     writeTree(dir, {
       [`db/${RLO}ok/0001_${RLO}a.sql`]: `create table o ("total_${RLO}x" double precision);`,
@@ -203,8 +204,8 @@ describe('a hostile project', () => {
     ] as const) {
       const r = await client.callTool({ name, arguments: args });
       outcomes.push(r.isError ? textOf(r).replace(/:.*$/s, '') : 'ok');
-      expect(hasUnsafe(textOf(r)), `${name} ${JSON.stringify(args)}`).toBe(false);
-      expect(hasUnsafe(JSON.stringify(r.structuredContent ?? null)), name).toBe(false);
+      expect(RAW_HIDDEN.test(textOf(r)), `${name} ${JSON.stringify(args)}`).toBe(false);
+      expect(RAW_HIDDEN.test(JSON.stringify(r.structuredContent ?? null)), name).toBe(false);
     }
     expect(outcomes).toEqual(['ok', 'MIGRATION_FAILED', 'NO_SQL_FILES', 'ok', 'ok', 'PATH_NOT_FOUND']);
   });

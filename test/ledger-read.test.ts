@@ -1,6 +1,7 @@
 // money_check_double_entry (SPEC.md §4.2, §4.3, §4.7): reading CSV, JSON and JSONL exports, mapping
 // their columns, and the arguments.
 import { describe, expect, it } from 'vitest';
+import { closest } from '../src/closest.js';
 import { check, codeOf, errorText } from './support/ledger.js';
 
 describe('money_check_double_entry: reading CSV', () => {
@@ -42,13 +43,18 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(check('.csv', 't,a\nnot text,5\nnot text,-5\n', { columns: { transaction_id: 't', amount: 'a' } }).balanced).toBe(true);
   });
 
-  it('finds the closest column quickly even in a huge hostile header', () => {
-    // 2,000 columns of 1,000 characters, and a 200-character mapped name: the distances were computed
-    // over whole names, many times each during a sort (seconds); now once per column, over the first 64
-    // characters.
+  it('answers COLUMN_NOT_FOUND for a huge hostile header', () => {
     const header = Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')}${'c'.repeat(996)}`).join(',');
-    const started = performance.now();
     expect(errorText(() => check('.csv', `${header}\n`, { columns: { transaction_id: 'x'.repeat(200), amount: 'a' } }))).toMatch(/^COLUMN_NOT_FOUND: /);
+  });
+
+  it('bounds the search for the closest name: each distance once, over the first 64 characters', () => {
+    // 2,000 names of 10,000 characters and a 200-character name: distances over whole names would take
+    // tens of seconds. Only the search is timed (reading a big header is not what this proves), with
+    // a wide margin for a loaded machine: it takes tens of milliseconds.
+    const names = Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')}${'c'.repeat(9996)}`);
+    const started = performance.now();
+    expect(closest('x'.repeat(200), names)).toBeUndefined();
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
