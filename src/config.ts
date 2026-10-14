@@ -51,10 +51,13 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
 
 const HEX = /^[0-9a-fA-F]+$/;
 
+/** The most key pairs MONEY_GUARD_AUDIT_KEYS may hold (SPEC.md §2.2). */
+export const MAX_KEYS = 64;
+
 /**
- * MONEY_GUARD_AUDIT_KEYS: comma-separated `id=hex` pairs. Ids are 1-64 characters with no "=", ","
- * or whitespace, and unique; keys are hex, at least MIN_KEY_BYTES bytes. Errors name the pair, never a
- * key value.
+ * MONEY_GUARD_AUDIT_KEYS: comma-separated `id=hex` pairs, at most MAX_KEYS. Ids are 1-64 characters
+ * with no "=", "," or whitespace, and unique; keys are hex, at least MIN_KEY_BYTES bytes. Errors name
+ * the pair, never a key value.
  */
 export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
   if (raw === undefined || raw.trim() === '') {
@@ -75,6 +78,8 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
   const keys: Record<string, Uint8Array> = Object.create(null) as Record<string, Uint8Array>;
   const ids: string[] = [];
   const parts = raw.split(',');
+  // Every result lists the ids; a bounded key ring keeps that list within the result budget.
+  if (parts.length > MAX_KEYS) return invalid(`it has ${parts.length} pairs; at most ${MAX_KEYS} are allowed`);
   for (const [index, part] of parts.entries()) {
     const n = index + 1;
     const pair = part.trim();

@@ -97,7 +97,10 @@ const ENTRY_MEANING: Readonly<Record<Exclude<ReasonCode, 'ANCHOR_COUNT_MISMATCH'
   ENTRY_TOO_LARGE: 'is larger than a sealed entry can be',
 };
 
-const NO_ANCHOR_NOTE = 'No anchor was given, so entries removed from the end cannot be detected.';
+/** The longest reason a result repeats (SPEC.md §5.5); every fixed library reason is shorter. */
+const MAX_REASON = 120;
+
+const NO_ANCHOR_NOTE ='No anchor was given, so entries removed from the end cannot be detected.';
 const EMPTY_NOTE = 'The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log.';
 
 /** Number of lines in the file, counting an unterminated last line. */
@@ -123,14 +126,19 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   const notes: string[] = [];
   if (bytes.length === 0) notes.push(EMPTY_NOTE);
   if (!anchor) notes.push(NO_ANCHOR_NOTE);
-  const base = {
+  // The fields in SPEC.md §5.5's order.
+  const result = (summary: string, brk: AuditBreak | null, head: Anchor | null): AuditResult => ({
+    summary,
     file,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
+    ok: verdict.ok,
     entries_verified: verdict.lastSeq + 1,
+    break: brk,
     anchor_checked: anchor !== undefined,
+    head,
     key_ids_configured: [...keys.ids],
     notes,
-  };
+  });
 
   if (verdict.ok) {
     const count = verdict.lastSeq + 1;
@@ -140,12 +148,15 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
         ? 'The log is empty, which always verifies.'
         : `The log verifies: ${entries(count)}, every seal and link intact.` +
           (anchor ? ' It matches the anchor.' : ' Keep head and pass it as anchor next time.');
-    return { summary, ...base, ok: true, break: null, head: { count, last_hash: last } };
+    return result(summary, null, { count, last_hash: last });
   }
 
   const index = verdict.brokenAt ?? 0;
-  const reason = verdict.reason ?? 'unknown';
-  const code = reasonCode(reason);
+  const raw = verdict.reason ?? 'unknown';
+  const code = reasonCode(raw);
+  // The library's fixed reasons are short; a canonicalization error can quote a key name from the line,
+  // so the reason is cut like any other text from the file.
+  const reason = clip(raw, MAX_REASON);
   const line = index < lineCount(bytes) ? index + 1 : null;
   const brk: AuditBreak = { entry_index: index, line, code, reason };
   if (code === 'UNKNOWN_KEY_ID' || code === 'HMAC_MISMATCH') {
@@ -164,5 +175,5 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
     const keyId = code === 'UNKNOWN_KEY_ID' && brk.writer_key_id !== undefined ? ` ("${brk.writer_key_id}")` : '';
     what = `${where} ${meaning}${keyId}`;
   }
-  return { summary: `The log does NOT verify: ${what} (${code}).`, ...base, ok: false, break: brk, head: null };
+  return result(`The log does NOT verify: ${what} (${code}).`, brk, null);
 }

@@ -1,6 +1,7 @@
 // money_lint_schema from arguments to result (SPEC.md §3): collect the files, run them in a throwaway
 // PostgreSQL, judge every column, and report. One lint runs at a time: each starts a database.
 
+import { overBudget } from '../budget.js';
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { Root } from '../paths.js';
@@ -137,7 +138,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   otherFloats.sort();
   const applied = sources.files.map((f) => f.rel);
 
-  return {
+  const result: LintResult = {
     summary: summarise(findings.length, errors, warnings, ignoredCount, moneyChecked, tables.size, otherFloats.length, applied.length),
     migrations: sources.migrations,
     migrations_sha256: sources.sha256,
@@ -156,6 +157,18 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     other_float_columns_count: otherFloats.length,
     fixes,
   };
+  // Over the budget (long names, deep folders): shorten the listing of applied files first, then the
+  // float columns, then the findings, never below one. The counts above still cover everything.
+  while (result.files_applied.length > 0 && overBudget(result)) {
+    result.files_applied.pop();
+    result.files_applied_truncated = true;
+  }
+  while (result.other_float_columns.length > 0 && overBudget(result)) result.other_float_columns.pop();
+  while (result.findings.length > 1 && overBudget(result)) {
+    result.findings.pop();
+    result.findings_truncated = true;
+  }
+  return result;
 }
 
 function summarise(problems: number, errors: number, warnings: number, ignored: number, money: number, tables: number, floats: number, files: number): string {

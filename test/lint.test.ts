@@ -193,6 +193,19 @@ describe('money_lint_schema: judging columns', () => {
     expect([r.files_applied.length, r.files_applied_truncated, r.files_applied_count]).toEqual([30, true, 35]);
     expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
   });
+
+  it('stays within 20,000 characters with the longest names and a deep folder, cutting the file list first', async () => {
+    // 63 characters is PostgreSQL's longest name. 50 such findings in a deep folder come to about
+    // 32,000 characters.
+    const columns = Array.from({ length: 60 }, (_, i) => `price_${String(i).padStart(2, '0')}_${'x'.repeat(54)} double precision`);
+    const r = await lint({ [`db/migrations/${'d'.repeat(100)}/0001.sql`]: `create table t_${'y'.repeat(61)} (${columns.join(', ')});` });
+    expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
+    expect([r.files_applied, r.files_applied_truncated, r.files_applied_count]).toEqual([[], true, 1]);
+    expect(r.findings.length).toBeGreaterThan(20);
+    expect(r.findings.length).toBeLessThan(50);
+    expect([r.findings_truncated, r.error_count]).toEqual([true, 60]);
+    expect(r.findings[0]?.column).toBe(`price_00_${'x'.repeat(54)}`);
+  });
 });
 
 describe('money_lint_schema: which files run', () => {

@@ -56,6 +56,13 @@ describe('parseAuditKeys', () => {
       expect(text, raw).not.toContain(KEY_B.slice(0, 8));
     }
   });
+
+  it('takes at most 64 pairs, so the list of ids in every audit result stays small', () => {
+    const ring = (n: number) => Array.from({ length: n }, (_, i) => `k${i}=${KEY_A}`).join(',');
+    const ok = parseAuditKeys(ring(64));
+    expect(ok.ok && ok.value.ids.length).toBe(64);
+    expect(errorText(parseAuditKeys(ring(65)))).toMatch(/^KEYS_INVALID: MONEY_GUARD_AUDIT_KEYS is malformed: it has 65 pairs; at most 64 are allowed\./);
+  });
 });
 
 describe('resolveConfig root', () => {

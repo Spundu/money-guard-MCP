@@ -54,7 +54,7 @@ export const ledgerInput = z
     decimal_places: z.number().int().min(0).max(4).nullish().describe('Decimal places allowed with amount_format decimal: 2 (default), 0 for JPY, 3 for BHD.'),
     format: z.enum(['csv', 'json', 'jsonl']).nullish().describe('Overrides the format the extension gives.'),
     delimiter: z.enum([',', ';', '\t', '|']).nullish().describe('CSV delimiter. Default "," (tab for .tsv).'),
-    records_pointer: z.string().max(1024).regex(POINTER).nullish().describe('JSON only: the JSON Pointer of the array of records, such as "/data/entries". Default: the top of the file.'),
+    records_pointer: z.string().max(256).regex(POINTER).nullish().describe('JSON only: the JSON Pointer of the array of records, such as "/data/entries". Default: the top of the file.'),
     offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish().describe('The first finding to return. Default 0.'),
     limit: z.number().int().min(1).max(50).nullish().describe('How many findings to return. Default 20, at most 50.'),
   })

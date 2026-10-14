@@ -97,6 +97,9 @@ describe.each(ERAS)('the server, %s era', (era) => {
     expect([unknown.isError, textOf(unknown)]).toEqual([true, expect.stringMatching(/^Input validation error: /)]);
     const tooMany = await client.callTool({ name: 'money_check_double_entry', arguments: { ...JOURNAL_ARGS, limit: 500 } });
     expect(tooMany.isError).toBe(true);
+    // A records pointer is repeated in every location of a JSON finding, so it is kept short.
+    const longPointer = await client.callTool({ name: 'money_check_double_entry', arguments: { ...JOURNAL_ARGS, records_pointer: `/${'p'.repeat(256)}` } });
+    expect([longPointer.isError, textOf(longPointer)]).toEqual([true, expect.stringMatching(/^Input validation error: /)]);
   });
 
   it('treats null as "not given" for every optional argument', async () => {

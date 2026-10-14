@@ -12,11 +12,27 @@ beforeAll(() => {
   root = rootOf(tempDir());
 });
 
-/** Write `content` to a new file with extension `ext` in the project and check it. */
+/** SPEC.md §4.5's Finding table, in order. */
+const FINDING_FIELDS = ['code', 'severity', 'transaction_id', 'lines', 'pointers', 'more_rows', 'field', 'value', 'nets', 'message'];
+
+/** Write `content` to a new file with extension `ext` in the project and check it. Every result of
+ *  every test here must keep the output rules: the documented field order (the model reads the
+ *  findings as text), messages of at most 120 characters, nothing from the file longer than 40, and
+ *  at most 20,000 characters in all (SPEC.md §2.4, §4.5). */
 function check(ext: string, content: string | Uint8Array, params: Omit<LedgerParams, 'file'>) {
   const file = `exports/ledger-${(n += 1)}${ext}`;
   writeTree(root.real, { [file]: content });
-  return checkLedgerFile(root, { file, ...params });
+  const result = checkLedgerFile(root, { file, ...params });
+  for (const finding of result.findings) {
+    const keys = Object.keys(finding);
+    expect(keys).toEqual(FINDING_FIELDS.filter((k) => keys.includes(k)));
+    expect([...finding.message].length).toBeLessThanOrEqual(120);
+    for (const text of [finding.transaction_id, finding.value, ...(finding.nets ?? []).map((net) => net.currency)]) {
+      if (text !== null && text !== undefined) expect([...text].length).toBeLessThanOrEqual(40);
+    }
+  }
+  expect(JSON.stringify(result).length).toBeLessThanOrEqual(20_000);
+  return result;
 }
 
 function codeOf(fn: () => unknown): ErrorCode | 'no error' {
@@ -53,9 +69,9 @@ T4,vat,-500,GBP
 `;
 
 describe('money_check_double_entry: the SPEC.md §4.9 example', () => {
-  it('gives exactly the documented result', () => {
+  it('gives exactly the documented result, field for field and in the documented order', () => {
     const r = check('.csv', SPEC_EXAMPLE, { columns: SIGNED });
-    expect(r).toEqual({
+    const expected = {
       summary: 'Not balanced: 3 errors and 1 warning. 4 transactions: 2 balanced, 1 unbalanced, 1 not checked (rows with unreadable values).',
       file: r.file,
       format: 'csv',
@@ -79,7 +95,9 @@ describe('money_check_double_entry: the SPEC.md §4.9 example', () => {
       limit: 20,
       total_findings: 4,
       next_offset: null,
-    });
+    };
+    expect(r).toEqual(expected);
+    expect(JSON.stringify(r)).toBe(JSON.stringify(expected));
     expect(r.file).toMatch(/^exports\/ledger-\d+\.csv$/);
   });
 
@@ -187,6 +205,43 @@ describe('money_check_double_entry: the rules', () => {
   it('cuts a long value to 40 characters', () => {
     const r = check('.csv', `t,a\nA,${'9x'.repeat(50)}\n`, { columns: { transaction_id: 't', amount: 'a' } });
     expect([...(r.findings[0]?.value ?? '')]).toHaveLength(40);
+  });
+
+  it('cuts a long currency to 40 characters for display, but groups by the whole text', () => {
+    const long = 'X'.repeat(60);
+    const r = check('.csv', `t,a,c\nA,5,${long}1\nA,-5,${long}2\n`, { columns: { transaction_id: 't', amount: 'a', currency: 'c' } });
+    const shown = `${'X'.repeat(39)}…`;
+    expect(r.findings[0]?.nets).toEqual([
+      { currency: shown, net: '5' },
+      { currency: shown, net: '-5' },
+    ]);
+    expect(r.findings[0]?.message).toBe(`${shown} legs net to 5 and ${shown} legs net to -5, not…`);
+  });
+
+  it('lists at most 20 currencies that are off, and says how many there are', () => {
+    const rows = Array.from({ length: 25 }, (_, i) => `A,1,C${String(i).padStart(2, '0')}`).join('\n');
+    const r = check('.csv', `t,a,c\n${rows}\n`, { columns: { transaction_id: 't', amount: 'a', currency: 'c' } });
+    expect(r.findings[0]?.nets).toHaveLength(20);
+    expect(r.findings[0]?.nets?.[19]).toEqual({ currency: 'C19', net: '1' });
+    expect(r.findings[0]?.message).toBe('25 currencies do not net to 0; nets lists the first 20');
+  });
+
+  it('returns a shorter page when long locations would pass 20,000 characters, and pages on to the end', () => {
+    // 30 unbalanced transactions of 20 legs each, under a 251-character records pointer: a full page of
+    // 20 findings, each with 20 pointers, would be about 100,000 characters.
+    const records = Array.from({ length: 600 }, (_, i) => ({ t: `T${Math.floor(i / 20)}`, a: 1 }));
+    const content = JSON.stringify({ ['r'.repeat(250)]: records });
+    const seen: Array<string | null> = [];
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const r = check('.json', content, { columns: { transaction_id: 't', amount: 'a' }, records_pointer: `/${'r'.repeat(250)}`, offset });
+      expect(r.findings.length).toBeGreaterThan(0);
+      expect(r.findings.length).toBeLessThan(20);
+      expect(r.limit).toBe(20);
+      seen.push(...r.findings.map((f) => f.transaction_id));
+      offset = r.next_offset;
+    }
+    expect(seen).toEqual(Array.from({ length: 30 }, (_, i) => `T${i}`));
   });
 });
 

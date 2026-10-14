@@ -44,9 +44,13 @@ const VALID = text(chain());
 const LINES = VALID.split('\n').slice(0, -1);
 const HEAD: Anchor = { count: 3, last_hash: (chain()[2] as SealedEntry).entry_hash };
 
+/** SPEC.md §5.5's output table, in order: the model reads the result as text. */
+const RESULT_FIELDS = ['summary', 'file', 'file_sha256', 'ok', 'entries_verified', 'break', 'anchor_checked', 'head', 'key_ids_configured', 'notes'];
+
 describe('verifyAuditLog on a log that verifies', () => {
   it('returns the head to keep as the next anchor, and warns that no anchor was checked', () => {
     const r = run(bytes(VALID));
+    expect(Object.keys(r)).toEqual(RESULT_FIELDS);
     expect(r).toEqual({
       summary: 'The log verifies: 3 entries, every seal and link intact. Keep head and pass it as anchor next time.',
       file: 'logs/audit.jsonl',
@@ -110,6 +114,7 @@ describe('verifyAuditLog on a broken log', () => {
   for (const c of BROKEN) {
     it(`reports ${c.code} for ${c.name}`, () => {
       const r = run(c.log(), c.anchor);
+      expect(Object.keys(r)).toEqual(RESULT_FIELDS);
       expect(r.ok).toBe(false);
       expect(r.head).toBeNull();
       expect(r.break).toMatchObject({ entry_index: c.index, line: c.line, code: c.code });

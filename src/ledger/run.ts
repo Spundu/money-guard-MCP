@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { overBudget } from '../budget.js';
 import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
 import { resolveInRoot, type Root } from '../paths.js';
@@ -91,7 +92,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const page = all.slice(offset, offset + limit);
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
-  return {
+  const result: LedgerResult = {
     summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode),
     file: target.rel,
     format,
@@ -109,8 +110,19 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
     offset,
     limit,
     total_findings: all.length,
-    next_offset: offset + limit < all.length ? offset + limit : null,
+    next_offset: null,
   };
+  const settle = () => {
+    result.next_offset = offset + page.length < all.length ? offset + page.length : null;
+  };
+  settle();
+  // Over the budget (long locations): a shorter page, never empty, and next_offset carries on from
+  // where it stopped, so paging still reaches every finding.
+  while (page.length > 1 && overBudget(result)) {
+    page.pop();
+    settle();
+  }
+  return result;
 }
 
 function summarise(

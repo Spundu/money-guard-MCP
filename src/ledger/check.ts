@@ -60,6 +60,12 @@ export interface CheckOutcome {
 /** At most this many row locations per finding (SPEC.md §4.8). */
 const MAX_REFS = 20;
 
+/** At most this many currencies in an UNBALANCED finding's nets (SPEC.md §4.5). */
+const MAX_NETS = 20;
+
+/** The longest message a finding has (SPEC.md §4.5). */
+const MAX_MESSAGE = 120;
+
 /** The column shape (SPEC.md §4.2), checked here because the Claude API refuses a root-level oneOf. */
 export function mappingMode(columns: ColumnMap): Mode {
   const has = (f: MappedField) => columns[f] !== undefined;
@@ -82,6 +88,22 @@ interface Tx {
   rows: LedgerRow[];
   legs: Leg[];
   hasRowError: boolean;
+}
+
+/** The finding with its fields in SPEC.md §4.5's order, whichever rule produced it. */
+function inFieldOrder({ code, severity, transaction_id, lines, pointers, more_rows, field, value, nets, message }: Finding): Finding {
+  return {
+    code,
+    severity,
+    transaction_id,
+    ...(lines !== undefined && { lines }),
+    ...(pointers !== undefined && { pointers }),
+    ...(more_rows !== undefined && { more_rows }),
+    ...(field !== undefined && { field }),
+    ...(value !== undefined && { value }),
+    ...(nets !== undefined && { nets }),
+    message,
+  };
 }
 
 /** What a finding needs to point at its rows. */
@@ -215,12 +237,15 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
     }
     const sums = new Map<string | null, bigint>();
     for (const leg of tx.legs) sums.set(leg.currency, (sums.get(leg.currency) ?? 0n) + leg.minor);
-    const nets = [...sums]
+    const off = [...sums]
       .filter(([, sum]) => sum !== 0n)
-      .sort(([a], [b]) => ((a ?? '') < (b ?? '') ? -1 : 1)) // code-unit order: the same on every machine
-      .map(([currency, sum]) => ({ currency, net: sum.toString() }));
-    if (nets.length > 0) {
-      findings.push({ ...at, code: 'UNBALANCED', severity: 'error', nets, message: `${netsText(nets)}, not 0` });
+      .sort(([a], [b]) => ((a ?? '') < (b ?? '') ? -1 : 1)); // code-unit order: the same on every machine
+    if (off.length > 0) {
+      // Grouping used the full currency text; the result shows it cut like any value from the file.
+      const nets = off.slice(0, MAX_NETS).map(([currency, sum]) => ({ currency: currency === null ? null : clip(currency), net: sum.toString() }));
+      const message =
+        off.length > MAX_NETS ? `${off.length} currencies do not net to 0; nets lists the first ${MAX_NETS}` : clip(`${netsText(nets)}, not 0`, MAX_MESSAGE);
+      findings.push({ ...at, code: 'UNBALANCED', severity: 'error', nets, message });
     } else {
       balanced += 1;
     }
@@ -228,7 +253,7 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
 
   findings.sort((a, b) => a.order - b.order || CODE_ORDER.indexOf(a.code) - CODE_ORDER.indexOf(b.code));
   return {
-    findings: findings.map(({ order: _order, ...f }) => f),
+    findings: findings.map(({ order: _order, ...f }) => inFieldOrder(f)),
     rowsRead: rows.length,
     transactionsFound: txs.size,
     transactionsNotChecked: notChecked,

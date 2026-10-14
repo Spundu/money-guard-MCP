@@ -71,7 +71,7 @@ internet and never touches a real database.
   Every tool that needs them answers with the error (`ROOT_INVALID`, `KEYS_INVALID`), so the model sees
   what is wrong and the other tools keep working.
 - **Root rules:** it must exist and be a directory, and it must not be a filesystem root (`/`, `C:\`).
-- **Key rules:** comma-separated pairs `id=hex`.
+- **Key rules:** comma-separated pairs `id=hex`, at most 64 pairs (every audit result lists the ids).
   - `id`: 1-64 characters, with no `=`, `,` or whitespace. Duplicate ids are invalid.
   - `hex`: an even number of hex digits, at least 32 (16 bytes = sealed-audit-chain's `MIN_KEY_BYTES`),
     in either case.
@@ -115,10 +115,17 @@ already read the files).
 ### 2.4 What a successful result looks like
 - `structuredContent`: a JSON object that the SDK validates against the tool's `outputSchema`. Plus
   one text block holding the same JSON (compact), as the spec recommends.
-- The first field is always `summary`: one plain sentence for the model and for people.
+- The first field is always `summary`: one plain sentence for the model and for people. The fields come
+  in the order of the output tables below, so every result reads the same way.
 - **Size budget: at most 20,000 characters per result.** That is well under Claude Code's
   50,000-character file threshold and its 25,000-token cap. Long lists are capped or paginated, and
-  each cap is reported (`..._truncated`, `next_offset`).
+  each cap is reported (`..._truncated`, `next_offset`). The caps keep results small with ordinary
+  names. If very long names or locations still push a result over the budget, the tool shortens its
+  least important lists until it fits:
+  - `money_lint_schema`: first `files_applied`, then `other_float_columns`, then `findings` (never
+    below one). The counts still cover everything, and the `..._truncated` flags say what was cut.
+  - `money_check_double_entry`: a shorter page (never empty). `next_offset` continues from the first
+    finding left out, so paging still reaches every finding.
 - **Money values are strings of integer minor units** (`"-150"`). That is exact at any size; sums use
   `BigInt`. No floating point touches an amount, anywhere.
 - **Data minimisation.** A value copied from a file into a result is cut at 40 characters (`…` marks
@@ -377,14 +384,14 @@ runs the new migration too.
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
 | `files_applied_count` | integer | |
-| `files_applied` | string[] | The first 30, in run order, relative to the root. |
+| `files_applied` | string[] | The first 30 (fewer if the result would pass its budget, §2.4), in run order, relative to the root. |
 | `files_applied_truncated` | boolean | |
 | `tables_checked` | integer | |
 | `money_columns_checked` | integer | |
 | `error_count`, `warning_count`, `ignored_count` | integer | Totals, including findings cut by the cap. |
-| `findings` | Finding[] | Errors first, then warnings, then by table and column; **at most 50**. |
+| `findings` | Finding[] | Errors first, then warnings, then by table and column; **at most 50** (fewer if the result would pass its budget, §2.4). |
 | `findings_truncated` | boolean | |
-| `other_float_columns` | string[] | Float columns whose names do **not** look like money (`schema.table.column`, first 30), so the model can check none of them hold money. |
+| `other_float_columns` | string[] | Float columns whose names do **not** look like money (`schema.table.column`, the first 30, or fewer if the result would pass its budget), so the model can check none of them hold money. |
 | `other_float_columns_count` | integer | |
 | `fixes` | object | One plain explanation per code present (text in §3.10). |
 
@@ -436,13 +443,13 @@ db/migrations/0001_init.sql     create table orders (id bigserial primary key, t
 db/migrations/0002_fees.sql     alter table orders add column platform_fee numeric(10,2) not null default 0;
 db/migrations/0003_payouts.sql  create table payouts (id bigserial primary key, amount_pence bigint not null, fee_pence bigint not null);
 ```
-Call `{ "migrations": "db/migrations" }`. Result (hashes shortened; the real ones come from the step-3
-fixtures):
+This is the demo project in `fixtures/shop`. Call `{ "migrations": "db/migrations" }`. Result (the hash is
+shortened):
 ```json
 {
   "summary": "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied.",
   "migrations": "db/migrations",
-  "migrations_sha256": "9c1e…",
+  "migrations_sha256": "0f1de47f…",
   "postgres": "PostgreSQL 18.6 (PGlite 0.5.9)",
   "files_applied_count": 3,
   "files_applied": ["db/migrations/0001_init.sql", "db/migrations/0002_fees.sql", "db/migrations/0003_payouts.sql"],
@@ -508,7 +515,7 @@ Those functions throw at the first problem. This tool returns **every** problem.
 | `decimal_places` | integer 0-4 | 2 | Decimal places allowed in `decimal` format (0 for JPY, 3 for BHD). |
 | `format` | `"csv"`, `"json"` or `"jsonl"` | from the extension (`.csv`/`.tsv` csv, `.json` json, `.jsonl`/`.ndjson` jsonl) | Overrides the extension, e.g. for a `.json` file that holds one object per line. |
 | `delimiter` | `","`, `";"`, `"\t"` or `"\|"` | `","` (`"\t"` for `.tsv`) | CSV only. |
-| `records_pointer` | string (a JSON Pointer) | `""` (the root must be an array) | JSON only: where the array of records is, e.g. `"/data/entries"`. |
+| `records_pointer` | string (a JSON Pointer, ≤ 256 characters) | `""` (the root must be an array) | JSON only: where the array of records is, e.g. `"/data/entries"`. Every location in a JSON finding starts with it, so it is kept short. |
 | `offset` | integer ≥ 0 | 0 | The first finding to return. |
 | `limit` | integer 1-50 | 20 | How many findings to return. |
 
@@ -596,10 +603,10 @@ reported on its own (`MISSING_VALUE`, `transaction_id: null`).
 | `more_rows` | integer | How many rows were left out of `lines`/`pointers`. |
 | `field` | string | For row findings: `amount`, `side`, `debit`, `credit`, `currency`, `transaction_id`, or `debit/credit` when both are empty. |
 | `value` | string | The offending text, ≤ 40 characters. |
-| `nets` | `{ currency: string or null, net: string }[]` | For `UNBALANCED`. |
-| `message` | string | ≤ 120 characters, e.g. "GBP legs net to -1, not 0". |
+| `nets` | `{ currency: string or null, net: string }[]` | For `UNBALANCED`: each currency that is off, in code-unit order of the currency, at most 20. `currency` is cut at 40 characters for display; grouping always uses the full text. |
+| `message` | string | ≤ 120 characters, e.g. "GBP legs net to -1, not 0". With more than 20 currencies off: "25 currencies do not net to 0; nets lists the first 20". |
 
-Findings are sorted by their first location, then by code.
+The fields come in the order of this table. Findings are sorted by their first location, then by code.
 
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
@@ -611,9 +618,9 @@ Findings are sorted by their first location, then by code.
 | `balanced` | boolean | True only when there is at least one row and no errors. An empty file proves nothing, so it is false. |
 | `error_count`, `warning_count` | integer | Over all pages. |
 | `counts_by_code` | object | e.g. `{ "UNBALANCED": 1 }`, over all pages. |
-| `findings` | Finding[] | This page. |
-| `offset`, `limit`, `total_findings` | integer | |
-| `next_offset` | integer or null | null on the last page. |
+| `findings` | Finding[] | This page: at most `limit` findings, fewer if the result would pass its budget (§2.4). |
+| `offset`, `limit`, `total_findings` | integer | `limit` as asked (default 20). |
+| `next_offset` | integer or null | The first finding not on this page; null on the last page. |
 
 ### 4.7 Errors (besides §2.5)
 | Code | When |
@@ -653,7 +660,7 @@ Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", 
   "summary": "Not balanced: 3 errors and 1 warning. 4 transactions: 2 balanced, 1 unbalanced, 1 not checked (rows with unreadable values).",
   "file": "exports/journal.csv",
   "format": "csv",
-  "file_sha256": "41d7…",
+  "file_sha256": "9a9d3edc…",
   "rows_read": 9,
   "transactions_found": 4,
   "transactions_checked": 3,
@@ -746,7 +753,7 @@ mapped.
 | `file`, `file_sha256` | string | |
 | `ok` | boolean | |
 | `entries_verified` | integer | The entries vouched for before any break (the library's `lastSeq + 1`). |
-| `break` | object or null | `{ entry_index, line, code, reason, writer_key_id? }`. `line` = `entry_index + 1`, or null when that line does not exist (an anchor that counts more entries). |
+| `break` | object or null | `{ entry_index, line, code, reason, writer_key_id? }`. `line` = `entry_index + 1`, or null when that line does not exist (an anchor that counts more entries). `reason` is sealed-audit-chain's wording, cut at 120 characters (a canonicalization error can quote a key name from the line). |
 | `anchor_checked` | boolean | |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
@@ -756,7 +763,7 @@ mapped.
 | Code | When |
 |---|---|
 | `KEYS_NOT_CONFIGURED` | `MONEY_GUARD_AUDIT_KEYS` is unset or empty. The fix text says how to set it in the server's env (`.mcp.json` with `${...}`), never in chat. |
-| `KEYS_INVALID` | The setting is malformed. Names the position or id, never a value. |
+| `KEYS_INVALID` | The setting is malformed, or has more than 64 pairs. Names the position or id, never a value. |
 
 A bad `anchor` (wrong hex, a negative count) is refused by the input schema.
 
@@ -764,27 +771,28 @@ A bad `anchor` (wrong hex, a negative count) is refused by the input schema.
 The file is at most 100 MiB. Verification is linear and stops at the first break.
 
 ### 5.8 Example
-A log written by the audit-chain quickstart (two entries, key id `k1`). Call `{ "file": "logs/audit.jsonl" }`:
+The demo project's log, `fixtures/shop/logs/audit.jsonl`: two entries sealed with the test key `k1`. Call
+`{ "file": "logs/audit.jsonl" }` (hashes shortened):
 ```json
 {
   "summary": "The log verifies: 2 entries, every seal and link intact. Keep head and pass it as anchor next time.",
   "file": "logs/audit.jsonl",
-  "file_sha256": "5b0d…",
+  "file_sha256": "1d964af7…",
   "ok": true,
   "entries_verified": 2,
   "break": null,
   "anchor_checked": false,
-  "head": { "count": 2, "last_hash": "e3a1…" },
+  "head": { "count": 2, "last_hash": "36cc1b2f…" },
   "key_ids_configured": ["k1"],
   "notes": ["No anchor was given, so entries removed from the end cannot be detected."]
 }
 ```
-After someone changes `alice` to `mallory` in the first entry:
+After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampered.jsonl`):
 ```json
 {
   "summary": "The log does NOT verify: entry 0 (line 1) was edited after it was sealed (CONTENT_TAMPERED).",
-  "file": "logs/audit.jsonl",
-  "file_sha256": "a77f…",
+  "file": "logs/audit-tampered.jsonl",
+  "file_sha256": "abfac011…",
   "ok": false,
   "entries_verified": 0,
   "break": { "entry_index": 0, "line": 1, "code": "CONTENT_TAMPERED", "reason": "entry_hash mismatch (content tampered)" },
@@ -846,8 +854,9 @@ After someone changes `alice` to `mallory` in the first entry:
     refused path exits 5.
 - **Input edge cases:** every optional parameter sent as `null` behaves as if omitted. Unknown
   parameters are refused.
-- **Determinism:** the same input twice gives identical bytes. **Size:** the worst-case fixtures stay
-  ≤ 20,000 characters.
+- **Determinism:** the same input twice gives identical bytes. **Size:** worst-case inputs (63-character
+  names in a deep folder, long records pointers, many currencies) stay ≤ 20,000 characters, and every
+  ledger result in the tests is checked against the budget.
 - **Phase A lessons:**
   - every new test is shown to fail without the code it covers;
   - README examples are files run in CI, with their exact output checked;
