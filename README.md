@@ -290,8 +290,8 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
 
 - `npm test` runs about 370 tests. The CI workflow runs them on Linux and Windows with Node 22, 24 and
   26, and on Node 22.12, the oldest the package supports; the badge at the top shows the latest run.
-  - This README's example output and JSON are checked exactly against what the server returns, and
-    SPEC.md's lint and ledger examples field by field.
+  - This README's example output and JSON, and the example results in SPEC.md (field by field, in
+    order), are checked against what the tools return on the demo project.
   - Every sealed-audit-chain failure reason maps to its own code.
   - A real MCP client talks to the server in both protocol eras, in-process and as a separate process
     over stdio.
