@@ -268,9 +268,20 @@ describe('money_lint_schema: platforms', () => {
 });
 
 describe('money_lint_schema: safety', () => {
-  it("cannot read the computer's files from a migration", async () => {
-    const e = await failure({ 'db/migrations/0001.sql': "create table h (line text);\ncopy h from '/etc/hosts';\nselect pg_read_file('C:/Windows/win.ini');" });
-    expect(e.message).toMatch(/could not open file "\/etc\/hosts" for reading: No such file or directory/);
+  it("cannot read the computer's files from a migration, by any of the three ways PostgreSQL offers", async () => {
+    // A real file on this machine, with a marker that must never come back.
+    const secretDir = tempDir();
+    writeTree(secretDir, { 'secret.txt': 'MARKER-7c1e-host-secret\n' });
+    const secret = path.join(secretDir, 'secret.txt').replaceAll('\\', '/');
+    for (const sql of [
+      `create table h (line text);\ncopy h from '${secret}';`,
+      `select pg_read_file('${secret}');`,
+      `select lo_import('${secret}');`,
+    ]) {
+      const e = await failure({ 'db/migrations/0001.sql': sql });
+      expect(e.code, sql).toBe('MIGRATION_FAILED');
+      expect(e.toText(), sql).not.toContain('MARKER-7c1e');
+    }
   });
 
   it('reports a statement that leaves the database unusable (COPY ... PROGRAM) against its file', async () => {

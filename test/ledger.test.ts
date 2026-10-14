@@ -103,6 +103,8 @@ describe('money_check_double_entry: the rules', () => {
     const r = check('.csv', 't,a\n,100\nA,1\nA,-1\n', { columns: { transaction_id: 't', amount: 'a' } });
     expect(r.findings).toEqual([{ code: 'MISSING_VALUE', severity: 'error', transaction_id: null, lines: [2], field: 'transaction_id', message: 'no transaction_id' }]);
     expect(r.transactions_found).toBe(1);
+    // The summary explains the error, which the transaction counts alone would not.
+    expect(r.summary).toBe('Not balanced: 1 error. 1 transaction: 1 balanced. 1 row is outside any transaction (no readable id, or not a record).');
   });
 
   it('reads an amount plus a debit/credit side', () => {

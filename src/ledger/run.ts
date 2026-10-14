@@ -94,7 +94,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
   const result: LedgerResult = {
-    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode),
+    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, all.filter((f) => f.transaction_id === null).length),
     file: escapeUnsafe(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -134,6 +134,7 @@ function summarise(
   balanced: number,
   notChecked: number,
   counts: Partial<Record<FindingCode, number>>,
+  loose: number,
 ): string {
   if (rows === 0) return 'The file has no rows, so nothing was proven.';
   const warned = warnings > 0 ? ` ${count(warnings, 'warning', 'warnings')}.` : '';
@@ -146,5 +147,8 @@ function summarise(
   if (counts.TOO_FEW_LEGS) parts.push(`${counts.TOO_FEW_LEGS} with too few legs`);
   if (notChecked > 0) parts.push(`${notChecked} not checked (rows with unreadable values)`);
   const head = `Not balanced: ${count(errors, 'error', 'errors')}${warnings > 0 ? ` and ${count(warnings, 'warning', 'warnings')}` : ''}.`;
-  return `${head} ${count(found, 'transaction', 'transactions')}: ${parts.join(', ')}.`;
+  // Errors that belong to no transaction (a record that is not an object, a row without an id) are
+  // counted apart, or the transaction counts alone would not explain them.
+  const outside = loose > 0 ? ` ${count(loose, 'row is', 'rows are')} outside any transaction (no readable id, or not a record).` : '';
+  return `${head} ${count(found, 'transaction', 'transactions')}: ${parts.join(', ')}.${outside}`;
 }

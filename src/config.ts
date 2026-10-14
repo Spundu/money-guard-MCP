@@ -44,7 +44,7 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
     : env.CLAUDE_PROJECT_DIR?.trim()
       ? ['CLAUDE_PROJECT_DIR', env.CLAUDE_PROJECT_DIR.trim()]
       : ['the working directory', cwd];
-  const fix = 'Set MONEY_GUARD_ROOT in the server\'s environment to the project folder the tools may read.';
+  const fix = 'Set MONEY_GUARD_ROOT in the server\'s environment to the project folder the tools may read (in Claude Desktop, choose the project folder in the extension\'s settings).';
   const invalid = (why: string) => ({ ok: false as const, error: new ToolError('ROOT_INVALID', `The project root (from ${source}) ${why}.`, fix) });
   // Fail closed: a broken setting must not quietly widen or move what the tools can read.
   if (PLACEHOLDER.test(value)) return invalid(`is "${clip(value, 80)}", a placeholder the MCP host did not fill in`);
@@ -79,7 +79,7 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
         'KEYS_NOT_CONFIGURED',
         'No HMAC keys are configured, so audit logs cannot be verified.',
         'Set MONEY_GUARD_AUDIT_KEYS in the server\'s environment as id=hex pairs separated by commas ' +
-          '(for Claude Code, in .mcp.json as "${MONEY_GUARD_AUDIT_KEYS:-}", read from your shell). Never paste a key into the chat.',
+          '(for Claude Code, in .mcp.json as "${MONEY_GUARD_AUDIT_KEYS:-}", read from your shell; in Claude Desktop, in the extension\'s settings). Never paste a key into the chat.',
       ),
     };
   }

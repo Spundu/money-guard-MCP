@@ -86,7 +86,8 @@ internet and never touches a real database.
     in either case.
   - `KEYS_INVALID` names the pair that is wrong by its position only ("pair 2"), never by any of its
     text: in a malformed setting the text before `=` may be a key.
-- Claude Code project config. `${VAR:-}` expansion keeps the key out of the file and out of the repo:
+- Claude Code project config, once the package is on npm (until then `"command": "node"` with the
+  path to `dist/index.js`). `${VAR:-}` expansion keeps the key out of the file and out of the repo:
   ```json
   { "mcpServers": { "money-guard": { "type": "stdio", "command": "npx", "args": ["-y", "money-guard-mcp"],
       "env": { "MONEY_GUARD_AUDIT_KEYS": "${MONEY_GUARD_AUDIT_KEYS:-}" } } } }
@@ -162,7 +163,8 @@ already read the files).
   what it copies, and the server escapes every result and error once more on the way out. Names that
   hold such characters get no `fix_sql` (§3.6).
 - **Deterministic.** The same files and the same arguments give byte-identical results. Findings are
-  sorted; there are no timestamps, durations or random ids. Tests and the eval cache rely on this.
+  sorted; there are no timestamps, durations or random ids. The tests rely on this, and so will the
+  planned agent evaluation, which will cache results.
 - An optional parameter sent as `null` means "not given". Models sometimes send `null`; jarvis
   `vault-mcp` hit exactly this bug with zod's `.optional()`. A test proves it (§7).
 
@@ -235,15 +237,16 @@ Shared error codes:
 | Package | Why | Licence |
 |---|---|---|
 | `@modelcontextprotocol/server` ^2.3.1 | MCP server, both eras | Apache-2.0 |
-| `zod` ^4.2 | Schemas (required by SDK v2) | MIT |
+| `zod` ^4.6 | Schemas (SDK v2 needs ^4.2) | MIT |
 | `@electric-sql/pglite` **0.5.9 exactly** | PostgreSQL 18.6 in WebAssembly for tool 1 (its version appears in results) | Apache-2.0 |
 | `@electric-sql/pglite-pgvector` **0.0.10 exactly** | `CREATE EXTENSION vector` (common in AI apps) | Apache-2.0 |
 | `sealed-audit-chain` | Tool 3. Comes from npm once published; until then `github:Spundu/audit-chain#5fd1fec` | MIT (same author) |
 | `csv-parse` ^7 | RFC 4180 CSV with line numbers | MIT |
 
-Dev only: `@modelcontextprotocol/client` (tests), typescript, vitest, eslint, typescript-eslint, the
-mcpb CLI (`@anthropic-ai/mcpb` 2.1.2 exactly, which builds the Claude Desktop bundle), and the
-Inspector (pinned in CI through `npx`). The agent evaluation script uses `@anthropic-ai/sdk`.
+Dev only: `@modelcontextprotocol/client` (tests), typescript, vitest, eslint and typescript-eslint.
+Fetched by npm when needed, pinned: the mcpb CLI (`@anthropic-ai/mcpb` 2.1.2, by `npm run bundle`) and
+the MCP Inspector (2.11.0, by `scripts/inspector-smoke.sh`). The planned agent evaluation (not built
+yet) will use `@anthropic-ai/sdk`.
 
 ### 2.9 Stability promise
 Tool names, parameter names, output field names, finding codes and error codes are public API. A
@@ -276,8 +279,8 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
 | `preset` | `"supabase"` | none | Built-in setup for Supabase projects (§3.4). |
 | `setup` | string, a `.sql` path | none | A file run before the migrations (after `preset`), to create what your platform provides: roles, schemas, functions. Columns it creates are not checked. |
 | `accept_numeric` | boolean | `false` | Treat `numeric`/`decimal` money columns as fine instead of warning about them. |
-| `money_columns` | array of ≤ 200 names | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`. |
-| `ignore_columns` | array of ≤ 200 names | none | Columns never to report (false positives), in the same format. They still count in `ignored_count`. |
+| `money_columns` | array of ≤ 200 names (3-200 characters each) | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`. |
+| `ignore_columns` | array of ≤ 200 names (3-200 characters each) | none | Columns never to report (false positives), in the same format. They still count in `ignored_count`. |
 | `timeout_seconds` | integer 5-300 | 45 | Stop after this long. The default stays under the 60 seconds that common MCP clients wait for an answer, so the model gets `TIMEOUT` with the file that was running, not a client error. A larger value only helps with a client that waits longer. |
 
 ### 3.3 Which files run, in which order
@@ -503,6 +506,7 @@ ROLE ..., CREATE SCHEMA ...).`
 - At most 2,000 files.
 - Each file at most 5 MiB; all files together at most 20 MiB.
 - Time limit from `timeout_seconds`.
+- The database thread may use up to 1 GiB of memory; a migration that needs more fails with a hint.
 - One lint at a time.
 - At most 50 findings in a result. The counts still cover them all, and the model fixes those and runs
   the tool again.
@@ -780,7 +784,8 @@ Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", 
 - It checks the file byte for byte and streams through it.
 - It stops at the first failure.
 - It never throws on file content.
-- Its verdicts are proven identical to the Python verifier.
+- Its verdicts match its Python verifier's: sealed-audit-chain checks that with shared test vectors and
+  a cross-language parity suite.
 
 ### 5.1 Description (exact, shown to the model)
 > Prove an audit log was not edited, reordered or forged and, with an anchor, not cut short. Verifies
@@ -913,49 +918,51 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 
 ---
 
-## 7. How it is proven (acceptance tests)
-- **Fixture projects** (synthetic, in `fixtures/`; nothing copied from private code):
-  - Schemas:
-    - `shop-float` (float money → `FLOAT_MONEY`) and `shop-clean` (bigint pence → no findings);
-    - `supabase-app` (needs the preset);
-    - `flyway` (needs `files`), `dbmate` (up/down markers) and a `pg_dump` 18 file with `\restrict`;
-    - `broken-migration` (`MIGRATION_FAILED` with exact line and column);
-    - `infinite-loop` (`DO $$ BEGIN LOOP END LOOP; END $$;` must stop at the time limit, which proves
-      the worker can be killed mid-WebAssembly).
-  - Ledgers: balanced, unbalanced, fractional, decimal mode, debit/credit columns, a side column, a
-    nested JSON Pointer, and a JSONL file with one bad line.
-  - Audit logs: one valid log, plus one per reason code (tampered, reordered, middle entry deleted,
-    tail cut with an anchor, torn line, wrong key, forged HMAC, rewritten whitespace).
-- **Every finding code and every error code** has a test that produces it. Every sealed-audit-chain
-  reason maps to its code.
-- **Name-rule table:** about 80 real column names with the expected money/not-money answer.
-- **Security:**
-  - `../` escapes, absolute paths outside the root and symlink escapes are refused. A test that cannot
-    create symlinks (Windows without Developer Mode) skips **loudly**.
-  - `.env`, `id_rsa` and UNC paths are refused.
-  - A migration reading `/etc/hosts` finds nothing.
-  - No output ever contains a configured key: a test scans every result and error.
-  - Every value echoed from a file is ≤ 40 characters.
-- **Protocol:**
-  - in-process tests through `createMcpHandler` + `handler.fetch` in **both eras** (pinned 2026-07-28,
-    and the default 2025 handshake);
-  - spawned-stdio tests in both eras;
-  - an Inspector CLI job in CI: `tools/list --strict` reports nothing, one `tools/call` per tool, and a
-    refused path exits 5.
-- **Claude Desktop bundle:** a CI job builds it (`mcpb validate` must pass), unpacks it into an empty
-  folder, holds it to production files only, starts it from its manifest and calls each tool, with
-  the keys set and with them left blank. A unit test keeps the manifest in step with `package.json`
-  (name, version, Node.js range, entry point) and with the tool list.
-- **Input edge cases:** every optional parameter sent as `null` behaves as if omitted. Unknown
-  parameters are refused.
-- **Determinism:** the same input twice gives identical bytes. **Size:** worst-case inputs (63-character
-  names in a deep folder, long records pointers, many currencies) stay ≤ 20,000 characters, and every
-  ledger result in the tests is checked against the budget.
-- **Phase A lessons:**
-  - every new test is shown to fail without the code it covers;
-  - README examples are files run in CI, with their exact output checked;
-  - review rounds go on until one finds no HIGH;
-  - a fresh-clone rehearsal comes before publishing.
+## 7. How it is proven (the test suite)
+The tests are in `test/` (Vitest, about 370); each file starts with a comment saying what it proves.
+- **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
+  log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
+  one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
+  logs are generated by `scripts/fixtures.mts`, and a test fails if the committed files differ.
+- **Lint cases:** the §3.10 example; every kind of column (domains, arrays, the money type, smallint,
+  generated columns, quoting, partitions, inheritance, views); renames and type changes; natural order,
+  Prisma folders, Flyway `files`, and the down markers of dbmate, goose, sql-migrate, node-pg-migrate
+  and tern; a pg_dump 18 file with `\restrict`; failures with exact line and column, and each hint;
+  the Supabase preset; pgvector; `fix_sql` run on stored rows.
+- **Ledger cases:** the §4.9 example; every finding code; the three column shapes; decimal mode; CSV
+  line numbers (quoted line breaks, CR LF, a lone CR, a BOM, blank lines); JSON Pointers; JSONL with a
+  bad line; exact JSON numbers (ids a float would merge, fractions it would round away); pagination and
+  the result budget.
+- **Audit cases:** a valid log; one log per reason a log can trigger (tampered, reordered, an entry
+  deleted, a cut tail, a torn line, a wrong key, a forged seal, a rewritten line, CR LF line ends);
+  anchors from an earlier run (grown, emptied, replaced); and a scan of the library's code that fails
+  if it can return a reason this server does not map.
+- **Every error code** and every finding code is produced by a test. **Names:** about 120 real column
+  names with the expected answer.
+- **Security:** `..`, absolute paths and links leading out of the project (the file-link cases skip
+  on Windows without Developer Mode, and the test run says so); secret files, also behind a link in a
+  migrations folder; a hostile project whose file, table and column names hold hidden characters (no
+  raw hidden character reaches any result or error); a migration that tries to read a real file on the
+  machine three ways, or to run a program; key material never echoed, from results or from malformed
+  settings; the JSON Pointer pattern on hostile input; an oversized stdio message.
+- **Limits and time:** the 20,000-character budget with the longest names in a deep folder and with
+  long records pointers (and every ledger result in the tests is held to it); the size and row limits;
+  an endless migration stopped at the time limit; a stand-in database thread that goes silent (caught
+  within 5 seconds), answers wrongly, or runs forever (its heartbeat stops at the time limit and on a
+  cancel).
+- **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
+  `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; stdout purity (a stand-in thread
+  that writes everywhere is contained); advertised schemas that fit the Claude API (no root
+  combinators, short plain names, no type arrays); `listChanged: false`; `null` for every optional
+  argument; unknown and misspelt parameters refused; `INTERNAL_ERROR` without detail.
+- **Documents that cannot drift:** the README shows `examples/demo.mjs`, its exact output and the real
+  lint result; the server instructions, tool descriptions and `fixes` texts here are compared with the
+  code; the bundle manifest is compared with `package.json`; no text file holds a raw hidden character.
+- **In CI, outside the suite:** the official MCP Inspector in both eras (`--strict` reports nothing);
+  the packed tarball installed into an empty project; the Claude Desktop bundle built and started from
+  its manifest; Node.js 22.12, the oldest the package supports.
+- **Way of working:** each test added in a review round is shown to fail on the code before its fix;
+  review rounds go on until one finds no HIGH; a fresh-clone rehearsal comes before publishing.
 
 ---
 

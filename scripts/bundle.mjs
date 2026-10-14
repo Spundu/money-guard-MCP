@@ -23,10 +23,11 @@ const npmCli = process.env.npm_execpath;
 if (!npmCli) throw new Error('Run this with `npm run bundle`, so it uses the npm that started it.');
 const run = (args, cwd) => execFileSync(process.execPath, args, { cwd, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' });
 const npm = (args, cwd) => run([npmCli, ...args], cwd);
-// The mcpb CLI pinned in devDependencies, run with this Node: no shell and no .cmd shim on Windows.
-const mcpbRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve('@anthropic-ai/mcpb'))), '..');
-const mcpbBin = path.join(mcpbRoot, JSON.parse(readFileSync(path.join(mcpbRoot, 'package.json'), 'utf8')).bin);
-const mcpb = (args) => run([mcpbBin, ...args], REPO);
+// The mcpb CLI, pinned, fetched by npm when a bundle is built (as CI fetches the Inspector). It is kept
+// out of devDependencies: its signing and prompt libraries would bring npm audit warnings to everyone
+// who only installs to run the tests, and the bundle uses only validate, pack and unpack.
+const MCPB = '@anthropic-ai/mcpb@2.1.2';
+const mcpb = (args) => npm(['exec', '--yes', `--package=${MCPB}`, '--', 'mcpb', ...args], REPO);
 
 const pkg = JSON.parse(readFileSync(path.join(REPO, 'package.json'), 'utf8'));
 const out = path.join(REPO, `${pkg.name}-${pkg.version}.mcpb`);

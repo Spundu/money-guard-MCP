@@ -18,8 +18,8 @@ limit.
 
 | Tool | What it does |
 |---|---|
-| `money_lint_schema` | Runs your SQL migrations, in order, in a throwaway in-memory PostgreSQL 18 ([PGlite](https://pglite.dev)), then reads the column types Postgres really built. Money stored as `real`/`double precision` (floats lose pennies) or in Postgres's `money` type is an error; `numeric` and `smallint` are warnings. Each finding names the migration that introduced it and gives an `ALTER TABLE` to start the fix. |
-| `money_check_double_entry` | Reads a ledger export (CSV, JSON or JSONL) and checks that every transaction's legs net to zero in each currency, in whole minor units (pence, cents), with exact integer maths. Every problem comes with its line number. |
+| `money_lint_schema` | Runs your SQL migrations, in order, in a throwaway in-memory PostgreSQL 18 ([PGlite](https://pglite.dev)), then reads the column types Postgres really built. Money stored as `real`/`double precision` (floats lose pennies) or in Postgres's `money` type is an error; `numeric` and `smallint` are warnings. Each finding names the migration that introduced it and, where the conversion is clear, gives an `ALTER TABLE` to start the fix. |
+| `money_check_double_entry` | Reads a ledger export (CSV, JSON or JSONL) and checks that every transaction's legs net to zero in each currency, in whole minor units (pence, cents), with exact integer maths. Every problem comes with its line number (CSV, JSONL) or JSON Pointer (JSON). |
 | `audit_verify_chain` | Verifies an audit log written with [sealed-audit-chain](https://github.com/Spundu/audit-chain), byte for byte: the first entry that was edited, reordered or forged, and why. Given the head of an earlier check, it also catches entries cut off the end. The HMAC keys stay in the server's settings; the agent never sees them. |
 
 Why run the migrations instead of reading them? Patterns over SQL text easily miss a later `ALTER
@@ -42,11 +42,14 @@ Then, in your own project's folder, add the server to Claude Code:
 claude mcp add --transport stdio money-guard -- node /path/to/money-guard-mcp/dist/index.js
 ```
 
+On Windows, write the path with forward slashes: `C:/Users/you/money-guard-mcp/dist/index.js`.
+
 Claude Code tells the server which project is open (`CLAUDE_PROJECT_DIR`), and every path the tools
 take is relative to that folder. Then ask, for example:
 
 - "Check our migrations for money stored as floats."
-- "Does exports/ledger.csv balance? The transaction id is txn_id and the amounts are in amount_pence."
+- "Does exports/ledger.csv balance? The transaction id is txn_id, the amounts are in amount_pence and the
+  currency is in currency." (Without a currency column, every row counts as one currency.)
 - "Verify logs/audit.jsonl."
 
 The server tells Claude when each tool helps, to fix a schema finding with a new migration, and never
@@ -92,7 +95,7 @@ for (const [tool, args] of [
 await client.close();
 ```
 
-It prints this (the server also writes one log line per call to stderr):
+It prints this (the server also writes a startup line and one line per call to stderr):
 
 ```text
 money_lint_schema:
@@ -106,7 +109,8 @@ money_check_double_entry:
 ```
 
 A problem the agent can fix comes back as a tool error whose text starts with a code, then says how
-to fix it.
+to fix it. (Arguments that break a tool's input schema come back as the SDK's own "Input validation
+error", which has no code.)
 
 ## What the agent gets back
 
@@ -179,7 +183,9 @@ A bad setting does not stop the server. The tools that need it explain what is w
 keep working.
 
 To verify audit logs in Claude Code, keep the key in your shell's environment and pass it through a
-project `.mcp.json`. The file holds only a reference to the variable, so you can commit it:
+project `.mcp.json` instead of the `claude mcp add` command above. Remove that first (`claude mcp
+remove money-guard`): an entry added with the command takes precedence over the file's. The file holds
+no secret, only a reference to the variable; its path to `dist/index.js` is the one on your machine:
 
 ```json
 {
@@ -282,18 +288,21 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
 
 ## How it is tested
 
-- `npm test` runs about 260 tests. The CI workflow runs them on Linux and Windows with Node 22, 24 and
-  26.
+- `npm test` runs about 370 tests. The CI workflow runs them on Linux and Windows with Node 22, 24 and
+  26, and on Node 22.12, the oldest the package supports; the badge at the top shows the latest run.
   - This README's example output and JSON are checked exactly against what the server returns, and
     SPEC.md's lint and ledger examples field by field.
   - Every sealed-audit-chain failure reason maps to its own code.
   - A real MCP client talks to the server in both protocol eras, in-process and as a separate process
     over stdio.
-  - Security: path escapes (also through links), secret files, a migration that tries to read host
-    files or run a program, an endless migration, cancellation, and a scan that no result or error
-    holds a key.
-  - stdout carries only protocol messages, even when a migration raises notices. The test that proves
-    it fails when the capture is removed.
+  - Security: path escapes (also through links in a migrations folder), secret files, a hostile
+    project's names full of hidden characters, a migration that tries to read a real file on the
+    machine (three ways) or run a program, an endless migration, a client's cancel, and a scan that no
+    result or error holds a key.
+  - stdout carries only protocol messages: a stand-in database thread that writes to stdout and
+    stderr in every way it can is fully contained, and that test fails when the capture is removed.
+  - Each test added in the review rounds was shown to fail on the code before its fix; the reviews
+    are summed up in [How this was built](#how-this-was-built).
 - CI also runs the official [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 2.11.0
   in both protocol eras: `--strict` finds no schema-portability problem.
 - CI installs the packed npm tarball into an empty project and starts it over stdio.
