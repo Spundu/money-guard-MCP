@@ -70,6 +70,10 @@ internet and never touches a real database.
 - A pure function resolves the settings once, at startup. Bad settings do **not** stop the server.
   Every tool that needs them answers with the error (`ROOT_INVALID`, `KEYS_INVALID`), so the model sees
   what is wrong and the other tools keep working.
+- **A value that is still a `${...}` placeholder is not set.** Claude Code leaves `${VAR}` as it is
+  when `VAR` is not set, and Claude Desktop leaves `${user_config.x}` when an optional setting has no
+  value. For the keys that is `KEYS_NOT_CONFIGURED`, naming the placeholder. For the root it is
+  `ROOT_INVALID`: a broken setting never falls back to another folder.
 - **Root rules:** it must exist and be a directory, and it must not be a filesystem root (`/`, `C:\`).
 - **Key rules:** comma-separated pairs `id=hex`, at most 64 pairs (every audit result lists the ids).
   - `id`: 1-64 characters, with no `=`, `,` or whitespace. Duplicate ids are invalid.

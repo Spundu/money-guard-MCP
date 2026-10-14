@@ -20,6 +20,16 @@ describe('parseAuditKeys', () => {
     }
   });
 
+  it('reports KEYS_NOT_CONFIGURED, naming it, for a placeholder the MCP host did not fill in', () => {
+    // Claude Code leaves ${VAR} as it is when VAR is not set; Claude Desktop does the same for an
+    // optional setting without a value.
+    for (const raw of ['${MONEY_GUARD_AUDIT_KEYS}', '${MONEY_GUARD_AUDIT_KEYS:-}', ' ${user_config.audit_keys} ']) {
+      expect(errorText(parseAuditKeys(raw))).toMatch(
+        new RegExp(`^KEYS_NOT_CONFIGURED: MONEY_GUARD_AUDIT_KEYS holds "${raw.trim().replace(/[$.{}]/g, '\\$&')}", a placeholder the MCP host did not fill in`),
+      );
+    }
+  });
+
   it('reads id=hex pairs, with spaces around them, in either letter case', () => {
     const s = parseAuditKeys(` k1=${KEY_A} , 2026-q4 = ${KEY_B.toUpperCase()} `);
     if (!s.ok) throw new Error(s.error.toText());
@@ -86,6 +96,13 @@ describe('resolveConfig root', () => {
     expect(errorText(missing)).not.toContain(dir);
     expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: path.join(dir, 'file.txt') }, dir).root)).toMatch(/is not a folder/);
     expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: path.parse(dir).root }, dir).root)).toMatch(/is the root of a disk/);
+  });
+
+  it('refuses a root that is still a placeholder, instead of falling back to another folder', () => {
+    const dir = tempDir();
+    expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: '${user_config.project_folder}', CLAUDE_PROJECT_DIR: dir }, dir).root)).toMatch(
+      /^ROOT_INVALID: The project root \(from MONEY_GUARD_ROOT\) is "\$\{user_config\.project_folder\}", a placeholder the MCP host did not fill in\./,
+    );
   });
 
   it('resolves a relative MONEY_GUARD_ROOT against the working directory', () => {

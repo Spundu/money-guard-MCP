@@ -24,6 +24,13 @@ export interface Config {
 
 type Env = Readonly<Record<string, string | undefined>>;
 
+/**
+ * A `${...}` value the MCP host did not fill in: Claude Code leaves `${VAR}` as it is when VAR is not
+ * set, and Claude Desktop leaves `${user_config.x}` when an optional setting has no value. Such a value
+ * means "not set", never a key ring or a folder name.
+ */
+const PLACEHOLDER = /^\$\{[^}]*\}$/;
+
 export function resolveConfig(env: Env, cwd: string): Config {
   return { root: resolveRoot(env, cwd), auditKeys: parseAuditKeys(env.MONEY_GUARD_AUDIT_KEYS) };
 }
@@ -36,6 +43,8 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
       : ['the working directory', cwd];
   const fix = 'Set MONEY_GUARD_ROOT in the server\'s environment to the project folder the tools may read.';
   const invalid = (why: string) => ({ ok: false as const, error: new ToolError('ROOT_INVALID', `The project root (from ${source}) ${why}.`, fix) });
+  // Fail closed: a broken setting must not quietly widen or move what the tools can read.
+  if (PLACEHOLDER.test(value)) return invalid(`is "${clip(value, 80)}", a placeholder the MCP host did not fill in`);
 
   let real: string;
   try {
@@ -68,6 +77,16 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
         'No HMAC keys are configured, so audit logs cannot be verified.',
         'Set MONEY_GUARD_AUDIT_KEYS in the server\'s environment as id=hex pairs separated by commas ' +
           '(for Claude Code, in .mcp.json as "${MONEY_GUARD_AUDIT_KEYS:-}", read from your shell). Never paste a key into the chat.',
+      ),
+    };
+  }
+  if (PLACEHOLDER.test(raw.trim())) {
+    return {
+      ok: false,
+      error: new ToolError(
+        'KEYS_NOT_CONFIGURED',
+        `MONEY_GUARD_AUDIT_KEYS holds "${clip(raw.trim(), 80)}", a placeholder the MCP host did not fill in: the variable or setting it names has no value.`,
+        'Set that variable in the environment that starts your MCP client, or fill in the setting, then restart the client. Never paste a key into the chat.',
       ),
     };
   }
