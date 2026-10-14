@@ -20,7 +20,7 @@ export interface Root {
 
 export interface PathRule {
   /** 'either': a folder, or a file with an allowed extension (a migrations folder or one schema file). */
-  kind: 'file' | 'directory' | 'either';
+  kind: 'file' | 'either';
   /** Allowed extensions for a file, lowercase with the dot (".csv"). */
   extensions?: readonly string[];
   /** Largest file accepted, in bytes. */
@@ -182,13 +182,10 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   if (rule.kind === 'file' && !stat.isFile()) {
     throw new ToolError('NOT_A_FILE', `${shown(input)} is not a file.`, 'Pass the path of a file, not a folder.');
   }
-  if (rule.kind === 'directory' && !stat.isDirectory()) {
-    throw new ToolError('NOT_A_DIRECTORY', `${shown(input)} is not a folder.`, 'Pass the path of a folder.');
-  }
   if (rule.kind === 'either' && !stat.isFile() && !stat.isDirectory()) {
     throw new ToolError('NOT_A_FILE', `${shown(input)} is neither a file nor a folder.`, 'Pass the path of a folder or a file.');
   }
-  if (stat.isFile() && rule.kind !== 'directory' && rule.extensions) {
+  if (stat.isFile() && rule.extensions) {
     // Both names must pass: the one given, and the real one a link leads to.
     checkExtension(root, input, lexRel, rule.extensions);
     checkExtension(root, input, realRel, rule.extensions);

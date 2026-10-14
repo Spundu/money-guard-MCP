@@ -14,8 +14,8 @@ Rules:
   protocol; diagnostics go to stderr, never file content, keys or absolute paths.
 - Never parse SQL text: execute it (PGlite, in `src/lint/worker.js`) and read the catalog. The only text
   recognised is file-format markers, matched by line: the up and down markers of dbmate, goose,
-  sql-migrate, node-pg-migrate and tern, and pg_dump's `\restrict` (an error hint also looks for
-  `COPY ... FROM stdin;`).
+  sql-migrate, node-pg-migrate and tern, and pg_dump's `\restrict` (the error hints also look for
+  `COPY ... FROM stdin;` and for a failing line that starts with `\`, a psql meta-command).
 - Never `JSON.parse` untrusted JSON: use `parseLedgerJson` (src/ledger/json.ts; V8 12.9+ misparses
   escaped one-character keys). It keeps numbers as their exact text: never turn one into a float.
 - Money is integers: `BigInt` for sums; amounts in results are strings of minor units; no floats.
@@ -23,8 +23,10 @@ Rules:
   with a code from SPEC.md.
 - Results are deterministic and at most 20,000 characters (src/budget.ts). A value echoed from a data
   file goes through `clip`; a database name goes through `escapeUnsafe`; a path goes through `clipPath`
-  (cut in the middle past 400 characters), in results and in error messages alike (src/echo.ts). The
-  server escapes every outgoing string once more, but the tools must not rely on it.
+  (cut in the middle past 400 characters), in results and in error messages alike (src/echo.ts). Apply
+  each once, to raw text: a second pass would double the backslash of its own escapes (a raw value
+  that goes into a longer text is `cut`, and the whole text clipped once). The server escapes hidden
+  characters in every outgoing string once more (`escapeHidden`), but the tools must not rely on it.
 - SQL that money-guard writes (`fix_sql`) is built in TypeScript from catalog names, never by SQL
   functions in the lint database: the migrations control that database.
 - In tests, write a hidden character as `\u{200b}` (braces): tool inputs turn the four-digit form into

@@ -38,7 +38,7 @@ internet and never touches a real database.
 | 3 | Does Claude Code speak 2026-07-28? | **Yes.** Since v2.1.292 it asks local (stdio) servers for 2026-07-28 by default (`MCP_PROTOCOL_NEGOTIATION=legacy` opts out). Since v2.1.139 stdio servers get `CLAUDE_PROJECT_DIR`. Output: warning above 10,000 tokens, cap 25,000 (`MAX_MCP_OUTPUT_TOKENS`); a result over 50,000 characters is saved to a file unless the tool sets `_meta["anthropic/maxResultSizeChars"]`. With tool search (the default) only tool **names and server instructions** load at start; descriptions are cut at 4,096 characters (loaded up front) or 16,384 (loaded by search); server instructions at 4,096. The Claude API refuses `anyOf`/`oneOf`/`allOf` at the **root** of an input schema (Claude Code flattens them); property names must be 1-64 characters of `A-Za-z0-9_.-`; schemas must pass the JSON Schema 2020-12 meta-schema. | [CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (2.1.292, 2.1.139, 2.1.91), [Claude Code MCP docs](https://code.claude.com/docs/en/mcp) | Server instructions must say when to use the tools. No root-level unions in input schemas. Every result stays under 20,000 characters. |
 | 4 | SDK v2 version and API? | **`@modelcontextprotocol/server` 2.3.1** (2026-10-05), Node ≥ 20, zod ^4.2, Apache-2.0. `registerTool(name, { title, description, inputSchema, outputSchema, annotations, icons, _meta }, handler(args, ctx))`; `ctx.mcpReq.signal` reports cancellation. Arguments that fail the schema come back as an `isError` result before the handler runs; a thrown error becomes an `isError` result; output validation is skipped on `isError`. `maxToolInputElements` caps argument size. **Correction to the plan:** `serveStdio(factory, { legacy })` takes a **factory**, and its default is already `'serve'` (it also serves 2025 clients). **Testing correction:** `InMemoryTransport.createLinkedPair()` connects **2025-era** instances only; 2026-era in-process tests go through `createMcpHandler(factory)` + `handler.fetch`; stdio via `StdioClientTransport`; a client picks the era with `versionNegotiation` (`'auto'` or a pin on `'2026-07-28'`; the default is the 2025 handshake). | npm registry; SDK docs: [tools](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/tools.md), [errors](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/errors.md), [stdio](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/stdio.md), [legacy clients](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/legacy-clients.md), [testing](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/testing.md), [protocol versions](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/protocol-versions.md); the installed `.d.ts` | Entry point is `serveStdio(createServer)`. Tests cover both eras (§7). |
 | 5 | Inspector CLI flags? | **v2.11.0** (Node ≥ 22.19); the v1 flags changed. `npx --yes @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list --format json`; `--method tools/call --tool-name X --tool-args-json '{...}'`; `--protocol-era legacy\|auto\|modern`; `--strict` checks schema portability (exit 6). Exit codes: 0 ok, 1 usage, 4 unreachable, 5 tool error. | [Inspector README](https://github.com/modelcontextprotocol/inspector), [CLI smoke-testing guide](https://github.com/modelcontextprotocol/inspector/blob/main/docs/cli-smoke-testing.md), [CLI README](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md) | CI smoke test in both eras, `--strict` must report nothing (§7). |
-| 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib extensions ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start). pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code` and a 1-based `position`. A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
+| 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib extensions ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start). pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code`, and a 1-based `position` when the error points at a place in the text (a syntax error, an unknown name; not a missing role or schema, or a duplicate table). A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
 | 7 | Other | `money-guard-mcp` and `sealed-audit-chain` are both **still free on npm**. `csv-parse` 7.0.3 is MIT with no dependencies. The 2026-07-28 security page: servers meant to run locally "SHOULD ... use the `stdio` transport to limit access to just the MCP client". | npm registry; [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) | stdio only. |
 
 ---
@@ -47,8 +47,8 @@ internet and never touches a real database.
 
 ### 2.1 How it runs
 - TypeScript, Node.js **22.12 or newer** (the same floor as sealed-audit-chain). CI is set up to run
-  Node 22, 24 and 26 on **Ubuntu and Windows**, because path safety differs on Windows; it runs once the
-  repository is public.
+  Node 22, 24 and 26 on **Ubuntu and Windows**, because path safety differs on Windows; it runs on every
+  push to `main` and every pull request, so it starts with the first push.
 - Entry point: `serveStdio(createServer)` from `@modelcontextprotocol/server/stdio`. One binary serves
   MCP **2026-07-28** (`server/discover`, no `initialize`) and the **2025 era** (`initialize`), decided per
   connection.
@@ -85,7 +85,7 @@ internet and never touches a real database.
 | `MONEY_GUARD_ROOT` | The project folder the tools may read. | `CLAUDE_PROJECT_DIR` (Claude Code sets it for stdio servers), else the working directory. |
 | `MONEY_GUARD_AUDIT_KEYS` | HMAC keys for `audit_verify_chain`, as `id=hex,id=hex`. | Not set: the audit tool answers `KEYS_NOT_CONFIGURED`. |
 
-- A pure function resolves the settings once, at startup. Bad settings do **not** stop the server.
+- A function resolves the settings once, at startup (it reads the file system only to check the root). Bad settings do **not** stop the server.
   Every tool that needs them answers with the error (`ROOT_INVALID`, `KEYS_INVALID`), so the model sees
   what is wrong and the other tools keep working.
 - **A value that is still a `${...}` placeholder is not set.** Claude Code leaves `${VAR}` as it is
@@ -180,7 +180,7 @@ already read the files).
   names. If very long names or locations still push a result over the budget, the tool shortens its
   least important lists until it fits:
   - `money_lint_schema`: first `files_applied`, then `other_float_columns`, then `findings` (never
-    below one). The counts still cover everything, and the `..._truncated` flags say what was cut.
+    below one). The counts still cover everything, and the `..._truncated` flags and `other_float_columns_count` say what was cut.
   - `money_check_double_entry`: a shorter page (never empty). `next_offset` continues from the first
     finding left out, so paging still reaches every finding.
 
@@ -233,11 +233,11 @@ Shared error codes:
 
 | Code | When | Fix the message suggests |
 |---|---|---|
-| `ROOT_INVALID` | The root is missing, cannot be opened (permission denied), is not a folder, or is a filesystem root. | Set `MONEY_GUARD_ROOT` to the project folder. |
-| `PATH_INVALID` | Empty, too long, NUL, or a device/UNC path. | Pass a path relative to the project root. |
+| `ROOT_INVALID` | The root is missing, cannot be listed or entered (permission denied), is not a folder, or is a filesystem root. | Set `MONEY_GUARD_ROOT` to the project folder. |
+| `PATH_INVALID` | Empty, too long, NUL, a device/UNC path, or (on Windows) a colon anywhere but after a drive letter, which names an alternate data stream. | Pass a path relative to the project root. |
 | `PATH_OUTSIDE_ROOT` | Resolves outside the root (including through a symlink). | Use a path inside the project. |
 | `PATH_NOT_FOUND` | Nothing at that path. | Names the nearest existing parent folder. |
-| `NOT_A_FILE` / `NOT_A_DIRECTORY` | Wrong kind of entry. | Says which one the tool expects. |
+| `NOT_A_FILE` | A folder where a file is needed, or something that is neither a file nor a folder. | Says which one the tool expects. |
 | `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. |
 | `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. |
 | `FILE_TOO_LARGE` | Over the tool's size limit. | States the limit; suggests a smaller export. |
@@ -607,11 +607,11 @@ shows it: the tool runs the new migration too.
 ### 3.8 Errors (besides §2.5)
 | Code | When | Message contents |
 |---|---|---|
-| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file, line and column (from Postgres's `position`, counted in characters), SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
+| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file; the line and column where Postgres gives a `position` (a syntax error or an unknown name does; a missing role or schema, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
 | `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead (the five most common file types, such as "It holds 3 .ts files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup). |
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, or more than 10,000 files and folders to look through for them (listing them blocks the server). | Points at the folder of migrations, or `files`. |
-| `FILE_NOT_IN_FOLDER` | A `files` entry is missing, or lies outside `migrations`. | |
+| `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, or `files` is given with a single `.sql` file. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
 | `TIMEOUT` | The time limit was hit. | Which file was running, and the limit; the fix says a larger limit helps only with a client that waits longer than 60 seconds. |
 
@@ -636,7 +636,8 @@ The `MIGRATION_FAILED` hints by SQLSTATE:
 - **Classes 53 and 54** (out of memory, a program limit): "the file needs more than the lint database
   can give it".
 
-**Example:** `MIGRATION_FAILED: db/migrations/0004_rls.sql line 3, column 34: role "authenticated"
+**Example** (a migration that grants to a role only Supabase creates; PostgreSQL gives no position for
+it): `MIGRATION_FAILED: db/migrations/0004_rls.sql: role "authenticated"
 does not exist (SQLSTATE 42704). Fix: This file needs objects your platform creates. For a Supabase
 project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE
 ROLE ..., CREATE SCHEMA ...).`
@@ -1103,7 +1104,7 @@ The tests are in `test/` (Vitest, about 550); each file starts with a comment sa
   generated columns, quoting, partitions, inheritance, views); renames and type changes; natural order,
   Prisma folders, Flyway `files`, and the up and down markers of dbmate, goose, sql-migrate,
   node-pg-migrate and tern (down before up, and comments that only look like a marker); a pg_dump 18
-  file with `\restrict`; failures with exact line and column, and each hint
+  file with `\restrict`; failures with the line and column where PostgreSQL gives a position, and each hint
   as real PostgreSQL triggers it; the Supabase preset; a setup file inside the migrations folder, a
   folder that holds only the setup file, and a setup file that fails in each way (`SETUP_FAILED`,
   with advice for the setup file); pgvector; every kind of `fix_sql` run on stored rows, with names

@@ -105,4 +105,9 @@ describe('plainDecimal', () => {
     expect(plainDecimal(n(`1${'0'.repeat(2_000_000)}e-1999998`))).toBe('100');
     expect(plainDecimal(n(`0.${'0'.repeat(2_000_000)}1e2000003`))).toBe('100');
   });
+
+  it('reads an exponent padded with zeros past 15 digits by its value, not its length', () => {
+    expect(plainDecimal(n('1e0000000000000000003'))).toBe('1000');
+    expect(plainDecimal(n('5E-00000000000000000002'))).toBe('0.05');
+  });
 });

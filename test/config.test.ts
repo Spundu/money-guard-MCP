@@ -131,6 +131,15 @@ describe('resolveConfig root', () => {
     } finally {
       chmodSync(path.join(dir, 'shut'), 0o700);
     }
+    // The project folder itself locked: it resolves, but cannot be listed or entered.
+    writeTree(dir, { 'own/x.csv': 'x' });
+    chmodSync(path.join(dir, 'own'), 0o000);
+    try {
+      const own = resolveConfig({ MONEY_GUARD_ROOT: path.join(dir, 'own') }, dir).root;
+      expect(errorText(own)).toMatch(/^ROOT_INVALID: The project root \(from MONEY_GUARD_ROOT\) cannot be opened \(permission denied\)\./);
+    } finally {
+      chmodSync(path.join(dir, 'own'), 0o700);
+    }
   });
 
   it('refuses a root that is still a placeholder, instead of falling back to another folder', () => {

@@ -10,7 +10,8 @@ import { checkLedgerFile } from '../src/ledger/run.js';
 import { FIXES, NULL_FIX_NOTE } from '../src/lint/catalog.js';
 import { lintSchema } from '../src/lint/run.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from '../src/text.js';
-import { rootOf } from './support/tmp.js';
+import type { ToolError } from '../src/errors.js';
+import { rootOf, tempDir, writeTree } from './support/tmp.js';
 
 const SPEC = readFileSync(path.resolve(import.meta.dirname, '..', 'SPEC.md'), 'utf8');
 
@@ -53,6 +54,19 @@ function quoteAfter(heading: string): string {
   }
   return squash(quote.join('\n'));
 }
+
+describe('SPEC.md §3.8', () => {
+  it('shows a MIGRATION_FAILED error exactly as the lint writes it', async () => {
+    const example = /\*\*Example\*\*[^`]*`(MIGRATION_FAILED:[^`]*)`/.exec(SPEC.slice(SPEC.indexOf('### 3.8')))?.[1] ?? 'no example';
+    const dir = tempDir();
+    writeTree(dir, { 'db/migrations/0004_rls.sql': 'create table orders (id bigint);\n\ngrant select on public.orders to authenticated;\n' });
+    const err = await lintSchema(rootOf(dir), { migrations: 'db/migrations' }).then(
+      () => undefined,
+      (e: unknown) => e as ToolError,
+    );
+    expect(squash(err?.toText() ?? 'no error')).toBe(squash(example));
+  });
+});
 
 describe('SPEC.md and the code agree', () => {
   it('on the server instructions (§2.7)', () => {

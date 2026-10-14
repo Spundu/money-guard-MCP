@@ -11,7 +11,7 @@ import { isSensitive, readChecked, resolveInRoot, type PathRule, type Root } fro
 import { rootOf, tempDir, trySymlink, writeTree } from './support/tmp.js';
 
 const CSV: PathRule = { kind: 'file', extensions: ['.csv', '.json'] };
-const DIR: PathRule = { kind: 'directory' };
+const ANY: PathRule = { kind: 'either' };
 
 let base: string;
 let root: Root;
@@ -63,7 +63,7 @@ describe('resolveInRoot', () => {
 
   it('accepts an absolute path when it is inside the project, and "." for the root folder', () => {
     expect(resolveInRoot(root, path.join(root.real, 'exports', 'ledger.csv'), CSV).rel).toBe('exports/ledger.csv');
-    expect(resolveInRoot(root, '.', DIR).rel).toBe('.');
+    expect(resolveInRoot(root, '.', ANY).rel).toBe('.');
   });
 
   it('treats a name that merely starts with two dots as an ordinary file', () => {
@@ -78,7 +78,7 @@ describe('resolveInRoot', () => {
     expect(codeOf(() => resolveInRoot(root, 'exports/../../outside/secret.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
     // The parent folder itself, as a folder argument (migrations: ".."), is outside too.
     for (const parent of ['..', '../', 'exports/../..', path.dirname(root.real)]) {
-      expect(codeOf(() => resolveInRoot(root, parent, DIR)), parent).toBe('PATH_OUTSIDE_ROOT');
+      expect(codeOf(() => resolveInRoot(root, parent, ANY)), parent).toBe('PATH_OUTSIDE_ROOT');
     }
   });
 
@@ -121,7 +121,6 @@ describe('resolveInRoot', () => {
 
   it('checks the kind of entry and the size limit', () => {
     expect(codeOf(() => resolveInRoot(root, 'exports', { kind: 'file' }))).toBe('NOT_A_FILE');
-    expect(codeOf(() => resolveInRoot(root, 'exports/ledger.csv', DIR))).toBe('NOT_A_DIRECTORY');
     expect(codeOf(() => resolveInRoot(root, 'exports/big.csv', { ...CSV, maxBytes: 10 }))).toBe('FILE_TOO_LARGE');
     expect(codeOf(() => resolveInRoot(root, 'exports/big.csv', { ...CSV, maxBytes: 11 }))).toBe('no error');
   });
@@ -138,7 +137,7 @@ describe('resolveInRoot', () => {
     // Folder links need no privilege (junctions on Windows), so this half never skips.
     expect(trySymlink(path.join(base, 'outside'), path.join(root.real, 'outdir'), 'dir')).toBe(true);
     expect(codeOf(() => resolveInRoot(root, 'outdir/secret.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
-    expect(codeOf(() => resolveInRoot(root, 'outdir', DIR))).toBe('PATH_OUTSIDE_ROOT');
+    expect(codeOf(() => resolveInRoot(root, 'outdir', ANY))).toBe('PATH_OUTSIDE_ROOT');
   });
 
   it('refuses a file link that leads outside the project', (ctx) => {

@@ -27,6 +27,23 @@ Why run the migrations instead of reading them? Patterns over SQL text easily mi
 COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database that ran the migrations
 does not.
 
+## How it works
+
+- `src/index.ts` serves one MCP client on stdio; `src/server.ts` registers the three read-only tools
+  and makes every answer safe and small on the way out.
+- **Schema lint** (`src/lint/`): the migrations run one file at a time in PGlite, inside a worker
+  thread, so a stuck or runaway migration can be stopped without stopping the server. After each file
+  the worker reads the catalog; the main thread judges each column (`names.ts`, `catalog.ts`) and
+  writes `fix_sql` itself.
+- **Ledger check** (`src/ledger/`): strict CSV and JSON readers keep every number as its exact text
+  (`json.ts` never uses `JSON.parse`); amounts become `BigInt` minor units, summed per transaction
+  and currency.
+- **Audit check** (`src/audit/`): sealed-audit-chain verifies the chain; money-guard names the first
+  break and why, and checks an earlier head (the anchor).
+- **Safety in one place**: every path goes through `src/paths.ts` (confined to the project), every
+  piece of text it echoes through `src/echo.ts` (escaped and cut), and every result through the budget
+  in `src/budget.ts`.
+
 ## Quick start with Claude Code
 
 You need Node.js 22.12 or newer, and git.
@@ -66,6 +83,9 @@ an order total stored as a float, a ledger export with an unbalanced transaction
 pennies, and an audit log that someone edited. The last call asks for a file outside the project.
 From the clone, run `node examples/demo.mjs`:
 
+<details>
+<summary>The demo's source</summary>
+
 ```js
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
@@ -97,6 +117,8 @@ for (const [tool, args] of [
 }
 await client.close();
 ```
+
+</details>
 
 It prints this (the server also writes a startup line and one line per call to stderr):
 
@@ -174,12 +196,13 @@ same JSON is also sent as text, for clients that ignore structured results. This
 
 </details>
 
-`fix_sql` is a starting point. It converts pounds to pence and keeps amounts that are already in
-pence (or cents) as they are; the tests run each kind of conversion on stored rows. It is `null` where
-the unit needs a decision (a column with four decimal places), and where a default, a CHECK
+`fix_sql` is a starting point. It converts pounds to pence and rounds amounts that are already in
+pence (or cents) to whole pence; the tests run each kind of conversion on stored rows. It is `null`
+where the unit needs a decision (a column with four decimal places), where a default, a CHECK
 constraint or a unique index condition may hold amounts in pounds, in the table or in a partition or
-child table: Postgres's type change would leave those unconverted, so the agent writes that migration
-by hand. (A CHECK such as `amount >= 0` is fine.) The agent adds it as a new
+child table (Postgres's type change would leave those unconverted, so the agent writes that migration
+by hand; a CHECK such as `amount >= 0` is fine), and in the other cases SPEC.md §3.6 lists (domains,
+arrays, generated and inherited columns, names with hidden characters). The agent adds it as a new
 migration and runs the check again, and the check runs that migration too. [SPEC.md](SPEC.md) shows
 full results of the other two tools (§4.9, §5.8).
 
@@ -192,6 +215,11 @@ full results of the other two tools (§4.9, §5.8).
 
 A bad setting does not stop the server. The tools that need it explain what is wrong, and the others
 keep working.
+
+The audit keys are the ones your app seals its log with, as `id=key` pairs: each entry names the key
+id it was sealed with (`writer_key_id`), so a log sealed with `k2` needs `k2=<its key>` here. A key
+made up for money-guard cannot verify anything: the check answers `UNKNOWN_KEY_ID` or
+`HMAC_MISMATCH`.
 
 To verify audit logs in Claude Code, keep the key in your environment and pass it through a file
 named `.mcp.json` in your project's root folder, instead of the `claude mcp add` command above. If you
@@ -254,7 +282,8 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
 - Codes: `FLOAT_MONEY` and `MONEY_TYPE` are errors. `NUMERIC_MONEY` is a warning, which
   `accept_numeric: true` turns off. `SMALLINT_MONEY` is a warning (`smallint` holds at most £327.67 in
   pence).
-- A migration that fails is reported with its file, line and column, the Postgres message and a hint.
+- A migration that fails is reported with its file, the Postgres message and a hint, and with the line
+  and column where PostgreSQL gives a position (a syntax error, an unknown name).
 
 **`money_check_double_entry`**
 - `file` (required) and `columns` (required): `transaction_id`, plus either a signed `amount`, or an
@@ -368,11 +397,13 @@ of [integer-pence-ledger](https://github.com/Spundu/integer-pence-ledger) and th
 Before publishing, it went through rounds of review by AI agents: Claude, each in a fresh session that
 saw only the code and the docs, each with one lens (security, the checkers' correctness, MCP and
 agent use, tests and CI, and the docs as a hiring manager would read them). Round 1 found about 45
-problems and round 2 about 50, among them hidden characters reaching the model, a `fix_sql` that
-broke column defaults, and a server that spun when its host closed stderr. Every finding was
-reproduced before it was fixed, and fixes came with tests shown to fail without them; where a
-reviewer later found part of a fix untested (by planting bugs the tests did not catch), the test was
-added. The rounds go on until one finds no high-severity problem. It has had no independent human
+problems, round 2 about 50 and round 3 about 40, among them hidden characters reaching the model, a
+`fix_sql` that broke column defaults, a server that spun when its host closed stderr, and migrations
+that a security fix had quietly skipped. Every finding was reproduced before it was fixed (one that
+could not be was answered instead), and fixes came with tests shown to fail without them. The tests
+reviewer also plants bugs to test the tests: in round 3, 29 of 115 went uncaught; tests now catch
+each of them that changes an answer (one changes nothing, and two are caught where the tests run on
+Linux). The rounds go on until one finds no high-severity problem. It has had no independent human
 review yet.
 
 ## License

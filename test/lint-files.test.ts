@@ -311,6 +311,9 @@ describe('money_lint_schema: which files run', () => {
     const many: Record<string, string> = {};
     for (let i = 0; i <= 2000; i += 1) many[`db/migrations/${i}.sql`] = '';
     expect(await codeOf(many)).toBe('TOO_MANY_FILES');
+    const exactly = tempDir(); // 2,000 is still allowed
+    writeTree(exactly, Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`db/${i}.sql`, ''])));
+    expect(collectSources(rootOf(exactly), { migrations: 'db' }).files.length).toBe(2000);
     expect(await codeOf({ 'db/migrations/big.sql': `-- ${'x'.repeat(5 * 1024 * 1024)}` })).toBe('FILE_TOO_LARGE');
     const nearly = `-- ${'x'.repeat(4.5 * 1024 * 1024)}`;
     const five = Object.fromEntries([1, 2, 3, 4, 5].map((i) => [`db/migrations/000${i}.sql`, nearly]));

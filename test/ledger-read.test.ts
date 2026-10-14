@@ -57,6 +57,13 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(closest(`${head}zzzz`, [`${head}${'q'.repeat(8)}`, `${head}zzzz`])).toBe(`${head}${'q'.repeat(8)}`);
   });
 
+  it('suggests a name within 2 edits, or a third of its length, among the first 5,000 candidates', () => {
+    expect(closest('amnt', ['currency', 'amount'])).toBe('amount'); // 2 edits from a 4-letter name
+    expect(closest('amt', ['currency', 'amount'])).toBe(undefined); // 3 edits: too far for a guess
+    const many = [...Array.from({ length: 5000 }, (_, i) => `col_${i}`), 'amount'];
+    expect(closest('amount', many)).toBe(undefined); // the 5,001st candidate is not compared
+  });
+
   it('skips lines of only spaces or tabs without losing count of the lines', () => {
     const r = check('.csv', 't,a\n\t\n  \nA,5\nA,-4\n', { columns: { transaction_id: 't', amount: 'a' } });
     expect(r.findings[0]?.lines).toEqual([4, 5]);

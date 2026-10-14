@@ -9,7 +9,6 @@ export type ErrorCode =
   | 'PATH_OUTSIDE_ROOT'
   | 'PATH_NOT_FOUND'
   | 'NOT_A_FILE'
-  | 'NOT_A_DIRECTORY'
   | 'FILE_TYPE_NOT_ALLOWED'
   | 'SENSITIVE_PATH'
   | 'FILE_TOO_LARGE'

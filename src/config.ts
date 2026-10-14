@@ -2,7 +2,7 @@
 // server: it is kept as a ToolError, and every tool that needs it answers with that error, so the model
 // sees what is wrong and the other tools keep working.
 
-import { realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { InMemoryKeyProvider, MIN_KEY_BYTES, type KeyProvider } from 'sealed-audit-chain';
 import { clip, hasUnsafe } from './echo.js';
@@ -53,6 +53,7 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
   try {
     real = realpathSync.native(path.resolve(cwd, value));
     if (!statSync(real).isDirectory()) return invalid('is not a folder');
+    accessSync(real, constants.R_OK | constants.X_OK); // a folder that cannot be listed or entered
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     return invalid(code === 'EACCES' || code === 'EPERM' ? 'cannot be opened (permission denied)' : 'does not exist');
