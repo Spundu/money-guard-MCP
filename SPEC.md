@@ -256,10 +256,15 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
 
 ### 3.4 How it works
 1. Check the paths, list the files and check the limits (§3.9).
-2. Start a **worker thread** holding a fresh in-memory PGlite (PostgreSQL 18.6). All 34 bundled
-   extensions plus pgvector are registered, so `CREATE EXTENSION` works for them. The database lives
-   in memory and sees only a **virtual filesystem**: a migration cannot read or write the computer's
-   files or run programs (§1, fact 6).
+2. Start a **worker thread** holding a fresh in-memory PGlite (PostgreSQL 18.6). Every extension PGlite
+   bundles is registered, plus pgvector, so `CREATE EXTENSION` works for: amcheck, autoinc, bloom,
+   btree_gin, btree_gist, citext, cube, dict_int, dict_xsyn, earthdistance, file_fdw, fuzzystrmatch,
+   hstore, insert_username, intarray, isn, lo, ltree, moddatetime, pageinspect, pg_buffercache,
+   pg_freespacemap, pg_stat_statements, pg_surgery, pg_trgm, pg_visibility, pg_walinspect, pgcrypto,
+   plpgsql, refint, seg, tablefunc, tcn, tsm_system_rows, tsm_system_time, unaccent, uuid-ossp and
+   vector. The database lives in memory and sees only a **virtual filesystem**: a migration cannot read
+   or write the computer's files or run programs (§1, fact 6). The worker's output (a NOTICE a
+   migration raises, say) is captured and dropped, so it never reaches the protocol channel or the log.
 3. Run `preset` (if given), then `setup` (if given). Then take a **baseline snapshot** of the catalog.
    Columns already present at that point are never checked.
 4. Run each migration file as **one script**, the same way `psql -f` would. After each file:
@@ -284,15 +289,22 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
    Catalog queries name every object with its schema (`pg_catalog.`), so a migration that changes
    `search_path` cannot change what they read.
 
-**Supabase preset** (in v1, decided 2026-10-14) creates the objects ordinary Supabase migrations use:
-- roles `anon`, `authenticated`, `service_role`, `authenticator`
-- schemas `auth`, `storage`, `extensions`
-- table `auth.users (id uuid primary key, email text, raw_user_meta_data jsonb, ...)`
-- functions `auth.uid()`, `auth.role()`, `auth.jwt()` and `auth.email()`
-- tables `storage.buckets` and `storage.objects`
+**Supabase preset** (in v1, decided 2026-10-14; the SQL is `src/lint/supabase.ts`) creates the objects
+ordinary Supabase migrations use:
+- roles `anon`, `authenticated`, `service_role` (BYPASSRLS), `authenticator`, `supabase_admin`,
+  `supabase_auth_admin` and `supabase_storage_admin`
+- schemas `auth`, `storage` and `extensions`, with `uuid-ossp` and `pgcrypto` installed in
+  `extensions` and `extensions` on the search path, as Supabase has them
+- table `auth.users` (its usual columns: `id uuid primary key`, `email`, `raw_user_meta_data jsonb`, ...)
+- functions `auth.uid()`, `auth.role()`, `auth.jwt()` and `auth.email()`, which read the
+  `request.jwt.claim` settings as Supabase's do
+- tables `storage.buckets` and `storage.objects` (with row level security on), and functions
+  `storage.foldername()`, `storage.filename()` and `storage.extension()`
+- publication `supabase_realtime`
 
 That covers RLS policies `TO authenticated USING (auth.uid() = user_id)`, grants, `CREATE EXTENSION ...
-WITH SCHEMA extensions`, and foreign keys to `auth.users`. A full `supabase db dump` still fails on
+WITH SCHEMA extensions`, `uuid_generate_v4()` defaults, foreign keys to `auth.users`, storage
+buckets and policies, and `ALTER PUBLICATION supabase_realtime ADD TABLE`. A full `supabase db dump` still fails on
 extensions that PGlite does not have (`pg_graphql`, `pg_net`, `pgsodium`, `pg_cron`). The error says
 so and suggests linting `supabase/migrations` instead.
 
@@ -390,7 +402,7 @@ runs the new migration too.
 ### 3.8 Errors (besides §2.5)
 | Code | When | Message contents |
 |---|---|---|
-| `MIGRATION_FAILED` | A migration file fails, or leaves the database unusable. | The file, line and column (from Postgres's `position`, counted in characters), SQLSTATE and the Postgres message (≤ 300 characters). It adds a targeted hint by SQLSTATE. |
+| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file, line and column (from Postgres's `position`, counted in characters), SQLSTATE and the Postgres message (≤ 300 characters). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails. | The same details. |
 | `NO_SQL_FILES` | The folder has no `.sql` files. | What it found instead. For example: ".ts files: Knex/TypeORM migrations are code; generate SQL first (`drizzle-kit generate`, `prisma migrate diff --script`, `pg_dump --schema-only`)." |
 | `TOO_MANY_FILES` | More than 2,000. | |

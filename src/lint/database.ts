@@ -1,0 +1,189 @@
+// Running the scripts in the worker thread (worker.js), with the time limits that keep a stuck or
+// endless migration from holding the server (SPEC.md §3.4, §3.9). Resolves with the catalog's answers;
+// rejects with a ToolError naming the file that failed, hung or ran out of time.
+
+import { Worker } from 'node:worker_threads';
+import { clip } from '../echo.js';
+import { ToolError } from '../errors.js';
+import { DETAIL_SQL, SNAPSHOT_SQL, type DetailRow } from './catalog.js';
+
+export interface Script {
+  /** What messages call it: a path relative to the root, or "the Supabase preset". */
+  name: string;
+  text: string;
+  phase: 'setup' | 'migration';
+}
+
+export interface DbError {
+  message: string;
+  code?: string;
+  position?: string;
+  detail?: string;
+  hint?: string;
+  where?: string;
+}
+
+export interface DatabaseOutcome {
+  /** "PostgreSQL 18.6 (PGlite 0.5.9)". */
+  postgres: string;
+  detail: DetailRow[];
+  /** For each column (table oid:column number), the index of the first migration after which it has had its current type; negative when setup made it. */
+  since: Map<string, number>;
+}
+
+/** How long the check after a file may take before the database counts as stuck. */
+const SANITY_MS = 5000;
+
+type Message =
+  | { type: 'ready'; version: string; available: string[] }
+  | { type: 'running'; step: number }
+  | { type: 'executed'; step: number }
+  | { type: 'snapshot'; step: number; rows: Array<[string, string]> }
+  | { type: 'failed'; step: number; error: DbError }
+  | { type: 'unusable'; step: number }
+  | { type: 'crashed'; error: DbError }
+  | { type: 'done'; detail: DetailRow[] };
+
+/** 1-based line and column of the character at 1-based position `position`, counted in code points as PostgreSQL counts. */
+export function locate(text: string, position: number): { line: number; column: number } {
+  let line = 1;
+  let column = 1;
+  let i = 0;
+  for (const ch of text) {
+    i += 1;
+    if (i >= position) break;
+    if (ch === '\n') {
+      line += 1;
+      column = 1;
+    } else {
+      column += 1;
+    }
+  }
+  return { line, column };
+}
+
+const MISSING_OBJECT = new Set(['42704', '3F000', '42883', '42P01']);
+
+/** The ToolError for a script that PostgreSQL refused, with a hint fitted to the error. */
+export function failure(script: Script, err: DbError, context: { available: readonly string[]; preset: boolean }): ToolError {
+  const code = script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
+  const position = err.position === undefined ? Number.NaN : Number(err.position);
+  const at = Number.isInteger(position) && position > 0 ? locate(script.text, position) : null;
+  const where = at === null ? script.name : `${script.name} line ${at.line}, column ${at.column}`;
+  const detail = err.detail ? ` (${clip(err.detail, 120)})` : '';
+  const state = err.code ? ` (SQLSTATE ${err.code})` : '';
+  const message = `${where}: ${clip(err.message, 300)}${detail}${state}.`;
+
+  let fix: string;
+  if (/^extension ".*" is not available$/.test(err.message)) {
+    fix = `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, leave the file out with files.`;
+  } else if (err.code !== undefined && MISSING_OBJECT.has(err.code)) {
+    fix = context.preset
+      ? 'The Supabase preset does not create this. Pass setup: a .sql file that creates it (it runs after the preset).'
+      : 'This file needs objects your platform creates. For a Supabase project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE ROLE ..., CREATE SCHEMA ...).';
+  } else if (err.code === '42601' && at !== null && (script.text.split('\n')[at.line - 1] ?? '').startsWith('\\')) {
+    fix = 'That line is a psql meta-command, which only psql understands. Leave the file out with files, or lint a copy without that line.';
+  } else if (err.code === '25001') {
+    fix = 'money-guard runs each file as one script, where CREATE INDEX CONCURRENTLY cannot run. If the file only creates indexes, leave it out with files.';
+  } else {
+    fix = 'If this file runs on your real database, it probably needs objects your platform creates: pass setup or preset. Otherwise fix the SQL at that place.';
+  }
+  return new ToolError(code, message, fix);
+}
+
+function versionOf(raw: string): string {
+  const cut = raw.indexOf(' on ');
+  return cut === -1 ? raw : raw.slice(0, cut);
+}
+
+export function runScripts(scripts: readonly Script[], options: { timeoutMs: number; preset: boolean; signal?: AbortSignal | undefined }): Promise<DatabaseOutcome> {
+  const firstMigration = scripts.findIndex((s) => s.phase === 'migration');
+  return new Promise<DatabaseOutcome>((resolve, reject) => {
+    // stdout and stderr are captured and dropped: a NOTICE a migration raises must never reach the
+    // server's stdout (the protocol channel) or its log.
+    const worker = new Worker(new URL('./worker.js', import.meta.url), {
+      workerData: { scripts: scripts.map(({ name, text }) => ({ name, text })), snapshotSql: SNAPSHOT_SQL, detailSql: DETAIL_SQL },
+      stdout: true,
+      stderr: true,
+      resourceLimits: { maxOldGenerationSizeMb: 1024 },
+    });
+    worker.stdout.resume();
+    worker.stderr.resume();
+
+    const since = new Map<string, { ty: string; since: number }>();
+    let postgres = '';
+    let available: string[] = [];
+    let running = -1;
+    let finished = false;
+    let sanity: NodeJS.Timeout | undefined;
+
+    const finish = (outcome: { ok: DatabaseOutcome } | { error: unknown }) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(overall);
+      clearTimeout(sanity);
+      options.signal?.removeEventListener('abort', onAbort);
+      void worker.terminate();
+      if ('ok' in outcome) resolve(outcome.ok);
+      else reject(outcome.error);
+    };
+    const scriptAt = (step: number): Script => scripts[step] ?? { name: 'a script', text: '', phase: 'migration' };
+    const stopped = (why: string) => {
+      const script = running >= 0 ? scriptAt(running) : null;
+      return script === null
+        ? new ToolError('INTERNAL_ERROR', `The database could not start: ${clip(why, 200)}.`, 'Report this; details are in the server log.')
+        : new ToolError(script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED', `${script.name}: the database stopped while running this file (${clip(why, 200)}).`, 'Leave the file out with files, or lint it on its own to find the statement that stops the database.');
+    };
+
+    const overall = setTimeout(() => {
+      const name = running >= 0 ? scriptAt(running).name : 'the database start-up';
+      finish({ error: new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while running ${name}.`, 'Pass a larger timeout_seconds (at most 300), or leave slow data-loading files out with files.') });
+    }, options.timeoutMs);
+    const onAbort = () => finish({ error: options.signal?.reason ?? new Error('cancelled') });
+    if (options.signal?.aborted) onAbort();
+    options.signal?.addEventListener('abort', onAbort);
+
+    worker.on('message', (m: Message) => {
+      switch (m.type) {
+        case 'ready':
+          postgres = versionOf(m.version);
+          available = m.available;
+          break;
+        case 'running':
+          running = m.step;
+          break;
+        case 'executed':
+          sanity = setTimeout(() => {
+            finish({ error: new ToolError('MIGRATION_FAILED', `${scriptAt(m.step).name}: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, 'Leave the file out with files.') });
+          }, SANITY_MS);
+          break;
+        case 'snapshot': {
+          clearTimeout(sanity);
+          const index = m.step - (firstMigration === -1 ? scripts.length : firstMigration);
+          const seen = new Set<string>();
+          for (const [col, ty] of m.rows) {
+            seen.add(col);
+            const prev = since.get(col);
+            if (prev === undefined || prev.ty !== ty) since.set(col, { ty, since: index });
+          }
+          for (const col of since.keys()) if (!seen.has(col)) since.delete(col);
+          break;
+        }
+        case 'failed':
+          finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset }) });
+          break;
+        case 'unusable':
+          finish({ error: new ToolError('MIGRATION_FAILED', `${scriptAt(m.step).name}: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, 'Leave the file out with files.') });
+          break;
+        case 'crashed':
+          finish({ error: stopped(m.error.message) });
+          break;
+        case 'done':
+          finish({ ok: { postgres, detail: m.detail, since: new Map([...since].map(([col, v]) => [col, v.since])) } });
+          break;
+      }
+    });
+    worker.on('error', (err) => finish({ error: stopped(err.message) }));
+    worker.on('exit', (code) => finish({ error: stopped(`the worker exited with code ${code}`) }));
+  });
+}

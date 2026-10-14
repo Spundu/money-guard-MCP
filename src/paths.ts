@@ -19,7 +19,8 @@ export interface Root {
 }
 
 export interface PathRule {
-  kind: 'file' | 'directory';
+  /** 'either': a folder, or a file with an allowed extension (a migrations folder or one schema file). */
+  kind: 'file' | 'directory' | 'either';
   /** Allowed extensions for a file, lowercase with the dot (".csv"). */
   extensions?: readonly string[];
   /** Largest file accepted, in bytes. */
@@ -33,6 +34,7 @@ export interface ResolvedPath {
   rel: string;
   /** Size in bytes (files). */
   size: number;
+  isDirectory: boolean;
 }
 
 const MAX_PATH_CHARS = 1024;
@@ -85,7 +87,7 @@ function checkSyntax(input: string): void {
   }
 }
 
-function checkName(root: Root, input: string, rel: string, rule: PathRule): void {
+function checkSensitive(input: string, rel: string): void {
   if (isSensitive(rel)) {
     throw new ToolError(
       'SENSITIVE_PATH',
@@ -93,15 +95,15 @@ function checkName(root: Root, input: string, rel: string, rule: PathRule): void
       'money-guard never reads secret files. Point it at migrations, ledger exports or audit logs.',
     );
   }
-  if (rule.kind === 'file' && rule.extensions) {
-    const ext = path.extname(rel).toLowerCase();
-    if (!rule.extensions.includes(ext)) {
-      throw new ToolError(
-        'FILE_TYPE_NOT_ALLOWED',
-        `${shown(input)} is not one of the file types this tool reads.`,
-        `Pass a file ending in ${rule.extensions.join(', ')} inside the project folder (${root.name}).`,
-      );
-    }
+}
+
+function checkExtension(root: Root, input: string, rel: string, extensions: readonly string[]): void {
+  if (!extensions.includes(path.extname(rel).toLowerCase())) {
+    throw new ToolError(
+      'FILE_TYPE_NOT_ALLOWED',
+      `${shown(input)} is not one of the file types this tool reads.`,
+      `Pass a file ending in ${extensions.join(', ')} inside the project folder (${root.name}).`,
+    );
   }
 }
 
@@ -137,7 +139,9 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     );
   }
   const lexRel = path.relative(root.real, lexical);
-  checkName(root, input, lexRel, rule);
+  checkSensitive(input, lexRel);
+  // A file rule refuses the wrong type before touching the disk; 'either' must first learn what it is.
+  if (rule.kind === 'file' && rule.extensions) checkExtension(root, input, lexRel, rule.extensions);
 
   let real: string;
   try {
@@ -159,7 +163,8 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
       'Pass a file or folder that really lives inside the project.',
     );
   }
-  checkName(root, input, path.relative(root.real, real), rule);
+  const realRel = path.relative(root.real, real);
+  checkSensitive(input, realRel);
 
   const stat = statSync(real);
   if (rule.kind === 'file' && !stat.isFile()) {
@@ -168,14 +173,22 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   if (rule.kind === 'directory' && !stat.isDirectory()) {
     throw new ToolError('NOT_A_DIRECTORY', `${shown(input)} is not a folder.`, 'Pass the path of a folder.');
   }
-  if (rule.maxBytes !== undefined && stat.size > rule.maxBytes) {
+  if (rule.kind === 'either' && !stat.isFile() && !stat.isDirectory()) {
+    throw new ToolError('NOT_A_FILE', `${shown(input)} is neither a file nor a folder.`, 'Pass the path of a folder or a file.');
+  }
+  if (stat.isFile() && rule.kind !== 'directory' && rule.extensions) {
+    // Both names must pass: the one given, and the real one a link leads to.
+    checkExtension(root, input, lexRel, rule.extensions);
+    checkExtension(root, input, realRel, rule.extensions);
+  }
+  if (stat.isFile() && rule.maxBytes !== undefined && stat.size > rule.maxBytes) {
     throw new ToolError(
       'FILE_TOO_LARGE',
       `${shown(input)} is ${formatMib(stat.size)}; this tool reads at most ${formatMib(rule.maxBytes)}.`,
       'Export a smaller file (a date range, say) and check the parts one by one.',
     );
   }
-  return { real, rel: toPosix(lexRel), size: stat.size };
+  return { real, rel: toPosix(lexRel), size: stat.size, isDirectory: stat.isDirectory() };
 }
 
 export function formatMib(bytes: number): string {
