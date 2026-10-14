@@ -36,6 +36,8 @@ describe('parseAuditKeys', () => {
     for (const [raw, which] of cases) {
       expect(errorText(parseAuditKeys(raw))).toMatch(new RegExp(`^KEYS_NOT_CONFIGURED: MONEY_GUARD_AUDIT_KEYS holds ${which}, which the MCP host did not fill in`));
     }
+    // A value that only starts with a placeholder was set to something: it is malformed, not missing.
+    expect(errorText(parseAuditKeys('${MONEY_GUARD_AUDIT_KEYS}k2=00'))).toMatch(/^KEYS_INVALID: /);
   });
 
   it('never repeats key material from a malformed setting or placeholder', () => {

@@ -1,4 +1,5 @@
-// Run from a fresh project where the PACKED tarball is installed (see .github/workflows/ci.yml): starts
+// Copied into a fresh project where the PACKED tarball and the MCP client are installed, and run there
+// (see .github/workflows/ci.yml), so that it imports them, not the repository's own packages: starts
 // the installed server the way an MCP host does, over stdio, and checks the published package works
 // on its own, with no repository files except the demo project.
 import { createRequire } from 'node:module';

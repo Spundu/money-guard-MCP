@@ -163,7 +163,7 @@ describe('money_lint_schema: judging columns', () => {
   });
 
   it('says in every summary when float columns not taken for money exist, and counts only tables with money columns', async () => {
-    const r = await lint({ 'db/migrations/0001.sql': 'create table orders (total bigint, weight double precision); create table notes (id int); create table tags (id int);' });
+    const r = await lint({ 'db/migrations/0001.sql': 'create table orders (total bigint, weight real); create table notes (id int); create table tags (id int);' });
     expect(r.summary).toBe('No problems: 1 money column in 1 table uses a safe type. 1 migration file applied. 1 other float column (other_float_columns): check that none holds money.');
     const bad = await lint({ 'db/migrations/0001.sql': 'create table orders (total double precision, lat double precision, lng double precision);' });
     expect(bad.summary).toBe('1 problem in 1 money column (1 error, 0 warnings). 1 migration file applied. 2 other float columns (other_float_columns): check that none holds money.');
@@ -181,6 +181,8 @@ describe('money_lint_schema: judging columns', () => {
       /^BAD_COLUMN_NAME: money_columns names "public\.Orders\.GrossValue", which is not a column of any table the migrations create\. Did you mean "public\.orders\.grossvalue"\?/,
     );
     expect(await codeOf(files, { ignore_columns: ['orders.amount', 'orders.nothing_like_it'] })).toBe('BAD_COLUMN_NAME');
+    // A column alone could be in any table: the entry must name one.
+    expect((await failure(files, { money_columns: ['grossvalue'] })).message).toBe('money_columns entry "grossvalue" is not "table.column" or "schema.table.column".');
   });
 
   it('dates a finding from when the column got its type, not from a later change of precision', async () => {

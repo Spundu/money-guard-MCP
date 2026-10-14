@@ -39,7 +39,8 @@ internet and never touches a real database.
 | 4 | SDK v2 version and API? | **`@modelcontextprotocol/server` 2.3.1** (2026-10-05), Node ≥ 20, zod ^4.2, Apache-2.0. `registerTool(name, { title, description, inputSchema, outputSchema, annotations, icons, _meta }, handler(args, ctx))`; `ctx.mcpReq.signal` reports cancellation. Arguments that fail the schema come back as an `isError` result before the handler runs; a thrown error becomes an `isError` result; output validation is skipped on `isError`. `maxToolInputElements` caps argument size. **Correction to the plan:** `serveStdio(factory, { legacy })` takes a **factory**, and its default is already `'serve'` (it also serves 2025 clients). **Testing correction:** `InMemoryTransport.createLinkedPair()` connects **2025-era** instances only; 2026-era in-process tests go through `createMcpHandler(factory)` + `handler.fetch`; stdio via `StdioClientTransport`; a client picks the era with `versionNegotiation` (`'auto'` or a pin on `'2026-07-28'`; the default is the 2025 handshake). | npm registry; SDK docs: [tools](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/tools.md), [errors](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/errors.md), [stdio](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/stdio.md), [legacy clients](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/legacy-clients.md), [testing](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/testing.md), [protocol versions](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/protocol-versions.md); the installed `.d.ts` | Entry point is `serveStdio(createServer)`. Tests cover both eras (§7). |
 | 5 | Inspector CLI flags? | **v2.11.0** (Node ≥ 22.19); the v1 flags changed. `npx --yes @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list --format json`; `--method tools/call --tool-name X --tool-args-json '{...}'`; `--protocol-era legacy\|auto\|modern`; `--strict` checks schema portability (exit 6). Exit codes: 0 ok, 1 usage, 4 unreachable, 5 tool error. | [Inspector README](https://github.com/modelcontextprotocol/inspector), [CLI smoke-testing guide](https://github.com/modelcontextprotocol/inspector/blob/main/docs/cli-smoke-testing.md), [CLI README](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md) | CI smoke test in both eras, `--strict` must report nothing (§7). |
 | 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib extensions ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start). pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code`, and a 1-based `position` when the error points at a place in the text (a syntax error, an unknown name; not a missing role or schema, or a duplicate table). A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
-| 7 | Other | `money-guard-mcp` and `sealed-audit-chain` are both **still free on npm**. `csv-parse` 7.0.3 is MIT with no dependencies. The 2026-07-28 security page: servers meant to run locally "SHOULD ... use the `stdio` transport to limit access to just the MCP client". | npm registry; [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) | stdio only. |
+| 7 | Can one process start a PGlite thread while another ends? | **Not safely on Node.js 24.** Its V8 (13.6) can free a wasm-to-JS import wrapper twice when a thread with WebAssembly is torn down while another thread looks the wrapper up, and then aborts the whole process (`Check failed: jit_page_->allocations_.erase(addr) == 1`). Fixed in V8 (9b8ca54d5a, 68210d500a); the Node.js 24 backport is still open; Node.js 22 and 26 are not affected. Review round 4 saw it twice in nine full test runs. | [nodejs/node#66366](https://github.com/nodejs/node/issues/66366), [nodejs/node#66376](https://github.com/nodejs/node/pull/66376) | One database thread at a time (§3.4). |
+| 8 | Other | `money-guard-mcp` and `sealed-audit-chain` are both **still free on npm**. `csv-parse` 7.0.3 is MIT with no dependencies. The 2026-07-28 security page: servers meant to run locally "SHOULD ... use the `stdio` transport to limit access to just the MCP client". | npm registry; [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) | stdio only. |
 
 ---
 
@@ -253,7 +254,8 @@ Shared error codes:
   that can take several seconds (about 4 for the largest CSV ledger). A lint runs in its worker
   meanwhile.
 - A cancelled lint stops its work: the worker is terminated and its database discarded, the log gets
-  a `CANCELLED` line, and the next lint can start at once. A ledger or audit call cannot be cancelled
+  a `CANCELLED` line, and the next lint can start at once (its database starts once the cancelled
+  one's thread has ended, §3.4). A ledger or audit call cannot be cancelled
   once it has started: a cancel that arrives while it runs is read only after it has ended, so the
   call is answered and logged `ok`. It ends within those seconds.
 - Each tool's own limits are in its section.
@@ -411,9 +413,15 @@ never converged: verify by executing, not by parsing.
    to `double precision`) is not a break. Examples:
    - created as float in `0001`, still float → `0001`.
    - created as numeric in `0001`, altered to float in `0005` → `0005`.
-7. The worker is terminated at the time limit or on cancellation, and the database is discarded.
-   Catalog queries name every object with its schema (`pg_catalog.`), so a migration that changes
-   `search_path` cannot change what they read.
+7. The worker is terminated when the lint ends (it has its answer, fails, runs out of time or is
+   cancelled), and the database is discarded. Catalog queries name every object with its schema
+   (`pg_catalog.`), so a migration that changes `search_path` cannot change what they read.
+8. **One database thread at a time.** The lint answers at once, but the next lint's worker starts only
+   once the last one has ended (a fraction of a second after it was told to). On Node.js 24, a thread
+   with WebAssembly that starts while another is being torn down can make V8 abort the whole process
+   (§1, fact 7), and the server would end with it. The tests keep to the same rule: SQL that a test runs
+   itself goes through the same path (`test/support/sql.ts`), never PGlite on the test's own thread
+   beside lints.
 
 **Supabase preset** (in v1, decided 2026-10-14; the SQL is `src/lint/supabase.ts`) creates the objects
 ordinary Supabase migrations use:
@@ -671,7 +679,7 @@ ROLE ..., CREATE SCHEMA ...).`
   lint can take more for that long. A file that needs more fails as `MIGRATION_FAILED`
   (`SETUP_FAILED` for setup) with a hint, and its database is discarded. (The worker's JavaScript heap
   has its own 1 GiB limit too.)
-- One lint at a time.
+- One lint at a time, and one database thread at a time (§3.4).
 - At most 50 findings in a result. The counts still cover them all, and the model fixes those and runs
   the tool again.
 
@@ -1123,18 +1131,19 @@ The tests are in `test/` (Vitest, about 550); each file starts with a comment sa
   folder that holds only the setup file, and a setup file that fails in each way (`SETUP_FAILED`,
   with advice for the setup file); advice without `files` when `migrations` is one file; pgvector;
   every kind of `fix_sql` run on stored rows, with names quoted as `quote_ident` quotes them, and
-  none offered while a default, a CHECK constraint or a unique index's condition would keep amounts
-  in pounds (in the table or in a partition or child), while an ordinary index's condition does not
-  count.
+  none offered while a default, a CHECK constraint, or a unique or exclusion index's condition or
+  expression would keep amounts in pounds (in the table, or in a partition or child at any depth),
+  while an ordinary index's condition does not count.
 - **Ledger cases:** the §4.9 example; every finding code; the three column shapes; decimal mode and
   when the summary suggests it; header names matched exactly before letter case; CSV line numbers
   (quoted line breaks, CR LF, a lone CR, a BOM, blank lines); JSON Pointers; JSONL with a bad line;
-  exact JSON numbers (ids a float would merge, fractions it would round away) and every hex digit of a
-  `\u` escape in both cases; pagination and the result budget.
+  exact JSON numbers (ids a float would merge, fractions it would round away), shown as written, and
+  every hex digit of a `\u` escape in both cases; the unmapped-currency hint in CSV, JSON and JSONL;
+  pagination and the result budget.
 - **Audit cases:** a valid log; one log per reason a log can trigger (tampered, reordered, an entry
   deleted, a cut tail, a torn line, a wrong key, a forged seal, a rewritten line, CR LF line ends);
-  anchors from an earlier run (grown, emptied, replaced, and broken at the entry right after the
-  anchor, honestly or after a replacement); and a scan of the library's code that fails if it can
+  anchors from an earlier run (grown, emptied, replaced, broken at the last entry the anchor covers,
+  and broken at the entry right after it, honestly or after a replacement); and a scan of the library's code that fails if it can
   return a reason this server does not map.
 - **Every error code** and every finding code is produced by a test. **Names:** about 250 column names,
   most of them real, with the expected answer.
@@ -1162,12 +1171,20 @@ The tests are in `test/` (Vitest, about 550); each file starts with a comment sa
   answers wrongly, dies while a file runs (that file is named), runs forever (its heartbeat stops at
   the time limit and on a cancel), cannot start (`INTERNAL_ERROR` without detail, its cause in the
   log), or runs out of time, dies or outgrows its memory while it reads the catalog (said as such);
-  and a migration that breaks that read by replacing `pg_catalog.format_type`.
+  a migration that breaks that read by replacing `pg_catalog.format_type`; a setup file whose
+  database thread dies (`SETUP_FAILED`); one database thread at a time (the next waits for the last
+  to end, even when ending is slow), and the messages the real thread sends; the limits a lint gets
+  when the caller sets none (a 1 GiB JavaScript heap, 1 GiB of growth, a stuck database called stuck
+  after 5 seconds and not sooner); memory that the server's own thread holds during a lint, as
+  JavaScript objects and as buffers, on both ways of measuring it; and EPERM and EBUSY, which this
+  machine cannot raise, through a wrapped file system.
 - **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
   `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; a cancel that arrives before the
-  call ran (logged `CANCELLED`, no answer); the client going away mid-lint (`DISCONNECTED`, then the
-  process exits); the host closing the server's stderr, or never reading it (it keeps answering; the
-  log queue drops lines past 100); stdout purity (a stand-in database thread that writes to stdout and
+  call ran (logged `CANCELLED`, no answer), and one that arrives while a ledger call runs (answered,
+  logged `ok`); the client going away mid-lint (`DISCONNECTED`, then the process exits); an error
+  no handler caught and a rejection no one handled (their types logged, the server keeps serving);
+  the host closing the server's stderr, or never reading it (it keeps answering; the log queue drops
+  lines past 100; on Linux the piped stderr is non-blocking); stdout purity (a stand-in database thread that writes to stdout and
   stderr through Node's streams and console, as PGlite prints, is contained; a thread could still
   write to file descriptor 1 directly, which PGlite never does); advertised schemas that fit the Claude
   API (no root combinators, short plain names, no type arrays); `listChanged: false`; `null` for
@@ -1182,7 +1199,10 @@ The tests are in `test/` (Vitest, about 550); each file starts with a comment sa
   supports. The whole suite has passed on Windows (Node 24) and on Linux (Node 22, in WSL), where the
   file-link and permission tests that Windows skips run too.
 - **Way of working:** each test added in a review round is shown to fail on the code before its fix;
-  review rounds go on until one finds no HIGH; a fresh-clone rehearsal comes before publishing.
+  review rounds go on until one finds no HIGH; a fresh-clone rehearsal comes before publishing. A
+  slow machine fails only the slow test: lint tests run one lint each where they can, and a lint that
+  a test left running when it ran out of time is cancelled as the test ends, so the tests after it
+  do not get `BUSY`.
 
 ---
 

@@ -1,8 +1,8 @@
 // Vitest global setup: build dist/ once, before any test file runs. The stdio and README tests start the
 // built server, so they must run what ships, built from the current source (dist/ is emptied first, so
 // no file of a deleted source is left to test); one build also avoids two test files writing dist/ at
-// the same time. It also says, where everyone sees it, when this machine
-// cannot run the file-link tests (they skip here and run on Linux CI).
+// the same time. It also says, where everyone sees it, when this machine cannot run the file-link tests
+// (they skip here and run on Linux CI), or runs the tests as root, for whom the permission tests skip.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -35,5 +35,8 @@ export default function build(): void {
   }
   if (!canLinkFiles()) {
     console.warn('\nNOTE: this machine cannot create file symlinks (Windows without Developer Mode), so the tests of file links skip here. CI is set up to run them: its runners may create links.\n');
+  }
+  if (process.getuid?.() === 0) {
+    console.warn('\nNOTE: the tests run as root, who may read any file, so the 3 tests of files nobody may read skip here. CI runs them as an ordinary user.\n');
   }
 }

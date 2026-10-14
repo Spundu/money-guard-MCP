@@ -197,20 +197,53 @@ function versionOf(raw: string): string {
 /** The worker that runs the SQL. Tests pass another one to prove its output is contained. */
 const WORKER = new URL('./worker.js', import.meta.url);
 
-export function runScripts(
-  scripts: readonly Script[],
-  options: { timeoutMs: number; preset: boolean; filesGiven?: boolean | undefined; single?: boolean | undefined; signal?: AbortSignal | undefined; worker?: URL | undefined; memoryLimitBytes?: number | undefined; sanityMs?: number | undefined },
-): Promise<DatabaseOutcome> {
+export interface RunOptions {
+  timeoutMs: number;
+  preset: boolean;
+  filesGiven?: boolean | undefined;
+  /** migrations names one file, which files cannot pick from. */
+  single?: boolean | undefined;
+  signal?: AbortSignal | undefined;
+  worker?: URL | undefined;
+  memoryLimitBytes?: number | undefined;
+  sanityMs?: number | undefined;
+}
+
+/**
+ * Settles once the last database thread started has ended. The next one starts only then: on Node.js
+ * 24, a thread that starts while another is being torn down can make V8 abort the whole process
+ * (nodejs/node#66366, fixed in V8 but not yet in a Node.js 24 release). A thread ends within a fraction
+ * of a second of being told to, and its lint has answered by then: JavaScript and WebAssembly stop at
+ * their next check, and the database thread makes no blocking calls (an endless loop and pg_sleep both
+ * end at once, test/lint-failures.test.ts).
+ */
+let lastThread: Promise<unknown> = Promise.resolve();
+
+export function runScripts(scripts: readonly Script[], options: RunOptions): Promise<DatabaseOutcome> {
+  const previous = lastThread;
+  let ended = () => {};
+  lastThread = new Promise<void>((resolve) => (ended = resolve));
+  return previous.then(() => startScripts(scripts, options, ended));
+}
+
+/** Runs the scripts in a new database thread, and calls `ended` once that thread has ended. */
+function startScripts(scripts: readonly Script[], options: RunOptions, ended: () => void): Promise<DatabaseOutcome> {
   const firstMigration = scripts.findIndex((s) => s.phase === 'migration');
   return new Promise<DatabaseOutcome>((resolve, reject) => {
     // stdout and stderr are captured and dropped: a NOTICE a migration raises must never reach the
     // server's stdout (the protocol channel) or its log.
-    const worker = new Worker(options.worker ?? WORKER, {
-      workerData: { scripts: scripts.map(({ name, text }) => ({ name, text })), snapshotSql: SNAPSHOT_SQL, detailSql: DETAIL_SQL },
-      stdout: true,
-      stderr: true,
-      resourceLimits: { maxOldGenerationSizeMb: 1024 },
-    });
+    let worker: Worker;
+    try {
+      worker = new Worker(options.worker ?? WORKER, {
+        workerData: { scripts: scripts.map(({ name, text }) => ({ name, text })), snapshotSql: SNAPSHOT_SQL, detailSql: DETAIL_SQL },
+        stdout: true,
+        stderr: true,
+        resourceLimits: { maxOldGenerationSizeMb: 1024 },
+      });
+    } catch (err) {
+      ended(); // no thread started
+      throw err;
+    }
     worker.stdout.resume();
     worker.stderr.resume();
 
@@ -231,7 +264,7 @@ export function runScripts(
       clearTimeout(sanity);
       clearInterval(memory);
       options.signal?.removeEventListener('abort', onAbort);
-      void worker.terminate();
+      void worker.terminate().then(ended, ended);
       if ('ok' in outcome) resolve(outcome.ok);
       else reject(outcome.error);
     };

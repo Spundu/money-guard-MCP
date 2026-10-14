@@ -114,7 +114,9 @@ jobs:
           cd "$RUNNER_TEMP/consumer"
           npm init -y > /dev/null
           npm install "$RUNNER_TEMP"/money-guard-mcp-*.tgz @modelcontextprotocol/client@2.3.1
-          node "$GITHUB_WORKSPACE/scripts/consumer-smoke.mjs"
+          # Copied here, so its imports resolve the packages installed in this project, not the repository's.
+          cp "$GITHUB_WORKSPACE/scripts/consumer-smoke.mjs" .
+          node consumer-smoke.mjs
 
   bundle:
     name: Claude Desktop bundle (MCPB)

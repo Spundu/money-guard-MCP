@@ -34,7 +34,9 @@ does not.
 - **Schema lint** (`src/lint/`): the migrations run one file at a time in PGlite, inside a worker
   thread, so a stuck or runaway migration can be stopped without stopping the server. After each file
   the worker notes every column's type, and after the last it reads the catalog in full; the main
-  thread judges each column (`names.ts`, `catalog.ts`) and writes `fix_sql` itself.
+  thread judges each column (`names.ts`, `catalog.ts`) and writes `fix_sql` itself. A new lint's
+  thread starts only once the last one has ended: on Node.js 24, one that starts while another is
+  being torn down can crash the process (a V8 bug, fixed upstream).
 - **Ledger check** (`src/ledger/`): strict CSV and JSON readers keep every number as its exact text
   (`json.ts` never uses `JSON.parse`); amounts become `BigInt` minor units, summed per transaction
   and currency.

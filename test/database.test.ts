@@ -120,6 +120,19 @@ describe('runScripts with a setup file that goes wrong', () => {
     }
   });
 
+  it('fails the setup file, not a migration, when the database thread dies while it runs', async () => {
+    process.env.MONEY_GUARD_TEST_WORKER = 'crash';
+    try {
+      await expect(runScripts([setup('select 1;'), migration], { timeoutMs: 30_000, preset: false, worker: new URL('./support/fake-worker.mjs', import.meta.url) })).rejects.toMatchObject({
+        code: 'SETUP_FAILED',
+        message: 'setup.sql: the database stopped while running this file (the database thread died).',
+        fix: 'Take the statement that stops the database out of the setup file.',
+      });
+    } finally {
+      delete process.env.MONEY_GUARD_TEST_WORKER;
+    }
+  });
+
   it('fails the setup file, not a migration, when it outgrows the memory limit', async () => {
     const big = setup('create table big (b text); insert into big select repeat(md5(i::text), 30) from generate_series(1, 400000) i;');
     await expect(runScripts([big, migration], { timeoutMs: 60_000, preset: false, memoryLimitBytes: 64 * 1024 * 1024 })).rejects.toMatchObject({
@@ -146,13 +159,15 @@ describe('runScripts with a database that misbehaves', () => {
     return runScripts([script], { timeoutMs: options.timeoutMs ?? 30_000, preset: false, signal: options.signal, worker: FAKE });
   };
 
-  it('fails the file when the database stops answering after it, within 5 seconds', async () => {
+  it('fails the file when the database stops answering after it, 5 seconds after it ran', async () => {
     const started = performance.now();
     await expect(run('silent')).rejects.toMatchObject({
       code: 'MIGRATION_FAILED',
       message: 'db/0001.sql: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
     });
-    expect(performance.now() - started).toBeLessThan(8000);
+    const ms = performance.now() - started;
+    expect(ms).toBeGreaterThanOrEqual(4900); // not sooner: a database that is slow to answer is not stuck
+    expect(ms).toBeLessThan(8000);
   });
 
   it('waits for an answer that came while the server was busy, before calling the database silent', async () => {

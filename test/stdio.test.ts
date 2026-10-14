@@ -3,8 +3,10 @@
 // when a migration raises NOTICEs and WARNINGs.
 
 import { spawn } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import { describe, expect, it, vi } from 'vitest';
@@ -16,8 +18,8 @@ const REPO = path.resolve(import.meta.dirname, '..');
 const ENTRY = path.join(REPO, 'dist', 'index.js');
 
 /** The built server as a process spoken to in raw JSON-RPC lines, for what the SDK client hides. */
-function raw(env: Record<string, string>) {
-  const child = spawn(process.execPath, [ENTRY], { env: { ...getDefaultEnvironment(), ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+function raw(env: Record<string, string>, nodeOptions: readonly string[] = []) {
+  const child = spawn(process.execPath, [...nodeOptions, ENTRY], { env: { ...getDefaultEnvironment(), ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
@@ -159,6 +161,54 @@ describe('the stdio process', () => {
       await server.answered(3);
       await vi.waitFor(() => expect(server.stderr()).toMatch(/money-guard-mcp: money_check_double_entry CANCELLED \d+ms/), { timeout: 5000 });
       expect(server.stdout()).not.toContain('"id":2');
+    } finally {
+      server.child.kill();
+    }
+  });
+
+  it('answers a ledger call and logs it ok when the cancel comes only while it runs: it cannot be stopped part-way', async () => {
+    // SPEC.md §2.6. A million rows take seconds to check; the cancel is read only once the check has ended.
+    const project = tempDir();
+    const rows = Array.from({ length: 1_000_000 }, (_, i) => `T${i >> 1},${i % 2 === 0 ? 100 : -100}`);
+    writeTree(project, { 'exports/big.csv': `txn_id,amount_pence\n${rows.join('\n')}\n` });
+    const server = raw({ MONEY_GUARD_ROOT: project });
+    try {
+      await server.initialize();
+      server.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'money_check_double_entry', arguments: { file: 'exports/big.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence' } } } });
+      await new Promise((r) => setTimeout(r, 500)); // the check has started
+      server.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'too slow' } });
+      await vi.waitFor(() => expect(server.stdout()).toContain('"id":2'), { timeout: 30_000 });
+      expect(server.stdout()).toContain('Balanced: all 500000 transactions net to zero');
+      await vi.waitFor(() => expect(server.stderr()).toMatch(/money-guard-mcp: money_check_double_entry ok \d+ms/), { timeout: 5000 });
+      expect(server.stderr()).not.toContain('CANCELLED');
+    } finally {
+      server.child.kill();
+    }
+  }, 60_000);
+
+  it('keeps serving after an error that no handler caught and a rejection that no one handled, and logs only their types', async () => {
+    const signal = path.join(tempDir(), 'throw');
+    const server = raw({ MONEY_GUARD_ROOT: SHOP, MONEY_GUARD_TEST_THROW: signal }, ['--import', pathToFileURL(path.join(REPO, 'test', 'support', 'throw-later.mjs')).href]);
+    try {
+      await server.initialize();
+      writeFileSync(signal, '');
+      await vi.waitFor(() => expect(server.stderr()).toMatch(/^money-guard-mcp: unhandled rejection RangeError/m), { timeout: 10_000 });
+      expect(server.stderr()).toMatch(/^money-guard-mcp: uncaught TypeError/m);
+      expect(server.stderr()).not.toContain('secret detail');
+      server.send({ jsonrpc: '2.0', id: 2, method: 'ping' });
+      await server.answered(2);
+    } finally {
+      server.child.kill();
+    }
+  });
+
+  // A piped stderr that blocks would hold a thread of libuv's pool while a host does not read the log.
+  it.runIf(process.platform === 'linux')('makes its piped stderr non-blocking on Linux, so a log write never waits for the host', async () => {
+    const server = raw({ MONEY_GUARD_ROOT: SHOP });
+    try {
+      await server.initialize();
+      const flags = Number.parseInt(/flags:\s+(\d+)/.exec(readFileSync(`/proc/${server.child.pid}/fdinfo/2`, 'utf8'))?.[1] ?? '0', 8);
+      expect(flags & 0o4000).toBe(0o4000); // O_NONBLOCK
     } finally {
       server.child.kill();
     }

@@ -177,9 +177,12 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(run(bytes(''), HEAD)).toMatchObject({ ok: false, anchor_checked: true, break: { code: 'ANCHOR_COUNT_MISMATCH', entry_index: 0, line: null }, notes: [] });
   });
 
-  it('says the anchor was not checked when the chain breaks first', () => {
-    const r = run(bytes(FIVE.replace('"alice"', '"mallory"')), HEAD);
-    expect([r.ok, r.anchor_checked, r.break?.code]).toEqual([false, false, 'CONTENT_TAMPERED']);
+  it.each([
+    ['the first entry', '"alice"', '"mallory"', 0],
+    ['the last entry it covers', '"user.logout"', '"user.logoff"', 2],
+  ])('says the anchor was not checked when the chain breaks first: at %s', (_where, from, to, index) => {
+    const r = run(bytes(FIVE.replace(from, to)), HEAD);
+    expect([r.ok, r.anchor_checked, r.break?.code, r.break?.entry_index]).toEqual([false, false, 'CONTENT_TAMPERED', index]);
     expect(r.notes).toEqual(['The anchor was not checked: the chain breaks at or before the last entry it covers, so entries it vouched for are damaged or gone.']);
   });
 

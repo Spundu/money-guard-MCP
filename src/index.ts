@@ -9,10 +9,12 @@ import { resolveConfig } from './config.js';
 import { logLine } from './log.js';
 import { NAME, VERSION, createServer, trace } from './server.js';
 
-// The log is a convenience and never holds the server up (src/log.ts). Node's own warnings still go
-// through process.stderr: a host that closes this process's stderr, or dies, must not turn one into a
-// crash or an endless loop (a write to a closed pipe raises EPIPE, which would reach the uncaught-error
-// handler below, whose own line could raise it again). Lost log lines are fine.
+// The log is a convenience and never holds the server up (src/log.ts). Creating process.stderr here, at
+// the start, matters twice. On Linux, creating it makes a piped stderr non-blocking (libuv does), so a
+// log write to a pipe that a host never reads fails at once and is dropped, instead of holding a thread
+// of libuv's pool until the host reads. And Node's own warnings go through process.stderr: once a host
+// has closed it, a write fails with EPIPE, which is ignored here rather than reported as an uncaught
+// error. Lost log lines are fine.
 process.stderr.on('error', () => {});
 
 const config = resolveConfig(process.env, process.cwd());

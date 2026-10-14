@@ -1,5 +1,6 @@
 // The final catalog query (src/lint/catalog.ts, SPEC.md §3.4) grows with the schema, not with its
-// square: in review round 4 a 1,000-table pg_dump ran out of time inside money-guard's own query.
+// square: in review round 4 a 1,000-table pg_dump ran out of time inside money-guard's own query. The
+// database runs on the test's own thread: it is the only one in this file's process (test/support/sql.ts).
 import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
 import { DETAIL_SQL } from '../src/lint/catalog.js';

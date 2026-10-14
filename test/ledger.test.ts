@@ -183,6 +183,10 @@ describe('money_check_double_entry: the rules', () => {
     }
     const nested = check('.jsonl', '{"t":"T1","amount":{"value":100,"currency":"EUR"}}\n{"t":"T1","amount":{"value":-100,"currency":"USD"}}\n', { columns: { transaction_id: 't', amount: '/amount/value' } });
     expect(nested.summary).toMatch(/ "\/amount\/currency" looks like a currency and is not mapped/);
+    const json = check('.json', '[{"t":"T1","a":10000,"currency_code":"GBP"},{"t":"T1","a":-10000,"currency_code":"EUR"}]', { columns });
+    expect(json.summary).toMatch(/ "currency_code" looks like a currency and is not mapped/);
+    const jsonl = check('.jsonl', '{"t":"T1","a":10000,"currency":"GBP"}\n{"t":"T1","a":-10000,"currency":"EUR"}\n', { columns });
+    expect(jsonl.summary).toMatch(/ "currency" looks like a currency and is not mapped/);
     // A rate or an amount named after a currency is not one.
     expect(check('.csv', 't,a,currency_rate\nT1,1,1.2\nT1,-1,1.2\n', { columns }).summary).not.toMatch(/looks like a currency/);
     const mapped = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'Currency' } });
@@ -196,6 +200,9 @@ describe('money_check_double_entry: the rules', () => {
       ['an object', 'an object is not a number'],
       ['an array', 'an array is not a number'],
     ]);
+    // A JSON number is shown as the file writes it, trailing zeros and all.
+    const written = check('.jsonl', '{"t":"C","a":12.50}\n{"t":"C","a":-12.50}\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(written.findings.map((f) => f.value)).toEqual(['12.50', '-12.50']);
     const side = check('.csv', 't,a,s\nB,-5.00,D\nB,5.00,C\n', { columns: { transaction_id: 't', amount: 'a', side: 's' }, amount_format: 'decimal' });
     expect(side.findings[0]).toMatchObject({ code: 'NEGATIVE_WITH_SIDE', value: '-5.00', message: '-5.00 is negative, but side already gives the direction' });
     // An ISO 4217 numeric currency code is a currency.

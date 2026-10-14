@@ -1,6 +1,6 @@
 // The server's log (src/log.ts, SPEC.md §2.1): one write at a time, in the background; while a write
 // waits, at most 100 lines queue up and later ones are dropped; a write that fails is skipped.
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { logLine } from '../src/log.js';
 
 // stderr as a pipe the test controls: a write finishes only when the test says so.
@@ -19,6 +19,12 @@ function drain(err: Error | null = null): void {
 }
 
 describe('logLine', () => {
+  // Each test starts with an idle log and an empty stderr, whatever ran before it.
+  beforeEach(() => {
+    drain();
+    stderr.written.length = 0;
+  });
+
   it('writes one line at a time, and keeps at most 100 waiting while stderr is stuck', () => {
     for (let i = 0; i < 150; i += 1) logLine(`line ${i}`);
     expect(stderr.written).toEqual(['line 0\n']); // the first write has not finished: nothing else starts
@@ -31,7 +37,6 @@ describe('logLine', () => {
   });
 
   it('goes on with the next line when a write fails (a closed stderr)', () => {
-    stderr.written.length = 0;
     logLine('one');
     logLine('two');
     drain(Object.assign(new Error('broken pipe'), { code: 'EPIPE' }));

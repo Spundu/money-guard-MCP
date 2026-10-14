@@ -34,24 +34,24 @@ describe('money_lint_schema: failures', () => {
     expect(e.fix).toMatch(/^PGlite does not have that extension\. It has: .*citext.*pgcrypto.*uuid-ossp.*vector/);
   });
 
-  it('fits the hint to what real PostgreSQL reports', async () => {
-    const cases: Array<[files: Record<string, string>, state: string, hint: RegExp]> = [
-      [{ 'db/migrations/0001.sql': 'create table t (id int);\ncreate index concurrently t_id on t (id);\n' }, '25001', /CREATE INDEX CONCURRENTLY cannot run/],
-      // A value added to a type made in the same file may be used at once; to a type an earlier file made, not.
-      [{ 'db/migrations/0001.sql': "create type s as enum ('a');", 'db/migrations/0002.sql': "alter type s add value 'b';\nselect 'b'::s;\n" }, '55P04', /a new enum value cannot be used in the transaction that adds it/],
-      [{ 'db/migrations/0001.sql': 'CREATE TABLE public.t (a integer);\nCOPY public.t (a) FROM stdin;\n1\n\\.\n' }, '42601', /a pg_dump with data/],
-      [{ 'db/migrations/0001.sql': "select repeat('x', 2000000000);" }, '54000', /^The file needs more than the lint database can give it/],
-      [{ 'db/migrations/0001_view.sql': 'create view v as select * from orders;', 'db/migrations/0002_orders.sql': 'create table orders (id int);' }, '42P01', /^If one of your migrations creates it, the files ran out of order/],
-      [{ 'db/migrations/0001.sql': 'select no_such_function();' }, '42883', /^If one of your migrations creates it, the files ran out of order.* preset "supabase"/],
-      [{ 'db/migrations/0001.sql': "create table t (id uuid, user_id text);\nselect * from t where id = user_id;" }, '42883', /^The two sides of an operator have types that do not go together/],
-      [{ 'db/migrations/0001.sql': 'create table t (id int);\nvacuum t;' }, '25001', /^money-guard runs each file as one script, where VACUUM cannot run/],
-      [{ 'db/migrations/0001.sql': 'create table t (price double precision);\ncreate view v as select price from t;\nalter table t alter column price type bigint;' }, '0A000', /^Something else uses this column \(a view, a rule/],
-    ];
-    for (const [files, state, hint] of cases) {
-      const e = await failure(files);
-      expect(e.message, state).toContain(`(SQLSTATE ${state})`);
-      expect(e.fix, state).toMatch(hint);
-    }
+  // One lint per test: a slow machine then runs each within the test time limit.
+  it.each<[what: string, files: Record<string, string>, state: string, hint: RegExp]>([
+    ['CREATE INDEX CONCURRENTLY', { 'db/migrations/0001.sql': 'create table t (id int);\ncreate index concurrently t_id on t (id);\n' }, '25001', /CREATE INDEX CONCURRENTLY cannot run/],
+    // A value added to a type made in the same file may be used at once; to a type an earlier file made, not.
+    ['a new enum value used at once', { 'db/migrations/0001.sql': "create type s as enum ('a');", 'db/migrations/0002.sql': "alter type s add value 'b';\nselect 'b'::s;\n" }, '55P04', /a new enum value cannot be used in the transaction that adds it/],
+    ['table data after COPY ... FROM stdin', { 'db/migrations/0001.sql': 'CREATE TABLE public.t (a integer);\nCOPY public.t (a) FROM stdin;\n1\n\\.\n' }, '42601', /a pg_dump with data/],
+    ['a value too large', { 'db/migrations/0001.sql': "select repeat('x', 2000000000);" }, '54000', /^The file needs more than the lint database can give it/],
+    ['a table a later file creates', { 'db/migrations/0001_view.sql': 'create view v as select * from orders;', 'db/migrations/0002_orders.sql': 'create table orders (id int);' }, '42P01', /^If one of your migrations creates it, the files ran out of order/],
+    ['a function nothing creates', { 'db/migrations/0001.sql': 'select no_such_function();' }, '42883', /^If one of your migrations creates it, the files ran out of order.* preset "supabase"/],
+    ['an operator between types that do not go together', { 'db/migrations/0001.sql': "create table t (id uuid, user_id text);\nselect * from t where id = user_id;" }, '42883', /^The two sides of an operator have types that do not go together/],
+    ['VACUUM', { 'db/migrations/0001.sql': 'create table t (id int);\nvacuum t;' }, '25001', /^money-guard runs each file as one script, where VACUUM cannot run/],
+    ['a view of the column', { 'db/migrations/0001.sql': 'create table t (price double precision);\ncreate view v as select price from t;\nalter table t alter column price type bigint;' }, '0A000', /^Something else uses this column \(a view, a rule/],
+    // As money-guard's own fix_sql meets it on a table with row-level security.
+    ['a policy on the column', { 'db/migrations/0001.sql': 'create table t (price double precision, owner text);\nalter table t enable row level security;\ncreate policy cheap on t using (price < 10);\nalter table t alter column price type bigint;' }, '0A000', /^Something else uses this column \(a view, a rule, a policy/],
+  ])('fits the hint to what real PostgreSQL reports: %s', async (_what, files, state, hint) => {
+    const e = await failure(files);
+    expect(e.message).toContain(`(SQLSTATE ${state})`);
+    expect(e.fix).toMatch(hint);
   });
 
   it('says the files ran in the order files gave, when files gave it', async () => {
@@ -215,15 +215,20 @@ describe('money_lint_schema: safety', () => {
     expect(e.message).toBe(`${lastDir()}/db/migrations/0002.sql: the catalog could not be read after this file, the last one (division by zero).`);
   });
 
-  it('stops when the call is cancelled', async () => {
+  it.each([
+    ['an endless loop', 'do $$ begin loop end loop; end $$;'],
+    ['a long sleep', 'select pg_sleep(100000);'],
+  ])('stops when the call is cancelled during %s, and its thread ends, so the next lint runs', async (_what, statement) => {
     const dir = newDir();
-    writeTree(path.join(projectRoot().real, dir), { 'db/migrations/0001.sql': 'do $$ begin loop end loop; end $$;' });
+    writeTree(path.join(projectRoot().real, dir), { 'db/migrations/0001.sql': statement, 'ok/0001.sql': 'create table t (price double precision);' });
     const controller = new AbortController();
     const started = Date.now();
     const run = lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` }, controller.signal);
     setTimeout(() => controller.abort(new Error('cancelled by the client')), 2500);
     await expect(run).rejects.toThrow('cancelled by the client');
     expect(Date.now() - started).toBeLessThan(5000);
+    // The next lint's database starts only once the cancelled one's thread has ended (SPEC.md §3.4).
+    expect((await lintSchema(projectRoot(), { migrations: `${dir}/ok` })).error_count).toBe(1);
   });
 
   it('runs one lint at a time and says BUSY to a second', async () => {

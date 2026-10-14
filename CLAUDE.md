@@ -34,6 +34,9 @@ Rules:
   (test/support/hidden.ts), not with the code under test.
 - HMAC keys come only from `MONEY_GUARD_AUDIT_KEYS`; they never appear in a result, an error or a log.
 - Every new test must fail without the code it covers (stash the source, run, pop).
+- One database thread at a time: in tests, run SQL of your own with `sql()` (test/support/sql.ts),
+  never PGlite on the test's own thread beside lints. On Node.js 24, a database thread that starts
+  while another is torn down can make V8 abort the whole process (SPEC.md §3.4).
 - The README shows real things: its example is `examples/demo.mjs`, and `test/readme.test.ts` checks
   that the README shows that file, its output and the demo lint result exactly. Change them together.
 - Verify before done: `npm run typecheck && npm run lint && npm test && npm run build`.

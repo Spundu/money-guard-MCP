@@ -35,10 +35,14 @@ describe('money_lint_schema: names from a hostile project', () => {
     ]);
     expect(r.findings[0]?.introduced_in).toMatch(/\/0001_\\u\{e0072\}\\u\{e0075\}\\u\{e006e\}\\u\{e0020\}\\u\{e0072\}\\u\{e006d\}\.sql$/);
     expect(r.other_float_columns).toEqual(['public.o.lat\\ufeff']);
-    // A table name with a hidden character gets no fix_sql either, whatever its column is called.
+  });
+
+  it('gives no fix_sql for a table whose name holds a hidden character, whatever its column is called', async () => {
     const t = await lint({ 'db/migrations/0001.sql': 'create table "orders\u{200b}" (total double precision);' });
     expect(t.findings.map((f) => [f.table, f.fix_sql])).toEqual([['public.orders\\u200b', null]]);
-    // A domain's name, shown in the column's type, is escaped too.
+  });
+
+  it("escapes a domain's name, shown in the column's type", async () => {
     const d = await lint({ 'db/migrations/0001.sql': 'create domain "cash\u{200b}" as double precision; create table p (total "cash\u{200b}");' });
     expect(d.findings.map((f) => f.type)).toEqual(['"cash\\u200b" (double precision)']);
   });
@@ -134,6 +138,12 @@ describe('money_lint_schema: which files run', () => {
     });
     expect(r.files_applied.map((f) => f.split('/').at(-1))).toEqual(['V1__init.sql', 'V2__add.sql', 'V10__use.sql']);
     expect(r.findings[0]?.introduced_in).toMatch(/V2__add\.sql$/);
+  });
+
+  it('reads a number with leading zeros by its value: 01 before 2, and 2 before 010', () => {
+    const dir = tempDir();
+    writeTree(dir, { 'db/2_b.sql': '', 'db/010_c.sql': '', 'db/01_a.sql': '' });
+    expect(collectSources(rootOf(dir), { migrations: 'db' }).files.map((f) => f.rel)).toEqual(['db/01_a.sql', 'db/2_b.sql', 'db/010_c.sql']);
   });
 
   it('walks sub-folders (Prisma), skips down steps, and stops a dbmate file at its down marker', async () => {

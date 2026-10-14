@@ -15,12 +15,14 @@
 //   "hang":     it says the first script is running, then never answers again (a script that runs on);
 //   "reading":  it runs the first script, says it is reading the catalog, then never answers again;
 //   "reading-crash": it runs the first script, says it is reading the catalog, then dies;
-//   "reading-grows": it runs the first script, says it is reading the catalog, then takes 256 MiB.
+//   "reading-grows": it runs the first script, says it is reading the catalog, then takes 256 MiB (and
+//               writes the file MONEY_GUARD_TEST_HEARTBEAT names, if it is set, once it has);
+//   "limits":   it runs the first script and ends, and says in its version the JavaScript heap limit it was given.
 import { Buffer } from 'node:buffer';
 import { existsSync, writeFileSync } from 'node:fs';
 import process from 'node:process';
 import { setInterval, setTimeout } from 'node:timers';
-import { parentPort } from 'node:worker_threads';
+import { parentPort, resourceLimits } from 'node:worker_threads';
 
 const mode = process.env.MONEY_GUARD_TEST_WORKER;
 const heartbeat = process.env.MONEY_GUARD_TEST_HEARTBEAT ?? 'heartbeat';
@@ -35,7 +37,8 @@ if (mode === 'endless') {
   }
 }
 const post = (message) => parentPort?.postMessage(message);
-post({ type: 'ready', version: 'PostgreSQL 0 (fake) on nowhere', available: [] });
+const limit = mode === 'limits' ? `; heap limit ${resourceLimits.maxOldGenerationSizeMb} MB` : '';
+post({ type: 'ready', version: `PostgreSQL 0 (fake${limit}) on nowhere`, available: [] });
 if (mode === 'slow') {
   writeFileSync(heartbeat, 'started');
   while (!existsSync(`${heartbeat}.go`)) Atomics.wait(pause, 0, 0, 20);
@@ -53,7 +56,7 @@ const answer = () => {
   post({ type: 'done', detail: [] });
 };
 if (mode === 'unusable') post({ type: 'unusable', step: 0 });
-else if (mode === 'slow') answer();
+else if (mode === 'slow' || mode === 'limits') answer();
 else if (mode === 'late') {
   setTimeout(() => post({ type: 'snapshot', step: 0, rows: [] }), 500);
   setTimeout(() => post({ type: 'done', detail: [] }), 1500);
@@ -66,6 +69,11 @@ else if (mode === 'late') {
     }, 50);
   }
   // Later than the memory baseline, which the server takes once the database has started.
-  if (mode === 'reading-grows') setTimeout(() => globalThis.held = Buffer.alloc(256 * 1024 * 1024, 1), 300);
+  if (mode === 'reading-grows') {
+    setTimeout(() => {
+      globalThis.held = Buffer.alloc(256 * 1024 * 1024, 1);
+      if (process.env.MONEY_GUARD_TEST_HEARTBEAT !== undefined) writeFileSync(heartbeat, 'grown');
+    }, 300);
+  }
 }
 setInterval(() => {}, 1000); // stay alive until the server ends the thread (silent: and say nothing)
