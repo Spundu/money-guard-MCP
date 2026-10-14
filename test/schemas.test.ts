@@ -32,6 +32,13 @@ describe('records_pointer', () => {
   });
 });
 
+describe('files', () => {
+  it('refuses an empty list: leave files out to run the whole folder', () => {
+    expect(lintInput.safeParse({ migrations: 'db/migrations', files: [] }).success).toBe(false);
+    expect(lintInput.safeParse({ migrations: 'db/migrations', files: ['0001.sql'] }).success).toBe(true);
+  });
+});
+
 describe('timeout_seconds', () => {
   it('defaults to 45 seconds, under the 60 that common MCP clients wait for an answer, and says so', () => {
     expect(DEFAULT_TIMEOUT_SECONDS).toBe(45);

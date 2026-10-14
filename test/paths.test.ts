@@ -23,6 +23,8 @@ beforeAll(() => {
     'project/exports/ledger.csv': 'txn,amount\n',
     'project/exports/big.csv': 'x'.repeat(11),
     'project/exports/..odd.csv': 'still inside\n',
+    'project/..top.csv': 'at the root, still inside\n',
+    'project/notes.txt': 'not a ledger\n',
     'project/.env': 'SECRET=1\n',
     'project/.git/config': '[core]\n',
     'project/keys/server.pem': 'pem\n',
@@ -66,6 +68,7 @@ describe('resolveInRoot', () => {
 
   it('treats a name that merely starts with two dots as an ordinary file', () => {
     expect(resolveInRoot(root, 'exports/..odd.csv', CSV).rel).toBe('exports/..odd.csv');
+    expect(resolveInRoot(root, '..top.csv', CSV).rel).toBe('..top.csv');
   });
 
   it('refuses a path outside the project before touching the disk (no existence oracle)', () => {
@@ -152,6 +155,16 @@ describe('resolveInRoot', () => {
       ctx.skip();
     }
     expect(codeOf(() => resolveInRoot(root, 'exports/notes.csv', CSV))).toBe('SENSITIVE_PATH');
+  });
+});
+
+describe('resolveInRoot and links to the wrong kind of file', () => {
+  it('refuses a link with an allowed name to a file of another type (POSIX, or Windows with Developer Mode)', (ctx) => {
+    if (!trySymlink(path.join(root.real, 'notes.txt'), path.join(root.real, 'exports', 'looks-fine.csv'), 'file')) {
+      console.warn('SKIPPED: this machine cannot create file symlinks (Windows without Developer Mode).');
+      ctx.skip();
+    }
+    expect(codeOf(() => resolveInRoot(root, 'exports/looks-fine.csv', CSV))).toBe('FILE_TYPE_NOT_ALLOWED');
   });
 });
 

@@ -48,14 +48,16 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(errorText(() => check('.csv', `${header}\n`, { columns: { transaction_id: 'x'.repeat(200), amount: 'a' } }))).toMatch(/^COLUMN_NOT_FOUND: /);
   });
 
-  it('bounds the search for the closest name: each distance once, over the first 64 characters', () => {
-    // 2,000 names of 10,000 characters and a 200-character name: distances over whole names would take
-    // tens of seconds. Only the search is timed (reading a big header is not what this proves), with
-    // a wide margin for a loaded machine: it takes tens of milliseconds.
-    const names = Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')}${'c'.repeat(9996)}`);
-    const started = performance.now();
-    expect(closest('x'.repeat(200), names)).toBeUndefined();
-    expect(performance.now() - started).toBeLessThan(1000);
+  it('compares only the first 64 characters of each name, so the search is bounded however long the header', () => {
+    // Two names alike in their first 64 characters: the first wins, though the second matches the rest
+    // exactly. Compared in full, the second would win, and a header of long names would take seconds.
+    const head = 'c'.repeat(64);
+    expect(closest(`${head}zzzz`, [`${head}${'q'.repeat(8)}`, `${head}zzzz`])).toBe(`${head}${'q'.repeat(8)}`);
+  });
+
+  it('skips lines of only spaces or tabs without losing count of the lines', () => {
+    const r = check('.csv', 't,a\n\t\n  \nA,5\nA,-4\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(r.findings[0]?.lines).toEqual([4, 5]);
   });
 
   it('refuses a mapped name that appears twice', () => {
@@ -139,6 +141,31 @@ describe('money_check_double_entry: reading JSON and JSONL', () => {
   it('never uses JSON.parse: a "__proto__" field is an ordinary field', () => {
     const r = check('.jsonl', '{"__proto__":"A","a":1}\n{"__proto__":"A","a":-1}\n', { columns: { transaction_id: '__proto__', amount: 'a' } });
     expect(r.balanced).toBe(true);
+  });
+
+  it('reads pretty-printed JSON with CR LF line ends and tab indents, and numbers with a negative exponent', () => {
+    const json = '[\r\n\t{"t": "A", "a": 1000e-1},\r\n\t{"t": "A", "a": -100}\r\n]\r\n';
+    const r = check('.json', json, { columns: { transaction_id: 't', amount: 'a' } });
+    expect([r.balanced, r.rows_read]).toEqual([true, 2]);
+  });
+
+  it('reads a \\u escape in either letter case as the same character, so an id written both ways is one transaction', () => {
+    const r = check('.jsonl', '{"t":"Caf\\u00E9-1","a":5}\n{"t":"Caf\\u00e9-1","a":-5}\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect([r.balanced, r.transactions_found]).toEqual([true, 1]);
+  });
+
+  it('takes the ids 1e3 and 1000 as one id: a JSON number id is its exact value', () => {
+    const r = check('.jsonl', '{"t":1e3,"a":5}\n{"t":1000,"a":-5}\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect([r.balanced, r.transactions_found]).toEqual([true, 1]);
+  });
+
+  it('refuses a raw line break inside a JSON string, at its exact line and column', () => {
+    expect(errorText(() => check('.json', '[{"t":"A\nB","a":1}]', { columns: { transaction_id: 't', amount: 'a' } }))).toMatch(/^PARSE_ERROR: Line 1, column 9: /);
+  });
+
+  it('takes exactly 1,000,000 rows', () => {
+    const r = check('.csv', `t,a\n${'A,1\nA,-1\n'.repeat(500_000)}`, { columns: { transaction_id: 't', amount: 'a' } });
+    expect([r.rows_read, r.balanced]).toEqual([1_000_000, true]);
   });
 
   it('refuses more than 1,000,000 rows, in JSONL and in CSV', () => {

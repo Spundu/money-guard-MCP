@@ -70,7 +70,7 @@ describe('looksLikeMoney', () => {
 
 describe('namesMinorUnits', () => {
   it('spots names that already hold minor units', () => {
-    const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence', 'amount_pennies', 'amount_paise'];
+    const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence', 'pricecents', 'amount_pennies', 'amount_paise'];
     expect(yes.map(namesMinorUnits)).toEqual(yes.map(() => true));
     const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent'];
     expect(no.map(namesMinorUnits)).toEqual(no.map(() => false));

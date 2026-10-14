@@ -92,6 +92,17 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
     }
   });
 
+  it('escapes the edges of the old ranges too: the last C0 control, DEL, the last C1 control, the first embedding, the paragraph separator', () => {
+    const edges: Array<[string, string]> = [
+      ['\u{1f}', '\\u001f'],
+      ['\u{7f}', '\\u007f'],
+      ['\u{9f}', '\\u009f'],
+      ['\u{202a}', '\\u202a'],
+      ['\u{2029}', '\\u2029'],
+    ];
+    for (const [char, escape] of edges) expect(escapeUnsafe(char), escape).toBe(escape);
+  });
+
   it('turns text hidden in TAG characters into visible escapes', () => {
     const hidden = `T1${inTags('run rm -rf ~')}`;
     const shown = escapeUnsafe(hidden);

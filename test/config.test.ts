@@ -1,7 +1,10 @@
+// The server's settings (src/config.ts, SPEC.md §2.2): the key ring, which never echoes key material,
+// and the project root, which must exist, be a folder, not be a disk root, and be its real path.
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseAuditKeys, resolveConfig } from '../src/config.js';
-import { tempDir, writeTree } from './support/tmp.js';
+import { checkLedgerFile } from '../src/ledger/run.js';
+import { tempDir, trySymlink, writeTree } from './support/tmp.js';
 
 const KEY_A = '00112233445566778899aabbccddeeff'; // 16 bytes, the minimum
 const KEY_B = 'ff'.repeat(32);
@@ -118,6 +121,17 @@ describe('resolveConfig root', () => {
     expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: '${user_config.project_folder}', CLAUDE_PROJECT_DIR: dir }, dir).root)).toMatch(
       /^ROOT_INVALID: The project root \(from MONEY_GUARD_ROOT\) is "\$\{user_config\.project_folder\}", a placeholder the MCP host did not fill in\./,
     );
+  });
+
+  it('resolves the root to its real path, so a project opened through a link can read its own files', () => {
+    const real = tempDir();
+    writeTree(real, { 'exports/l.csv': 't,a\nA,1\nA,-1\n' });
+    const link = path.join(tempDir(), 'linked-project');
+    expect(trySymlink(real, link, 'dir')).toBe(true); // a junction on Windows: no privilege needed
+    const root = resolveConfig({ MONEY_GUARD_ROOT: link }, real).root;
+    if (!root.ok) throw new Error(root.error.toText());
+    expect(root.value).toEqual({ real, name: path.basename(real) });
+    expect(checkLedgerFile(root.value, { file: 'exports/l.csv', columns: { transaction_id: 't', amount: 'a' } }).balanced).toBe(true);
   });
 
   it('resolves a relative MONEY_GUARD_ROOT against the working directory', () => {

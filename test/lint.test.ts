@@ -154,7 +154,7 @@ describe('money_lint_schema: judging columns', () => {
     const r = await lint({
       'db/migrations/0001.sql':
         'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, ' +
-        'fee numeric(10,2), total numeric, amount numeric(12,0), unit_price numeric(12,4), amount_pence numeric(10,2), refund money, charge smallint);',
+        'fee numeric(10,2), total numeric, amount numeric(12,0), unit_price numeric(12,4), amount_pence numeric(10,2), refund money, charge smallint, deposit numeric(10,-2));',
     });
     const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
     expect([fix.unit_price, fix.amount_pence]).toEqual([null, null]); // finer than a penny: choose the unit first
@@ -164,13 +164,14 @@ describe('money_lint_schema: judging columns', () => {
     const db = await PGlite.create();
     try {
       await db.exec(
-        'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, fee numeric(10,2), total numeric, amount numeric(12,0), refund money, charge smallint);' +
-          "insert into p values (19.99, 1999, 1999, 12.34, 0.1, 1500, '-5.50', 550);",
+        'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, fee numeric(10,2), total numeric, amount numeric(12,0), refund money, charge smallint, deposit numeric(10,-2));' +
+          "insert into p values (19.99, 1999, 1999, 12.34, 0.1, 1500, '-5.50', 550, 1500);",
       );
-      const columns = ['price', 'amount_minor_units', 'price_cents_usd', 'fee', 'total', 'amount', 'refund', 'charge'];
+      const columns = ['price', 'amount_minor_units', 'price_cents_usd', 'fee', 'total', 'amount', 'refund', 'charge', 'deposit'];
       for (const column of columns) await db.exec(fix[column] ?? 'fix_sql missing');
       const row = (await db.query<Record<string, string>>(`select ${columns.map((c) => `${c}::text`).join(', ')} from p`)).rows[0];
-      expect(row).toEqual({ price: '1999', amount_minor_units: '1999', price_cents_usd: '1999', fee: '1234', total: '10', amount: '1500', refund: '-550', charge: '550' });
+      // deposit is numeric(10,-2): whole hundreds, kept as they are.
+      expect(row).toEqual({ price: '1999', amount_minor_units: '1999', price_cents_usd: '1999', fee: '1234', total: '10', amount: '1500', refund: '-550', charge: '550', deposit: '1500' });
     } finally {
       await db.close();
     }

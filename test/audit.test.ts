@@ -1,3 +1,6 @@
+// audit_verify_chain's core (src/audit/verify.ts, SPEC.md §5): a valid log, one log per reason a log can
+// fail, anchors from an earlier run (grown, emptied, replaced, broken after them), CR LF line ends, and a
+// scan proving every reason the library can return is mapped to its own code.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -195,6 +198,21 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
 });
 
 describe('verifyAuditLog on a log whose line ends were converted', () => {
+  it('blames CR LF only for the line that has it: a rewritten line elsewhere is a rewrite', () => {
+    // Line 1 rewritten (a space added), line 3 with CR LF: the break is line 1, which has no CR.
+    const log = `${(LINES[0] ?? '').replace('{', '{ ')}\n${LINES[1]}\n${LINES[2]}\r\n`;
+    const r = run(bytes(log));
+    expect([r.break?.code, r.break?.line]).toEqual(['NOT_CANONICAL', 1]);
+    expect(r.summary).toMatch(/entry 0 \(line 1\) was rewritten \(spacing, key order or escapes changed\)/);
+    expect(r.notes.some((n) => n.startsWith('Line 3 ends with CR LF.'))).toBe(true);
+  });
+
+  it('does not take a lone CR for a CR LF line end', () => {
+    const r = run(bytes(`${LINES[0]}\n${(LINES[1] ?? '').replace('"alice"', '"al\rice"')}\n${LINES[2]}\n`));
+    expect(r.ok).toBe(false);
+    expect(r.notes.some((n) => n.includes('CR LF'))).toBe(false);
+  });
+
   it('names CR LF line ends as the cause, and still fails: the bytes are not the sealed ones', () => {
     const r = run(bytes(VALID.replaceAll('\n', '\r\n')));
     expect(r.break?.code).toBe('NOT_CANONICAL');

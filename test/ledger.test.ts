@@ -119,6 +119,20 @@ describe('money_check_double_entry: the rules', () => {
     expect(r.transactions_not_checked).toBe(3);
   });
 
+  it('reads DR as a debit and CR as a credit', () => {
+    expect(check('.csv', 't,a,s\nA,100,DR\nA,100,CR\n', { columns: { transaction_id: 't', amount: 'a', side: 's' } }).balanced).toBe(true);
+  });
+
+  it('nets debit minus credit: debits over credits by 20.00 is +2000, with the sign kept', () => {
+    const r = check('.csv', 'j,d,c\nJ1,120.00,\nJ1,,100.00\n', { columns: { transaction_id: 'j', debit: 'd', credit: 'c' }, amount_format: 'decimal' });
+    expect(r.findings[0]).toMatchObject({ code: 'UNBALANCED', nets: [{ currency: null, net: '2000' }], message: 'legs net to 2000, not 0' });
+  });
+
+  it('reports an empty currency cell as MISSING_VALUE, not as a currency of its own', () => {
+    const r = check('.csv', 't,a,c\nA,5,GBP\nA,-5,\n', { columns: { transaction_id: 't', amount: 'a', currency: 'c' } });
+    expect(r.findings.map((f) => [f.code, f.field, f.message])).toEqual([['MISSING_VALUE', 'currency', 'no currency']]);
+  });
+
   it('takes a zero amount with a side as a leg that moves nothing, not as a negative one', () => {
     const r = check('.csv', 't,a,s\nA,0,D\nA,5,D\nA,5,C\n', { columns: { transaction_id: 't', amount: 'a', side: 's' } });
     expect([r.balanced, r.findings.map((f) => f.code)]).toEqual([true, ['ZERO_LEG']]);
@@ -163,6 +177,8 @@ describe('money_check_double_entry: the rules', () => {
     const r = check('.csv', `t,a\n${rows}\n`, { columns: { transaction_id: 't', amount: 'a' } });
     expect(r.findings[0]).toMatchObject({ code: 'UNBALANCED', more_rows: 5 });
     expect(r.findings[0]?.lines).toHaveLength(20);
+    const one = check('.csv', `t,a\n${Array.from({ length: 21 }, () => 'BIG,1').join('\n')}\n`, { columns: { transaction_id: 't', amount: 'a' } });
+    expect(one.findings[0]).toMatchObject({ code: 'UNBALANCED', more_rows: 1 });
   });
 
   it('cuts a long value to 40 characters', () => {
@@ -187,6 +203,19 @@ describe('money_check_double_entry: the rules', () => {
     expect(r.findings[0]?.nets).toHaveLength(20);
     expect(r.findings[0]?.nets?.[19]).toEqual({ currency: 'C19', net: '1' });
     expect(r.findings[0]?.message).toBe('25 currencies do not net to 0; nets lists the first 20');
+  });
+
+  it('holds the whole result to the budget, not only its findings', () => {
+    // 60 rows with a fraction each, under a 210-character records pointer: 50 findings come to about
+    // 19,400 characters, under 20,000 on their own but not with the rest of the result.
+    const key = 'r'.repeat(209);
+    const records = Array.from({ length: 60 }, (_, i) => ({ t: `T${i}`, a: 1.5 }));
+    const r = check('.json', JSON.stringify({ [key]: records }), { columns: { transaction_id: 't', amount: 'a' }, records_pointer: `/${key}`, limit: 50 });
+    const one = JSON.stringify(r.findings[0]).length + 1;
+    expect(r.findings.length).toBeLessThan(50);
+    expect(JSON.stringify(r.findings).length + one).toBeLessThanOrEqual(20_000); // one more finding fits on its own...
+    expect(JSON.stringify(r).length + one).toBeGreaterThan(20_000); // ...but not in the result
+    expect(r.next_offset).toBe(r.findings.length);
   });
 
   it('returns a shorter page when long locations would pass 20,000 characters, and pages on to the end', () => {

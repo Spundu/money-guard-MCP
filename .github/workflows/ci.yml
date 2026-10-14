@@ -91,7 +91,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # An ALLOWLIST: the built JavaScript (with source maps), the licence, the README and package.json.
+      # An ALLOWLIST: the built JavaScript, the licence, the README and package.json.
       - name: Verify package contents
         run: |
           npm pack --dry-run --json > pack.json
@@ -99,7 +99,7 @@ jobs:
             const files = require('./pack.json')[0].files.map((f) => f.path);
             const need = ['dist/index.js', 'dist/server.js', 'dist/lint/worker.js', 'LICENSE', 'README.md', 'package.json'];
             const missing = need.filter((p) => !files.includes(p));
-            const allowed = (p) => /^dist\/(?:[a-z]+\/)?[a-z-]+\.js(?:\.map)?$/.test(p) || ['LICENSE', 'README.md', 'package.json'].includes(p);
+            const allowed = (p) => /^dist\/(?:[a-z]+\/)?[a-z-]+\.js$/.test(p) || ['LICENSE', 'README.md', 'package.json'].includes(p);
             const stray = files.filter((p) => !allowed(p));
             if (missing.length || stray.length) { console.error({ missing, stray }); process.exit(1); }
             console.log(files.length + ' files, all allowed');

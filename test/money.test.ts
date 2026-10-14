@@ -1,3 +1,5 @@
+// Exact amounts (src/money.ts, SPEC.md §4.4): minor units and decimal amounts, read digit by digit from
+// text or from a JSON number's exact text, with the range checked before any BigInt is built.
 import { describe, expect, it } from 'vitest';
 import { JsonNumber } from '../src/ledger/json.js';
 import { parseAmount, type AmountFormat } from '../src/money.js';

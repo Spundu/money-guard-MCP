@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolError } from '../src/errors.js';
 import { failure, locate, runScripts } from '../src/lint/database.js';
 import { trace } from '../src/server.js';
@@ -58,6 +58,14 @@ describe('failure', () => {
 describe('runScripts with a database that misbehaves', () => {
   const FAKE = new URL('./support/fake-worker.mjs', import.meta.url);
   const script = { name: 'db/0001.sql', text: 'select 1;', phase: 'migration' as const };
+  afterEach(() => {
+    delete process.env.MONEY_GUARD_TEST_WORKER;
+    delete process.env.MONEY_GUARD_TEST_HEARTBEAT;
+  });
+
+  it('stops at once, running nothing, when the call was cancelled before it started', async () => {
+    await expect(runScripts([script], { timeoutMs: 30_000, preset: false, signal: AbortSignal.abort(new Error('cancelled first')) })).rejects.toThrow('cancelled first');
+  });
   const run = (mode: string, options: { timeoutMs?: number; signal?: AbortSignal } = {}) => {
     process.env.MONEY_GUARD_TEST_WORKER = mode;
     return runScripts([script], { timeoutMs: options.timeoutMs ?? 30_000, preset: false, signal: options.signal, worker: FAKE });

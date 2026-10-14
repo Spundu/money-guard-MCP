@@ -35,6 +35,24 @@ describe('money_lint_schema: names from a hostile project', () => {
     ]);
     expect(r.findings[0]?.introduced_in).toMatch(/\/0001_\\u\{e0072\}\\u\{e0075\}\\u\{e006e\}\\u\{e0020\}\\u\{e0072\}\\u\{e006d\}\.sql$/);
     expect(r.other_float_columns).toEqual(['public.o.lat\\ufeff']);
+    // A table name with a hidden character gets no fix_sql either, whatever its column is called.
+    const t = await lint({ 'db/migrations/0001.sql': 'create table "orders\u{200b}" (total double precision);' });
+    expect(t.findings.map((f) => [f.table, f.fix_sql])).toEqual([['public.orders\\u200b', null]]);
+  });
+
+  it('escapes hidden characters in its own errors, without relying on the server', async () => {
+    const H = '\u{202e}\u{200b}';
+    const dir = newDir();
+    writeTree(path.join(projectRoot().real, dir), {
+      [`${H}/0001_${H}.sql`]: 'create table broken (;',
+      [`none${H}/notes.txt`]: 'not sql',
+    });
+    const errors: string[] = [];
+    for (const params of [{ migrations: `${dir}/${H}` }, { migrations: `${dir}/none${H}` }, { migrations: `${dir}/${H}`, files: [`x${H}.sql`] }]) {
+      errors.push(await lintSchema(projectRoot(), params).then(() => 'no error', (e: unknown) => (e instanceof ToolError ? e.toText() : String(e))));
+    }
+    expect(errors.map((e) => e.replace(/:.*$/s, ''))).toEqual(['MIGRATION_FAILED', 'NO_SQL_FILES', 'FILE_NOT_IN_FOLDER']);
+    for (const text of errors) expect(RAW_HIDDEN.test(text), text).toBe(false);
   });
 });
 
@@ -76,6 +94,13 @@ describe('money_lint_schema: links in the migrations folder', () => {
     rmSync(path.join(dir, 'db', 'migrations', '0002.sql'));
     expect(trySymlink(path.join(dir, 'notes.txt'), path.join(dir, 'db', 'migrations', '0002.sql'), 'file')).toBe(true);
     expect(sourcesCode(dir)).toBe('FILE_TYPE_NOT_ALLOWED');
+  });
+
+  it('walks a folder that links to itself only once', () => {
+    const dir = tempDir();
+    writeTree(dir, { 'db/migrations/0001.sql': 'select 1;' });
+    expect(trySymlink(path.join(dir, 'db', 'migrations'), path.join(dir, 'db', 'migrations', 'again'), 'dir')).toBe(true);
+    expect(collectSources(rootOf(dir), { migrations: 'db/migrations' }).files.map((f) => f.rel)).toEqual(['db/migrations/0001.sql']);
   });
 });
 
@@ -120,6 +145,24 @@ describe('money_lint_schema: which files run', () => {
     });
     expect(r.findings.map((f) => f.table)).toEqual(['public.a', 'public.b', 'public.c', 'public.d', 'public.e', 'public.f', 'public.g']);
     expect(r.files_applied_count).toBe(7);
+  });
+
+  it('leaves out Diesel down.sql files, which sort before up.sql in each migration folder', async () => {
+    const r = await lint({
+      'db/migrations/2024-01-01-000000_create_orders/up.sql': 'create table orders (total double precision);',
+      'db/migrations/2024-01-01-000000_create_orders/down.sql': 'drop table orders;',
+    });
+    expect([r.files_applied_count, r.findings.map((f) => f.table)]).toEqual([1, ['public.orders']]);
+  });
+
+  it('finds the markers in files with CR LF line ends and nothing after the marker', async () => {
+    const r = await lint({
+      'db/migrations/0001_dbmate.sql': '-- migrate:up\r\ncreate table a (price double precision);\r\n-- migrate:down\r\ndrop table a;\r\n',
+      'db/migrations/0002_node_pg_migrate.sql': '-- Up Migration\r\ncreate table b (fee double precision);\r\n-- Down Migration\r\ndrop table b;\r\n',
+      'db/migrations/0003_goose.sql': '-- +goose Up\r\ncreate table c (cost double precision);\r\n-- +goose Down\r\ndrop table c;\r\n',
+      'db/migrations/0004_sql_migrate.sql': '-- +migrate Up\r\ncreate table d (total double precision);\r\n-- +migrate Down\r\ndrop table d;\r\n',
+    });
+    expect(r.findings.map((f) => f.table)).toEqual(['public.a', 'public.b', 'public.c', 'public.d']);
   });
 
   it('cuts nothing at a comment that only looks like a down marker: a down marker counts only next to the up marker of the same tool', async () => {
@@ -251,6 +294,7 @@ describe('money_lint_schema: failures', () => {
       [{ 'db/migrations/0001.sql': 'CREATE TABLE public.t (a integer);\nCOPY public.t (a) FROM stdin;\n1\n\\.\n' }, '42601', /a pg_dump with data/],
       [{ 'db/migrations/0001.sql': "select repeat('x', 2000000000);" }, '54000', /^The file needs more than the lint database can give it/],
       [{ 'db/migrations/0001_view.sql': 'create view v as select * from orders;', 'db/migrations/0002_orders.sql': 'create table orders (id int);' }, '42P01', /^If one of your migrations creates it, the files ran out of order/],
+      [{ 'db/migrations/0001.sql': 'select no_such_function();' }, '42883', /^If one of your migrations creates it, the files ran out of order.* preset "supabase"/],
     ];
     for (const [files, state, hint] of cases) {
       const e = await failure(files);
@@ -294,6 +338,26 @@ describe('money_lint_schema: platforms', () => {
     const r = await lint(SUPABASE, { preset: 'supabase' });
     expect(r.findings.map((f) => `${f.code} ${f.table}.${f.column}`)).toEqual(['FLOAT_MONEY public.profiles.balance']);
     expect(r.tables_checked).toBe(2);
+  });
+
+  it('creates every object SPEC.md §3.4 lists for the preset', async () => {
+    const r = await lint(
+      {
+        'db/migrations/0001.sql': [
+          'grant usage on schema public to anon, authenticated, service_role, authenticator, supabase_admin, supabase_auth_admin, supabase_storage_admin;',
+          'create table public.notes (id uuid primary key default extensions.uuid_generate_v4(), author uuid references auth.users (id), ' +
+            "email text default auth.email(), secret text default extensions.crypt('x', extensions.gen_salt('bf')), fee double precision);",
+          'alter table public.notes enable row level security;',
+          "create policy \"admins\" on public.notes for all to authenticated using ((auth.jwt() ->> 'role') = 'admin' and auth.role() = 'authenticated' and author = auth.uid());",
+          'create policy "images" on storage.objects for insert to authenticated with check ' +
+            "(storage.extension(name) in ('png', 'jpg') and storage.filename(name) <> '' and (storage.foldername(name))[1] = 'avatars');",
+          "insert into storage.buckets (id, name) values ('avatars', 'avatars');",
+          'alter publication supabase_realtime add table public.notes;',
+        ].join('\n'),
+      },
+      { preset: 'supabase' },
+    );
+    expect(r.findings.map((f) => `${f.table}.${f.column}`)).toEqual(['public.notes.fee']);
   });
 
   it('suggests the preset when Supabase objects are missing, and setup when the preset lacks one', async () => {

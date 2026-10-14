@@ -27,7 +27,7 @@
     "checkJs": true,
 
     "declaration": false,
-    "sourceMap": true,
+    "sourceMap": false,
 
     "outDir": "dist",
     "rootDir": "src"
