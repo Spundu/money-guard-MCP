@@ -140,7 +140,7 @@ describe('verifyAuditLog on a broken log', () => {
 
   it('describes a cut tail with both counts', () => {
     expect(run(bytes(VALID), { ...HEAD, count: 5 }).summary).toBe(
-      'The log does NOT verify: the log has 3 entries but the anchor says 5: entries are missing at the end, or were added (ANCHOR_COUNT_MISMATCH).',
+      'The log does NOT verify: the log has 3 entries but the anchor says 5: entries were removed from the end, or the log was replaced (ANCHOR_COUNT_MISMATCH).',
     );
   });
 
@@ -150,6 +150,44 @@ describe('verifyAuditLog on a broken log', () => {
       expect(json).not.toContain(KEY_HEX.slice(0, 16));
       expect(json).not.toContain(OTHER_HEX.slice(0, 16));
     }
+  });
+});
+
+describe('verifyAuditLog with the head of an earlier run as anchor', () => {
+  // The same three entries, then two more: what an honest writer does between two checks.
+  const FIVE = text(chain([...DRAFTS, { event: 'payment.capture', amount_pence: 500 }, { event: 'user.login', user: 'bob' }]));
+
+  it('verifies a log that grew since, and returns the new head', () => {
+    const r = run(bytes(FIVE), HEAD);
+    expect([r.ok, r.anchor_checked, r.head?.count, r.notes]).toEqual([true, true, 5, []]);
+    expect(r.summary).toBe('The log verifies: 5 entries, every seal and link intact. It extends the anchor: 2 entries added since; keep the new head for next time.');
+  });
+
+  it('takes the empty-log anchor as the start of any log, and refuses a count of 0 with another hash', () => {
+    expect(run(bytes(VALID), { count: 0, last_hash: GENESIS_HASH }).ok).toBe(true);
+    expect(run(bytes(''), { count: 0, last_hash: GENESIS_HASH }).summary).toBe('The log is empty, which always verifies. It matches the anchor.');
+    expect(run(bytes(VALID), { count: 0, last_hash: 'a'.repeat(64) })).toMatchObject({ ok: false, break: { code: 'ANCHOR_HEAD_MISMATCH', line: null } });
+  });
+
+  it('catches an emptied log, without telling the caller to pass the anchor it passed', () => {
+    expect(run(bytes(''), HEAD)).toMatchObject({ ok: false, anchor_checked: true, break: { code: 'ANCHOR_COUNT_MISMATCH', entry_index: 0, line: null }, notes: [] });
+  });
+
+  it('says the anchor was not checked when the chain breaks first', () => {
+    const r = run(bytes(FIVE.replace('"alice"', '"mallory"')), HEAD);
+    expect([r.ok, r.anchor_checked, r.break?.code]).toEqual([false, false, 'CONTENT_TAMPERED']);
+    expect(r.notes).toEqual(['The anchor was not checked, because the chain itself is broken.']);
+  });
+});
+
+describe('verifyAuditLog on a log whose line ends were converted', () => {
+  it('names CR LF line ends as the cause, and still fails: the bytes are not the sealed ones', () => {
+    const r = run(bytes(VALID.replaceAll('\n', '\r\n')));
+    expect(r.break?.code).toBe('NOT_CANONICAL');
+    expect(r.summary).toBe(
+      'The log does NOT verify: entry 0 (line 1) ends with CR LF where the sealed log has LF: its line ends were converted after it was sealed (NOT_CANONICAL).',
+    );
+    expect(r.notes.at(-1)).toMatch(/^Line 1 ends with CR LF\. .*core\.autocrlf.*; do not re-seal it\.$/);
   });
 });
 

@@ -20,7 +20,7 @@ limit.
 |---|---|
 | `money_lint_schema` | Runs your SQL migrations, in order, in a throwaway in-memory PostgreSQL 18 ([PGlite](https://pglite.dev)), then reads the column types Postgres really built. Money stored as `real`/`double precision` (floats lose pennies) or in Postgres's `money` type is an error; `numeric` and `smallint` are warnings. Each finding names the migration that introduced it and gives an `ALTER TABLE` to start the fix. |
 | `money_check_double_entry` | Reads a ledger export (CSV, JSON or JSONL) and checks that every transaction's legs net to zero in each currency, in whole minor units (pence, cents), with exact integer maths. Every problem comes with its line number. |
-| `audit_verify_chain` | Verifies an audit log written with [sealed-audit-chain](https://github.com/Spundu/audit-chain), byte for byte: the first entry that was edited, reordered, forged or cut off, and why. The HMAC keys stay in the server's settings; the agent never sees them. |
+| `audit_verify_chain` | Verifies an audit log written with [sealed-audit-chain](https://github.com/Spundu/audit-chain), byte for byte: the first entry that was edited, reordered or forged, and why. Given the head of an earlier check, it also catches entries cut off the end. The HMAC keys stay in the server's settings; the agent never sees them. |
 
 Why run the migrations instead of reading them? Patterns over SQL text easily miss a later `ALTER
 COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database that ran the migrations
@@ -237,7 +237,8 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
 
 **`audit_verify_chain`**
 - `file` (required). Optionally `anchor` (`count` and `last_hash`): the `head` that an earlier
-  successful run returned. With it, the tool also catches entries cut off the end.
+  successful run returned. With it, the tool also catches entries cut off the end, or a log that was
+  replaced; entries added since are fine.
 - It returns `ok`, the first broken entry with its line and a reason code (`CONTENT_TAMPERED`,
   `HMAC_MISMATCH`, `LINK_BROKEN` and others), and the `head` to keep for next time.
 

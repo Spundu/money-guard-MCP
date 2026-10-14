@@ -21,8 +21,9 @@ internet and never touches a real database.
    (debits = credits) and that every amount is whole pennies, using exact whole-number maths. It gives
    the exact line numbers of every problem.
 3. **Audit log check** (`audit_verify_chain`). It uses
-   [sealed-audit-chain](https://github.com/Spundu/audit-chain) to prove a log was not edited, reordered,
-   forged or cut short. The secret key stays in the server's settings: the agent never sees it.
+   [sealed-audit-chain](https://github.com/Spundu/audit-chain) to prove a log was not edited, reordered
+   or forged and, given the head of an earlier check, not cut short. The secret key stays in the
+   server's settings: the agent never sees it.
 
 ---
 
@@ -219,7 +220,7 @@ Shared error codes:
   > - money_check_double_entry: on a ledger or transactions export (CSV, JSON, JSONL), to prove every
   >   transaction's debits and credits net to zero in whole minor units.
   > - audit_verify_chain: on an audit log written with sealed-audit-chain, to prove no entry was
-  >   edited, reordered, forged or cut off.
+  >   edited, reordered or forged, and, given the head an earlier run returned, that none was cut off.
   >
   > Paths are relative to the project root. Fix schema findings with a NEW migration; never edit
   > migrations that may already have run. Never repair or re-seal an audit log that fails
@@ -257,7 +258,7 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
 > the result is what Postgres actually built, not a guess from the SQL text. Reports money columns
 > (names like price, amount, total, fee, balance, *_pence) stored as real/double precision (floats lose
 > pennies) or as the money type (errors), and as numeric or smallint (warnings), each with the migration
-> file that introduced it and an ALTER statement to fix it. Read-only: never connects to a real database
+> file that introduced it and, where the conversion is clear, an ALTER statement to fix it. Read-only: never connects to a real database
 > and never changes files. Fix findings by adding a NEW migration, then run this tool again: it runs
 > your fix too. If a migration fails because it needs objects your platform provides (Supabase roles,
 > auth schema), pass preset or setup.
@@ -777,25 +778,31 @@ Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", 
 - Its verdicts are proven identical to the Python verifier.
 
 ### 5.1 Description (exact, shown to the model)
-> Prove an audit log was not edited, reordered, forged or cut short. Verifies a log written with
-> sealed-audit-chain (one canonical JSON entry per line, each sealed with HMAC-SHA-256 and linked to the
-> previous entry by SHA-256) byte for byte, and returns the first broken entry with its line and a
-> reason code. The HMAC keys come from the server's configuration, never from arguments, and are never
-> returned. Pass the anchor (count and last_hash) that a previous successful run returned as head to
-> also detect entries removed from the end. Read-only: if a log fails, report it; never repair or
-> re-seal it.
+> Prove an audit log was not edited, reordered or forged and, with an anchor, not cut short. Verifies
+> a log written with sealed-audit-chain (one canonical JSON entry per line, each sealed with
+> HMAC-SHA-256 and linked to the previous entry by SHA-256) byte for byte, and returns the first broken
+> entry with its line and a reason code. The HMAC keys come from the server's configuration, never
+> from arguments, and are never returned. Pass as anchor the head (count and last_hash) that an earlier
+> successful run returned: the tool then also proves that the entries it vouched for then are all
+> still there, unchanged; entries added since are fine. Without an anchor, entries removed from the end
+> cannot be detected. Read-only: if a log fails, report it; never repair or re-seal it.
 
 ### 5.2 Input
 | Parameter | Type | Meaning |
 |---|---|---|
 | `file` (required) | string, a path | `.jsonl`, `.ndjson` or `.log`. |
-| `anchor` | object (strict): `count` integer 0 to 2^53 − 1, `last_hash` 64 lowercase hex | From an earlier run's `head`, or from wherever the app stores it. Detects entries removed from the end. |
+| `anchor` | object (strict): `count` integer 0 to 2^53 − 1, `last_hash` 64 lowercase hex | The `head` of an earlier run, or one the app stored. The first `count` entries must still be there, the last of them with hash `last_hash`; entries added after them are fine. Detects entries removed from the end, and a log replaced or rewritten. `count` 0 goes with the genesis hash (64 zeros). |
 
 ### 5.3 How it works
 1. Check the path. Read the file once (≤ 100 MiB).
 2. Build an `InMemoryKeyProvider` from `MONEY_GUARD_AUDIT_KEYS`. The keys never appear in a result, an
    error or a log line.
-3. Call `verifyJsonl(bytes, keys, anchor)`, and map the library's reason to a stable code (§5.4).
+3. Call `verifyJsonl(bytes, keys)`, and map the library's reason to a stable code (§5.4). The anchor
+   is not passed to the library: its anchor pins the **last** entry, which suits a head a writer stores
+   at every append. An anchor here is a head from an earlier run, which an honest log grows past, so
+   the tool checks it itself once the chain verifies: fewer entries than `count` is
+   `ANCHOR_COUNT_MISMATCH`; entry `count − 1` with another hash is `ANCHOR_HEAD_MISMATCH`; more
+   entries are fine, and the summary says how many were added.
 4. For `UNKNOWN_KEY_ID` and `HMAC_MISMATCH`, read that one entry's `writer_key_id` with `jsonlEntryAt`,
    so the message can say which key is missing (≤ 64 characters).
 5. When the log verifies, return its `head` (`count` and `last_hash`) as the anchor to keep.
@@ -817,8 +824,8 @@ Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", 
 | `UNKNOWN_KEY_ID` | unknown writer_key_id | No key is configured for this entry's key id. |
 | `HMAC_MISMATCH` | HMAC mismatch (forged or unsealed) | Forged, or sealed with a different key. |
 | `ENTRY_TOO_LARGE` | entry exceeds the canonical size limit | |
-| `ANCHOR_COUNT_MISMATCH` | count N != anchor count (truncation) | Entries are missing at the end (or were added). |
-| `ANCHOR_HEAD_MISMATCH` | head hash does not match anchor | The log was replaced or rolled back. |
+| `ANCHOR_COUNT_MISMATCH` | money-guard's anchor check: "count N < anchor count M (truncation)" | Entries were removed from the end, or the log was replaced. |
+| `ANCHOR_HEAD_MISMATCH` | money-guard's anchor check: "entry N hash does not match anchor" | The log was replaced or rewritten. |
 | `OTHER` | anything else | Only if a newer library adds a reason. The raw reason is included. |
 
 A test produces every reason the library can return through `verifyJsonl` and fails if one is not
@@ -832,10 +839,10 @@ mapped.
 | `ok` | boolean | |
 | `entries_verified` | integer | The entries vouched for before any break (the library's `lastSeq + 1`). |
 | `break` | object or null | `{ entry_index, line, code, reason, writer_key_id? }`. `line` = `entry_index + 1`, or null when that line does not exist (an anchor that counts more entries). `reason` is sealed-audit-chain's wording, cut at 120 characters (a canonicalization error can quote a key name from the line). |
-| `anchor_checked` | boolean | |
+| `anchor_checked` | boolean | True when an anchor was given and compared; false when the chain broke before it (a note says so). |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log: "An empty log always verifies; pass an anchor to detect a deleted or emptied log." |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |

@@ -2,7 +2,7 @@
 // tool layer reads the file and passes the configured keys.
 
 import { createHash } from 'node:crypto';
-import { GENESIS_HASH, jsonlEntryAt, jsonlLineCount, verifyJsonl, type ChainAnchor } from 'sealed-audit-chain';
+import { GENESIS_HASH, jsonlEntryAt, jsonlLineCount, verifyJsonl } from 'sealed-audit-chain';
 import type { AuditKeys } from '../config.js';
 import { clip, escapeUnsafe } from '../echo.js';
 
@@ -100,7 +100,7 @@ const ENTRY_MEANING: Readonly<Record<Exclude<ReasonCode, 'ANCHOR_COUNT_MISMATCH'
 /** The longest reason a result repeats (SPEC.md §5.5); every fixed library reason is shorter. */
 const MAX_REASON = 120;
 
-const NO_ANCHOR_NOTE ='No anchor was given, so entries removed from the end cannot be detected.';
+const NO_ANCHOR_NOTE = 'No anchor was given, so entries removed from the end cannot be detected.';
 const EMPTY_NOTE = 'The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log.';
 
 /** Number of lines in the file, counting an unterminated last line. */
@@ -119,38 +119,89 @@ function entries(n: number): string {
   return `${n} ${n === 1 ? 'entry' : 'entries'}`;
 }
 
+/** The 1-based line of the first CR LF line end in the file, or null. A canonical entry never holds a raw CR. */
+function firstCrlfLine(bytes: Uint8Array): number | null {
+  let line = 1;
+  for (let i = 0; i < bytes.length; i += 1) {
+    if (bytes[i] === 0x0a) line += 1;
+    else if (bytes[i] === 0x0d && bytes[i + 1] === 0x0a) return line;
+  }
+  return null;
+}
+
+function crlfNote(line: number): string {
+  return (
+    `Line ${line} ends with CR LF. A sealed log is written with LF line ends only, so its line ends were converted after it was sealed, ` +
+    'for example by git with core.autocrlf on Windows. Restore the original file (in git, mark the log -text in .gitattributes); do not re-seal it.'
+  );
+}
+
+/** The entry_hash of entry `index` of a log that verified. */
+function entryHashAt(bytes: Uint8Array, index: number): string {
+  return (jsonlEntryAt(bytes, index) as { entry_hash: string }).entry_hash;
+}
+
 export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: AuditKeys; anchor?: Anchor | undefined }): AuditResult {
   const { file, bytes, keys, anchor } = input;
-  const chainAnchor: ChainAnchor | undefined = anchor ? { count: anchor.count, lastHash: anchor.last_hash } : undefined;
-  const verdict = verifyJsonl(bytes, keys.provider, chainAnchor);
+  // The chain on its own: every seal and every link. The anchor is checked after, here: the library's
+  // anchor pins the LAST entry, which suits a head the writer stores at each append, while an anchor
+  // given to this tool is a head from an earlier run, which an honest log grows past (SPEC.md §5.3).
+  const verdict = verifyJsonl(bytes, keys.provider);
   const notes: string[] = [];
-  if (bytes.length === 0) notes.push(EMPTY_NOTE);
+  if (!anchor && bytes.length === 0) notes.push(EMPTY_NOTE);
   if (!anchor) notes.push(NO_ANCHOR_NOTE);
   // The fields in SPEC.md §5.5's order.
-  const result = (summary: string, brk: AuditBreak | null, head: Anchor | null): AuditResult => ({
+  const result = (summary: string, brk: AuditBreak | null, head: Anchor | null, anchorChecked: boolean): AuditResult => ({
     summary,
     file,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
-    ok: verdict.ok,
-    entries_verified: verdict.lastSeq + 1,
+    ok: brk === null,
+    entries_verified: brk === null ? verdict.lastSeq + 1 : brk.entry_index,
     break: brk,
-    anchor_checked: anchor !== undefined,
+    anchor_checked: anchorChecked,
     head,
     key_ids_configured: keys.ids.map(escapeUnsafe), // from the settings, but shown like any other text
     notes,
   });
 
-  if (verdict.ok) {
-    const count = verdict.lastSeq + 1;
-    const last = count === 0 ? GENESIS_HASH : (jsonlEntryAt(bytes, count - 1) as { entry_hash: string }).entry_hash;
-    const summary =
-      count === 0
-        ? 'The log is empty, which always verifies.'
-        : `The log verifies: ${entries(count)}, every seal and link intact.` +
-          (anchor ? ' It matches the anchor.' : ' Keep head and pass it as anchor next time.');
-    return result(summary, null, { count, last_hash: last });
-  }
+  if (!verdict.ok) return broken(bytes, verdict, anchor, notes, result);
 
+  const count = verdict.lastSeq + 1;
+  const head: Anchor = { count, last_hash: count === 0 ? GENESIS_HASH : entryHashAt(bytes, count - 1) };
+  const intact = count === 0 ? 'The log is empty, which always verifies.' : `The log verifies: ${entries(count)}, every seal and link intact.`;
+  if (!anchor) return result(`${intact}${count === 0 ? '' : ' Keep head and pass it as anchor next time.'}`, null, head, false);
+
+  if (anchor.count > count) {
+    const brk: AuditBreak = { entry_index: count, line: null, code: 'ANCHOR_COUNT_MISMATCH', reason: `count ${count} < anchor count ${anchor.count} (truncation)` };
+    const what = `the log has ${entries(count)} but the anchor says ${anchor.count}: entries were removed from the end, or the log was replaced`;
+    return result(`The log does NOT verify: ${what} (ANCHOR_COUNT_MISMATCH).`, brk, null, true);
+  }
+  const anchored = anchor.count === 0 ? GENESIS_HASH : entryHashAt(bytes, anchor.count - 1);
+  if (anchored !== anchor.last_hash) {
+    const index = Math.max(anchor.count - 1, 0);
+    const brk: AuditBreak =
+      anchor.count === 0
+        ? { entry_index: 0, line: null, code: 'ANCHOR_HEAD_MISMATCH', reason: 'anchor count 0 needs the genesis hash' }
+        : { entry_index: index, line: anchor.count, code: 'ANCHOR_HEAD_MISMATCH', reason: `entry ${index} hash does not match anchor` };
+    const what =
+      anchor.count === 0
+        ? 'the anchor cannot be the head of any log: a count of 0 goes with the genesis hash'
+        : `entry ${index} (line ${anchor.count}) is not the one the anchor recorded: the log was replaced or rewritten`;
+    return result(`The log does NOT verify: ${what} (ANCHOR_HEAD_MISMATCH).`, brk, null, true);
+  }
+  const added = count - anchor.count;
+  const tail = added === 0 ? ' It matches the anchor.' : ` It extends the anchor: ${entries(added)} added since; keep the new head for next time.`;
+  return result(`${intact}${tail}`, null, head, true);
+}
+
+/** The result for a log whose chain breaks: the first broken entry, and why, in plain words. */
+function broken(
+  bytes: Uint8Array,
+  verdict: { brokenAt: number | null; reason: string | null },
+  anchor: Anchor | undefined,
+  notes: string[],
+  result: (summary: string, brk: AuditBreak | null, head: Anchor | null, anchorChecked: boolean) => AuditResult,
+): AuditResult {
   const index = verdict.brokenAt ?? 0;
   const raw = verdict.reason ?? 'unknown';
   const code = reasonCode(raw);
@@ -163,17 +214,19 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
     const id = writerKeyIdAt(bytes, index);
     if (id !== undefined) brk.writer_key_id = id;
   }
+  if (anchor) notes.push('The anchor was not checked, because the chain itself is broken.');
+  const crlf = firstCrlfLine(bytes);
+  if (crlf !== null) notes.push(crlfNote(crlf));
 
-  let what: string;
-  if (code === 'ANCHOR_COUNT_MISMATCH') {
-    what = `the log has ${entries(index)} but the anchor says ${anchor?.count ?? '?'}: entries are missing at the end, or were added`;
-  } else if (code === 'ANCHOR_HEAD_MISMATCH') {
-    what = 'its last entry is not the one the anchor recorded: the log was replaced or rolled back';
+  const where = line === null ? `entry ${index}` : `entry ${index} (line ${line})`;
+  let meaning: string;
+  if (code === 'NOT_CANONICAL' && crlf === line) {
+    meaning = 'ends with CR LF where the sealed log has LF: its line ends were converted after it was sealed';
+  } else if (code === 'OTHER' || code === 'ANCHOR_COUNT_MISMATCH' || code === 'ANCHOR_HEAD_MISMATCH') {
+    meaning = `failed: ${reason}`; // anchor codes cannot come from the library here: it is given no anchor
   } else {
-    const where = line === null ? `entry ${index}` : `entry ${index} (line ${line})`;
-    const meaning = code === 'OTHER' ? `failed: ${reason}` : ENTRY_MEANING[code];
-    const keyId = code === 'UNKNOWN_KEY_ID' && brk.writer_key_id !== undefined ? ` ("${brk.writer_key_id}")` : '';
-    what = `${where} ${meaning}${keyId}`;
+    meaning = ENTRY_MEANING[code];
   }
-  return result(`The log does NOT verify: ${what} (${code}).`, brk, null);
+  const keyId = code === 'UNKNOWN_KEY_ID' && brk.writer_key_id !== undefined ? ` ("${brk.writer_key_id}")` : '';
+  return result(`The log does NOT verify: ${where} ${meaning}${keyId} (${code}).`, brk, null, false);
 }
