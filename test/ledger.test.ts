@@ -249,7 +249,7 @@ describe('money_check_double_entry: reading CSV', () => {
   const columns = { transaction_id: 't', amount: 'a' };
 
   it('gives the line a record starts on, with quoted line breaks, CRLF, a BOM and blank lines', () => {
-    const csv = '﻿t,note,a\r\nA,"two\r\nlines",100\r\n\r\nA,x,-99\r\n';
+    const csv = '\ufefft,note,a\r\nA,"two\r\nlines",100\r\n\r\nA,x,-99\r\n';
     const r = check('.csv', csv, { columns });
     expect(r.findings[0]).toMatchObject({ code: 'UNBALANCED', lines: [2, 5] });
   });

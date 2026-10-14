@@ -247,7 +247,7 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
 - **stdio only.** No network listener and no network requests. No shell and no child processes.
 - **Migrations run in WebAssembly,** in a worker thread, with a virtual filesystem. They cannot read
   your files (`COPY ... FROM '/etc/hosts'` finds nothing) or run programs. An endless migration is
-  stopped at the time limit (60 seconds by default), and a database left stuck is caught within 5
+  stopped at the time limit (45 seconds by default), and a database left stuck is caught within 5
   seconds.
 - **Paths are confined to the project folder.** Links are followed and their real target is checked.
   `..`, absolute paths outside the project, and Windows device and UNC paths are refused. Files that
@@ -264,8 +264,8 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
   an error or a log line; an error about a malformed key setting names the bad pair by its position
   only. The log (stderr) has a startup line and one line per call: the tool, the time it took and the
   outcome code.
-- **One schema lint at a time, and at most 8 calls at once.** A call over either limit gets `BUSY`
-  straight away.
+- **One schema lint at a time.** A second one gets `BUSY` straight away. The other two tools answer
+  one call after another. Cancelling a lint stops its database at once.
 
 ## What it does not do
 

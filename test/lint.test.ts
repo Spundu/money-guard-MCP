@@ -261,7 +261,7 @@ describe('money_lint_schema: judging columns', () => {
 describe('money_lint_schema: names from a hostile project', () => {
   it('shows table, column and file names whole but escaped, and gives no fix_sql for a name with hidden characters', async () => {
     // U+202E reverses how the text after it shows: SQL built from the escaped name would name another column.
-    const r = await lint({ 'db/migrations/0001_‮evil.sql': 'create table o ("total_‮DANGER" double precision, price double precision, "lat_‮x" double precision);' });
+    const r = await lint({ 'db/migrations/0001_\u202eevil.sql': 'create table o ("total_\u202eDANGER" double precision, price double precision, "lat_\u202ex" double precision);' });
     expect(hasUnsafe(JSON.stringify(r))).toBe(false);
     expect(r.findings.map((f) => [f.column, f.fix_sql === null])).toEqual([
       ['price', false],

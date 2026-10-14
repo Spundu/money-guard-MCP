@@ -11,7 +11,8 @@ import { runScripts, type Script } from './database.js';
 import { collectSources } from './files.js';
 import { SUPABASE_PRESET } from './supabase.js';
 
-export const DEFAULT_TIMEOUT_SECONDS = 60;
+/** Under the 60 seconds that common MCP clients wait for an answer, so the model sees TIMEOUT and not a client error. */
+export const DEFAULT_TIMEOUT_SECONDS = 45;
 const MAX_FINDINGS = 50;
 const MAX_LISTED = 30;
 

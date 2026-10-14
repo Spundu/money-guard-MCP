@@ -1,6 +1,7 @@
 // The input schemas run on every call, before any handler, so they must be cheap on hostile input.
 import { describe, expect, it } from 'vitest';
-import { POINTER, ledgerInput } from '../src/schemas.js';
+import { DEFAULT_TIMEOUT_SECONDS } from '../src/lint/run.js';
+import { POINTER, ledgerInput, lintInput } from '../src/schemas.js';
 
 const call = (columns: Record<string, string>, extra: Record<string, unknown> = {}) =>
   ledgerInput.safeParse({ file: 'exports/ledger.json', columns: { transaction_id: 'id', ...columns }, ...extra });
@@ -26,6 +27,13 @@ describe('the JSON Pointer rule', () => {
 describe('records_pointer', () => {
   it('refuses control and invisible characters, which every location in a finding would repeat', () => {
     expect(call({ amount: 'a' }, { records_pointer: '/data/entries' }).success).toBe(true);
-    for (const bad of ['/data\u0001', '/da‮ta', '/x ']) expect(call({ amount: 'a' }, { records_pointer: bad }).success, bad).toBe(false);
+    for (const bad of ['/data\u0001', '/da\u202eta', '/x\u2028']) expect(call({ amount: 'a' }, { records_pointer: bad }).success, bad).toBe(false);
+  });
+});
+
+describe('timeout_seconds', () => {
+  it('defaults to 45 seconds, under the 60 that common MCP clients wait for an answer, and says so', () => {
+    expect(DEFAULT_TIMEOUT_SECONDS).toBe(45);
+    expect(lintInput.shape.timeout_seconds.description).toBe('Stop after this many seconds. Default 45: most clients wait at most 60 for an answer.');
   });
 });

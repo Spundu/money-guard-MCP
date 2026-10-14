@@ -56,9 +56,10 @@ internet and never touches a real database.
 - No network requests, no shell, no child processes. PGlite runs in a worker thread inside the same
   process.
 - stdout carries only protocol messages. Diagnostics go to stderr: a startup line (version, Node.js
-  version, the project folder's name, how many key ids), one line per answered call (tool, milliseconds,
-  outcome code), and the type of any transport error (for example a message over the SDK's 10 MiB stdio
-  limit, after which the SDK closes the connection). No line contains file content, keys or absolute
+  version, the project folder's name, how many key ids), one line per call the server answers or the
+  client cancels (tool, milliseconds, outcome code or `CANCELLED`), and the type of any transport error
+  (for example a message over the SDK's 10 MiB stdio limit, after which the SDK closes the connection).
+  A call the SDK refuses before the handler runs (bad arguments, an unknown tool) is not logged. No line contains file content, keys or absolute
   paths; an unexpected error is logged as its type and `file:line:column` locations only.
 - One bad call never kills the server. Every handler catches everything. An unexpected exception
   becomes `INTERNAL_ERROR` with no internal detail; the detail goes to stderr only.
@@ -172,7 +173,8 @@ already read the files).
 - **Protocol errors:** only for unknown tools and malformed requests (the SDK sends these).
 - **Arguments that break the input schema** come back from the SDK as an `isError` result ("Input
   validation error: ...") before our handler runs. Every input object is strict (unknown keys are
-  refused), so a misspelt parameter name is reported instead of silently ignored.
+  refused), so a misspelt parameter name is reported instead of silently ignored. That text comes from
+  the SDK, does not start with a money-guard code, and is not held to the size budget of §2.4.
 
 Shared error codes:
 
@@ -186,20 +188,23 @@ Shared error codes:
 | `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. |
 | `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. |
 | `FILE_TOO_LARGE` | Over the tool's size limit. | States the limit; suggests a smaller export. |
-| `BUSY` | Too many calls at once (§2.6). | Retry after the running call finishes. |
+| `BUSY` | A second `money_lint_schema` while one runs (§2.6). | Retry after the running lint finishes. |
 | `INTERNAL_ERROR` | A bug. | Details are in the server's log (stderr). |
 
 ### 2.6 Limits and concurrency
-- At most **one** `money_lint_schema` runs at a time, because it starts a database. At most **8** tool
-  calls are in progress at once. A call over either limit gets `BUSY` straight away; there is no hidden
-  queue. (The MCP spec says servers MUST rate-limit tool calls.)
-- A cancelled call stops its work. The `money_lint_schema` worker is terminated, and its database is
-  discarded.
+- At most **one** `money_lint_schema` runs at a time, because it starts a database: a second one gets
+  `BUSY` straight away, with no hidden queue. (The MCP spec says servers MUST rate-limit tool calls.)
+- `money_check_double_entry` and `audit_verify_chain` run to the end before the server reads the next
+  message, so they answer one call after another; on the largest files they allow (25 and 100 MiB)
+  that takes a second or two. A lint runs in its worker meanwhile.
+- A cancelled lint stops its work: the worker is terminated and its database discarded, the log gets
+  a `CANCELLED` line, and the next lint can start at once. A ledger or audit call cannot be cancelled
+  once it has started; it ends within those seconds.
 - Each tool's own limits are in its section.
 
 ### 2.7 How the tools are shown to the model
 - Order: `money_lint_schema`, `money_check_double_entry`, `audit_verify_chain`. It never changes, and
-  the tool list never changes (no `listChanged`).
+  the tool list never changes: the capabilities say `tools.listChanged: false`.
 - Titles:
   - `money_lint_schema`: "Lint money column types"
   - `money_check_double_entry`: "Check double-entry balance"
@@ -273,7 +278,7 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
 | `accept_numeric` | boolean | `false` | Treat `numeric`/`decimal` money columns as fine instead of warning about them. |
 | `money_columns` | array of ≤ 200 names | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`. |
 | `ignore_columns` | array of ≤ 200 names | none | Columns never to report (false positives), in the same format. They still count in `ignored_count`. |
-| `timeout_seconds` | integer 5-300 | 60 | Stop after this long. |
+| `timeout_seconds` | integer 5-300 | 45 | Stop after this long. The default stays under the 60 seconds that common MCP clients wait for an answer, so the model gets `TIMEOUT` with the file that was running, not a client error. A larger value only helps with a client that waits longer. |
 
 ### 3.3 Which files run, in which order
 - **Default:** every `*.sql` file under `migrations`, at any depth, except files that only undo

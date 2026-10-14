@@ -46,8 +46,10 @@ describe.each(ERAS)('the server, %s era', (era) => {
     expect(client.getProtocolEra()).toBe(era);
   });
 
-  it('gives the server instructions of SPEC.md §2.7', async () => {
-    expect((await connect(era)).getInstructions()).toBe(INSTRUCTIONS);
+  it('gives the server instructions of SPEC.md §2.7, and says its tool list never changes', async () => {
+    const client = await connect(era);
+    expect(client.getInstructions()).toBe(INSTRUCTIONS);
+    expect(client.getServerCapabilities()?.tools).toEqual({ listChanged: false });
   });
 
   it('lists the three tools in a fixed order, read-only, with the texts of SPEC.md', async () => {
@@ -79,7 +81,7 @@ describe.each(ERAS)('the server, %s era', (era) => {
     ]);
     for (const r of results) {
       expect(r.isError ?? false).toBe(false);
-      expect(JSON.parse(textOf(r))).toEqual(r.structuredContent);
+      expect(textOf(r)).toBe(JSON.stringify(r.structuredContent)); // compact: the size budget counts this text
       expect(textOf(r).length).toBeLessThanOrEqual(20_000);
       expect(textOf(r)).not.toContain(FIXTURE_KEY_HEX.slice(0, 16));
     }
@@ -102,6 +104,16 @@ describe.each(ERAS)('the server, %s era', (era) => {
     // A records pointer is repeated in every location of a JSON finding, so it is kept short.
     const longPointer = await client.callTool({ name: 'money_check_double_entry', arguments: { ...JOURNAL_ARGS, records_pointer: `/${'p'.repeat(256)}` } });
     expect([longPointer.isError, textOf(longPointer)]).toEqual([true, expect.stringMatching(/^Input validation error: /)]);
+    // Nested objects are strict too, a time limit has a floor, and a JSON Pointer must be valid.
+    for (const args of [
+      { ...JOURNAL_ARGS, columns: { ...JOURNAL_ARGS.columns, currncy: 'currency' } },
+      { ...JOURNAL_ARGS, columns: { ...JOURNAL_ARGS.columns, amount: '/a~2' } },
+    ]) {
+      const r = await client.callTool({ name: 'money_check_double_entry', arguments: args });
+      expect([r.isError, textOf(r)], JSON.stringify(args)).toEqual([true, expect.stringMatching(/^Input validation error: /)]);
+    }
+    const tooShort = await client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'db/migrations', timeout_seconds: 4 } });
+    expect([tooShort.isError, textOf(tooShort)]).toEqual([true, expect.stringMatching(/^Input validation error: /)]);
   });
 
   it('treats null as "not given" for every optional argument', async () => {
@@ -143,11 +155,22 @@ describe('the server with bad settings', () => {
   });
 });
 
+describe('a long files list', () => {
+  it('passes the input-element limit with room to spare (up to 2,000 files)', async () => {
+    const dir = tempDir();
+    const files = Array.from({ length: 300 }, (_, i) => `${String(i).padStart(4, '0')}.sql`);
+    writeTree(dir, Object.fromEntries(files.map((f) => [`db/migrations/${f}`, 'select 1;'])));
+    const client = await connect('modern', resolveConfig({ MONEY_GUARD_ROOT: dir }, dir));
+    const r = await client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'db/migrations', files } });
+    expect([r.isError ?? false, (r.structuredContent as { files_applied_count: number }).files_applied_count]).toEqual([false, 300]);
+  });
+});
+
 describe('a hostile project', () => {
   it('never sends a control or invisible character raw, in a result or in an error (SPEC.md §2.4)', async () => {
     // U+202E (right-to-left override) in folder names, file names, table and column names, ids and
     // currencies: the "Trojan Source" trick for making text read differently from what it is.
-    const RLO = '‮';
+    const RLO = '\u202e';
     const dir = tempDir();
     writeTree(dir, {
       [`db/${RLO}ok/0001_${RLO}a.sql`]: `create table o ("total_${RLO}x" double precision);`,

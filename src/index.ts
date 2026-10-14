@@ -7,7 +7,7 @@ import process from 'node:process';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { resolveConfig } from './config.js';
 import { clip } from './echo.js';
-import { NAME, VERSION, createServer } from './server.js';
+import { NAME, VERSION, createServer, trace } from './server.js';
 
 const config = resolveConfig(process.env, process.cwd());
 // Transport problems (a message over the SDK's 10 MiB stdio limit, which closes the connection, or a
@@ -19,10 +19,10 @@ const keys = config.auditKeys.ok ? `${config.auditKeys.value.ids.length} audit k
 // The Node.js version helps when a host (Claude Desktop) runs the server with its own built-in Node.
 process.stderr.write(`${NAME} ${VERSION} (Node.js ${process.version}) on stdio: ${root}; ${keys}.\n`);
 
-// A failure no handler caught must not take the server down with it; it is logged without its message,
-// which could quote a file.
-process.on('uncaughtException', (err) => process.stderr.write(`${NAME}: uncaught ${err.name}\n`));
-process.on('unhandledRejection', (reason) => process.stderr.write(`${NAME}: unhandled rejection (${reason instanceof Error ? reason.name : typeof reason})\n`));
+// A failure no handler caught must not take the server down with it. It is logged as its type and code
+// locations only (trace): never its message, which could quote a file.
+process.on('uncaughtException', (err) => process.stderr.write(`${NAME}: uncaught ${trace(err)}\n`));
+process.on('unhandledRejection', (reason) => process.stderr.write(`${NAME}: unhandled rejection ${trace(reason)}\n`));
 
 const stop = () => {
   void handle.close().finally(() => process.exit(0));

@@ -18,7 +18,7 @@ describe('clip', () => {
   });
 
   it('never returns more than the limit, whatever the input', () => {
-    for (const input of ['a'.repeat(10_000), '\u0001'.repeat(100), '😀'.repeat(100), `ab${'‮'.repeat(30)}`]) {
+    for (const input of ['a'.repeat(10_000), '\u0001'.repeat(100), '😀'.repeat(100), `ab${'\u202e'.repeat(30)}`]) {
       expect(width(clip(input))).toBeLessThanOrEqual(ECHO_MAX);
     }
   });
@@ -26,9 +26,9 @@ describe('clip', () => {
   it('escapes control characters, line separators and bidi overrides so they cannot hide text', () => {
     expect(clip('a\nb')).toBe('a\\u000ab');
     expect(clip('\u001b[31m')).toBe('\\u001b[31m');
-    expect(clip('x y')).toBe('x\\u2028y');
-    expect(clip('abc‮dcba')).toBe('abc\\u202edcba');
-    expect(clip('⁦i⁩')).toBe('\\u2066i\\u2069');
+    expect(clip('x\u2028y')).toBe('x\\u2028y');
+    expect(clip('abc\u202edcba')).toBe('abc\\u202edcba');
+    expect(clip('\u2066i\u2069')).toBe('\\u2066i\\u2069');
     expect(clip('\u0085')).toBe('\\u0085');
   });
 
@@ -46,11 +46,11 @@ describe('clip', () => {
 
 describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
   // A name from a hostile migration: the right-to-left override reverses how the text after it shows.
-  const hostile = 'total_‮DANGER';
+  const hostile = 'total_\u202eDANGER';
   const shown = 'total_\\u202eDANGER';
 
   it('escapes the same characters as clip, and cuts nothing', () => {
-    expect(escapeUnsafe(`${'x'.repeat(100)}⁦`)).toBe(`${'x'.repeat(100)}\\u2066`);
+    expect(escapeUnsafe(`${'x'.repeat(100)}\u2066`)).toBe(`${'x'.repeat(100)}\\u2066`);
     expect(escapeUnsafe(hostile)).toBe(shown);
     expect(escapeUnsafe('a\nb')).toBe(clip('a\nb'));
     expect(escapeUnsafe('plain name_1 😀')).toBe('plain name_1 😀');

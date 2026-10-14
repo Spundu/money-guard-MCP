@@ -21,10 +21,6 @@ export const VERSION: string = (createRequire(import.meta.url)('../package.json'
 /** Every tool only reads, and only the project folder (SPEC.md §2.7). */
 const ANNOTATIONS = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
-/** Calls in progress at once, across the whole process (SPEC.md §2.6). */
-const MAX_IN_FLIGHT = 8;
-let inFlight = 0;
-
 const AUDIT_MAX_BYTES = 100 * 1024 * 1024;
 
 export type Log = (line: string) => void;
@@ -53,19 +49,16 @@ export function trace(err: unknown): string {
 async function answer(tool: string, log: Log, signal: AbortSignal | undefined, work: () => Promise<object> | object): Promise<CallToolResult> {
   const started = performance.now();
   const ms = () => `${Math.round(performance.now() - started)}ms`;
-  if (inFlight >= MAX_IN_FLIGHT) {
-    log(`${NAME}: ${tool} BUSY`);
-    const busy = new ToolError('BUSY', `${MAX_IN_FLIGHT} money-guard calls are already running.`, 'Call again when one of them has finished.');
-    return { content: [{ type: 'text', text: busy.toText() }], isError: true };
-  }
-  inFlight += 1;
   try {
     // Every string escaped once more on the way out (SPEC.md §2.4): a field a tool forgot cannot arrive raw.
     const result = escapeStrings(await work());
     log(`${NAME}: ${tool} ok ${ms()}`);
     return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result as Record<string, unknown> };
   } catch (err) {
-    if (signal?.aborted) throw err; // cancelled: the client is no longer waiting for an answer
+    if (signal?.aborted) {
+      log(`${NAME}: ${tool} CANCELLED ${ms()}`);
+      throw err; // the client is no longer waiting for an answer
+    }
     if (err instanceof ToolError) {
       log(`${NAME}: ${tool} ${err.code} ${ms()}`);
       return { content: [{ type: 'text', text: escapeUnsafe(err.toText()) }], isError: true };
@@ -73,15 +66,14 @@ async function answer(tool: string, log: Log, signal: AbortSignal | undefined, w
     log(`${NAME}: ${tool} INTERNAL_ERROR ${ms()} ${trace(err)}`);
     const internal = new ToolError('INTERNAL_ERROR', `money-guard failed unexpectedly (${err instanceof Error ? err.name : typeof err}).`, 'This is a bug in money-guard: please report it. The server log has the details.');
     return { content: [{ type: 'text', text: escapeUnsafe(internal.toText()) }], isError: true };
-  } finally {
-    inFlight -= 1;
   }
 }
 
 export function createServer(config: Config, log: Log = stderrLog): McpServer {
   const server = new McpServer(
     { name: NAME, version: VERSION },
-    { capabilities: { tools: {} }, instructions: INSTRUCTIONS, maxToolInputElements: 2500 },
+    // The tool list never changes (SPEC.md §2.7): say so, as the SDK would otherwise advertise listChanged.
+    { capabilities: { tools: { listChanged: false } }, instructions: INSTRUCTIONS, maxToolInputElements: 2500 },
   );
   const root = (): Root => {
     if (!config.root.ok) throw config.root.error;

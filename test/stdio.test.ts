@@ -7,7 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { FIXTURE_KEY_HEX, SHOP } from '../scripts/fixtures.mjs';
 import { tempDir, writeTree } from './support/tmp.js';
 
@@ -48,6 +48,28 @@ describe('the stdio process', () => {
       await client.close();
     }
   });
+
+  it('stops a running lint when the client cancels it, logs that, and serves the next lint at once', async () => {
+    const project = tempDir();
+    writeTree(project, { 'endless/0001.sql': 'do $$ begin loop end loop; end $$;', 'ok/0001.sql': 'create table t (price double precision);' });
+    const transport = new StdioClientTransport({ command: process.execPath, args: [ENTRY], env: { ...getDefaultEnvironment(), MONEY_GUARD_ROOT: project }, stderr: 'pipe' });
+    let stderr = '';
+    transport.stderr?.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
+    const client = new Client({ name: 'money-guard-stdio-tests', version: '1.0.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
+    await client.connect(transport);
+    try {
+      const controller = new AbortController();
+      const call = client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'endless' } }, { signal: controller.signal });
+      setTimeout(() => controller.abort(), 3000);
+      await expect(call).rejects.toThrow();
+      // Had the cancelled lint kept running (until its 45-second limit), this one would get BUSY.
+      const next = await client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'ok' } });
+      expect([next.isError ?? false, (next.structuredContent as { error_count?: number } | undefined)?.error_count]).toEqual([false, 1]);
+      await vi.waitFor(() => expect(stderr).toMatch(/money-guard-mcp: money_lint_schema CANCELLED \d+ms/), { timeout: 5000 });
+    } finally {
+      await client.close();
+    }
+  }, 60_000);
 
   it('logs a message too large for stdio (the SDK stops reading past 10 MiB) instead of ending in silence', async () => {
     const child = spawn(process.execPath, [ENTRY], { env: { ...getDefaultEnvironment(), MONEY_GUARD_ROOT: SHOP }, stdio: ['pipe', 'pipe', 'pipe'] });
