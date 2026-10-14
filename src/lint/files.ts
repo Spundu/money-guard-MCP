@@ -16,7 +16,7 @@ export const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 export interface SqlScript {
   /** Relative to the project root, "/" separators: what results show. */
   rel: string;
-  /** The SQL as it runs: dbmate's down part cut, pg_dump's \restrict lines blanked. */
+  /** The SQL as it runs: down parts (after a known tool's down marker) and pg_dump's \restrict lines blanked. */
   text: string;
 }
 
@@ -113,7 +113,7 @@ function tooManyFiles(): ToolError {
  * (counted in `seen.down`, so an empty result can say why) and the setup file (`seen.setup`, its real
  * path), which runs once, as setup.
  */
-function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number; setup: string | undefined }): void {
+function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number; setup: string | undefined; setupFound: boolean }): void {
   if (visited.has(dir)) return; // a link loop
   visited.add(dir);
   let entries: Dirent[];
@@ -174,7 +174,10 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
         seen.down += 1;
         continue;
       }
-      if (real === seen.setup) continue;
+      if (real === seen.setup) {
+        seen.setupFound = true;
+        continue;
+      }
       out.push(toPosix(path.relative(base, full)));
       if (out.length > MAX_FILES) throw tooManyFiles();
     }
@@ -250,11 +253,13 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     });
   } else {
     const found: string[] = [];
-    const seen = { down: 0, setup: setupReal };
+    const seen = { down: 0, setup: setupReal, setupFound: false };
     walk(root, target.real, target.real, found, new Set(), seen);
-    if (found.length === 0 && seen.down > 0) {
-      const files = seen.down === 1 ? 'Its 1 .sql file is a down step' : `Its ${seen.down} .sql files are down steps`;
-      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run. ${files} (down.sql, *.down.sql, *.undo.sql, *.rollback.sql), which money-guard leaves out.`, 'Point migrations at the folder of up migrations, or pass files with the ones to run.');
+    if (found.length === 0 && (seen.down > 0 || seen.setupFound)) {
+      const left: string[] = [];
+      if (seen.down > 0) left.push(`${seen.down === 1 ? '1 .sql file is a down step' : `${seen.down} .sql files are down steps`} (down.sql, *.down.sql, *.undo.sql, *.rollback.sql), which money-guard leaves out`);
+      if (seen.setupFound) left.push('the setup file runs once, as setup');
+      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${left.join('; ')}.`, 'Point migrations at the folder of up migrations, or pass files with the ones to run.');
     }
     if (found.length === 0) {
       throw new ToolError('NO_SQL_FILES', `"${folder}" holds no .sql files. ${describeOtherFiles(target.real)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');

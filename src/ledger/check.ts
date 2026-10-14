@@ -143,8 +143,8 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
     const raw = row.values[field];
     const parsed = parseAmount(raw, opts.amountFormat, opts.decimalPlaces);
     if (parsed === null) return null;
-    const written = raw instanceof JsonNumber ? raw.text : typeof raw === 'string' ? raw : '';
-    if (written.includes('.')) tally.decimalPoint += 1;
+    const written = raw instanceof JsonNumber ? raw.text : typeof raw === 'string' ? raw.trim() : '';
+    if (/^-?\d+\.\d+$/.test(written)) tally.decimalPoint += 1;
     else if (parsed.ok && parsed.minor !== 0n) tally.plain += 1;
     if (parsed.ok) return parsed.minor;
     problem(parsed.problem, field, `${shownValue(raw)} ${parsed.why}`, raw);

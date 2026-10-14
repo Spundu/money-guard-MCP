@@ -10,7 +10,8 @@
 //   "late":     it says the first script ran, answers the check after it only 500 ms later, and ends
 //               1 second after that;
 //   "slow":     it starts, writes the file MONEY_GUARD_TEST_HEARTBEAT names, and runs the first script
-//               only once that name with ".go" added exists.
+//               only once that name with ".go" added exists;
+//   "crash":    it says the first script is running, then dies (an uncaught error) while it runs.
 import { existsSync, writeFileSync } from 'node:fs';
 import process from 'node:process';
 import { setInterval, setTimeout } from 'node:timers';
@@ -35,7 +36,13 @@ if (mode === 'slow') {
   while (!existsSync(`${heartbeat}.go`)) Atomics.wait(pause, 0, 0, 20);
 }
 post({ type: 'running', step: 0 });
-post({ type: 'executed', step: 0 });
+if (mode === 'crash') {
+  setTimeout(() => {
+    throw new Error('the database thread died');
+  }, 50);
+} else {
+  post({ type: 'executed', step: 0 });
+}
 const answer = () => {
   post({ type: 'snapshot', step: 0, rows: [] });
   post({ type: 'done', detail: [] });

@@ -34,6 +34,6 @@ export default function build(): void {
     throw new Error(`Building dist/ failed:\n${stdout}${stderr}`, { cause: err });
   }
   if (!canLinkFiles()) {
-    console.warn('\nNOTE: this machine cannot create file symlinks (Windows without Developer Mode), so the tests of file links skip here. CI runs them on Linux.\n');
+    console.warn('\nNOTE: this machine cannot create file symlinks (Windows without Developer Mode), so the tests of file links skip here. CI is set up to run them: its runners may create links.\n');
   }
 }

@@ -209,6 +209,17 @@ describe('a hostile project', () => {
     }
     expect(outcomes).toEqual(['ok', 'MIGRATION_FAILED', 'NO_SQL_FILES', 'ok', 'ok', 'PATH_NOT_FOUND']);
   });
+
+  it('cuts a long audit log path in the middle, as every result does (test/shown-paths.test.ts)', async () => {
+    const dir = tempDir();
+    const deep = Array.from({ length: 4 }, () => 'a'.repeat(120)).join('/');
+    writeTree(dir, { [`${deep}/audit.jsonl`]: '' });
+    const client = await connect('legacy', resolveConfig({ MONEY_GUARD_ROOT: dir, MONEY_GUARD_AUDIT_KEYS: `k1=${FIXTURE_KEY_HEX}` }, dir));
+    const r = await client.callTool({ name: 'audit_verify_chain', arguments: { file: `${deep}/audit.jsonl` } });
+    const file = (r.structuredContent as { file: string }).file;
+    expect([...file].length).toBeLessThanOrEqual(400);
+    expect(file).toMatch(/^[a/]+…[a/]+\/audit\.jsonl$/);
+  });
 });
 
 /** Every `type` keyword in a JSON Schema, with where it is. */

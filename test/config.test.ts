@@ -73,6 +73,7 @@ describe('parseAuditKeys', () => {
       [`${'k'.repeat(65)}=${KEY_A}`, /pair 1 has an id/],
       [`k1=${KEY_A},k1=${KEY_B}`, /pair 2 repeats the id of pair 1/],
       [`${KEY_B}=${KEY_A}`, /pair 1 has an id that looks like a key \(32 or more hex digits\)/],
+      [`${KEY_A}=${KEY_B}`, /pair 1 has an id that looks like a key \(32 or more hex digits\)/], // the shortest key
       [`k1\u{200b}=${KEY_A}`, /pair 1 has an id with a control or invisible character/],
       [`k1=${KEY_A}0`, /not an even number of hex digits/],
       [`k1=${KEY_A.slice(0, -2)}zz`, /not an even number of hex digits/],
@@ -85,6 +86,8 @@ describe('parseAuditKeys', () => {
       expect(text, raw).not.toContain(KEY_A.slice(0, 8));
       expect(text, raw).not.toContain(KEY_B.slice(0, 8));
     }
+    // 31 hex digits are too few for a key (16 bytes): an ordinary id.
+    expect(parseAuditKeys(`${KEY_A.slice(0, 31)}=${KEY_B}`).ok).toBe(true);
   });
 
   it('takes at most 64 pairs, so the list of ids in every audit result stays small', () => {

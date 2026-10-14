@@ -53,6 +53,61 @@ describe('failure', () => {
     expect(fix('create extension pg_net;', { message: 'extension "pg_net" is not available', code: '0A000' })).toMatch(/It has: citext, pgcrypto\. .* lint the migrations folder instead \(supabase\/migrations for Supabase\)\.$/);
     expect(fix('select x;', { message: 'column "x" does not exist', code: '42703' })).toMatch(/^If this file runs on your real database/);
   });
+
+  it('gives the setup file advice for the setup file: it is not one of the migrations, so files cannot leave it out', () => {
+    const setup = (text: string, err: { message: string; code?: string; position?: string }) => failure({ name: 'setup.sql', text, phase: 'setup' }, err, context);
+    const errors: Array<[string, { message: string; code?: string; position?: string }]> = [
+      ['create extension pg_net;', { message: 'extension "pg_net" is not available', code: '0A000' }],
+      ['create table x (a uuid references auth.users);', { message: 'relation "auth.users" does not exist', code: '42P01' }],
+      ['\\connect other\n', { message: 'syntax error at or near "\\"', code: '42601', position: '1' }],
+      ['create index concurrently i on t (a);', { message: 'CREATE INDEX CONCURRENTLY cannot run inside a transaction block', code: '25001' }],
+      ["alter type s add value 'b';", { message: 'unsafe use of new value "b" of enum type s', code: '55P04' }],
+      ['select 1;', { message: 'out of memory', code: '53200' }],
+      ['select x;', { message: 'column "x" does not exist', code: '42703' }],
+    ];
+    for (const [text, err] of errors) {
+      const e = setup(text, err);
+      expect(e.code, err.message).toBe('SETUP_FAILED');
+      expect(e.fix, err.message).toMatch(/setup file/);
+      expect(e.fix, err.message).not.toMatch(/with files|ran out of order|pass setup/);
+    }
+    expect(setup('select x;', { message: 'column "x" does not exist', code: '42703' }).fix).toBe('Fix the setup file at that place.');
+  });
+});
+
+describe('runScripts with a setup file that goes wrong', () => {
+  const setup = (text: string) => ({ name: 'setup.sql', text, phase: 'setup' as const });
+  const migration = { name: 'db/0001.sql', text: 'select 1;', phase: 'migration' as const };
+
+  it('fails the setup file, not a migration, when it leaves the database unusable', async () => {
+    await expect(runScripts([setup("copy (select 1) to program 'true';"), migration], { timeoutMs: 30_000, preset: false })).rejects.toMatchObject({
+      code: 'SETUP_FAILED',
+      message: 'setup.sql: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
+      fix: 'Take that statement out of the setup file.',
+    });
+  });
+
+  it('fails the setup file, not a migration, when the database stops answering after it', async () => {
+    process.env.MONEY_GUARD_TEST_WORKER = 'silent';
+    try {
+      await expect(runScripts([setup('select 1;'), migration], { timeoutMs: 30_000, preset: false, worker: new URL('./support/fake-worker.mjs', import.meta.url), sanityMs: 100 })).rejects.toMatchObject({
+        code: 'SETUP_FAILED',
+        message: 'setup.sql: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
+        fix: 'Take that statement out of the setup file.',
+      });
+    } finally {
+      delete process.env.MONEY_GUARD_TEST_WORKER;
+    }
+  });
+
+  it('fails the setup file, not a migration, when it outgrows the memory limit', async () => {
+    const big = setup('create table big (b text); insert into big select repeat(md5(i::text), 30) from generate_series(1, 400000) i;');
+    await expect(runScripts([big, migration], { timeoutMs: 60_000, preset: false, memoryLimitBytes: 64 * 1024 * 1024 })).rejects.toMatchObject({
+      code: 'SETUP_FAILED',
+      message: 'setup.sql: the lint database grew by more than 64 MiB of memory while running this file.',
+      fix: 'The file needs more than the lint database can give it (memory or a size limit). Take that part out of the setup file.',
+    });
+  });
 });
 
 describe('runScripts with a database that misbehaves', () => {
@@ -124,6 +179,13 @@ describe('runScripts with a database that misbehaves', () => {
     expect(held.byteLength).toBe(256 * MIB); // held until the lint ended
   });
 
+  it('fails the file that was running when the database thread died, naming it', async () => {
+    await expect(run('crash')).rejects.toMatchObject({
+      code: 'MIGRATION_FAILED',
+      message: 'db/0001.sql: the database stopped while running this file (the database thread died).',
+    });
+  });
+
   it('fails the file when the database answers wrongly after it', async () => {
     await expect(run('unusable')).rejects.toMatchObject({
       code: 'MIGRATION_FAILED',
@@ -145,9 +207,15 @@ describe('runScripts with a database that misbehaves', () => {
     const heartbeat = path.join(tempDir(), 'beat');
     process.env.MONEY_GUARD_TEST_HEARTBEAT = heartbeat;
     const controller = new AbortController();
-    const running = run('endless', how === 'the time limit' ? { timeoutMs: 400 } : { signal: controller.signal });
-    if (how === 'cancellation') setTimeout(() => controller.abort(new Error('cancelled')), 400);
-    await expect(running).rejects.toBeDefined();
+    const running = run('endless', how === 'the time limit' ? { timeoutMs: 3000 } : { signal: controller.signal });
+    const stopped = running.then(
+      () => 'resolved',
+      () => 'rejected',
+    );
+    // The thread is alive once it beats; a busy machine can take a while to start it.
+    await vi.waitFor(() => expect(existsSync(heartbeat)).toBe(true), { timeout: 10_000 });
+    if (how === 'cancellation') controller.abort(new Error('cancelled'));
+    expect(await stopped).toBe('rejected');
     await new Promise((r) => setTimeout(r, 200));
     const beat = readFileSync(heartbeat, 'utf8');
     await new Promise((r) => setTimeout(r, 400));

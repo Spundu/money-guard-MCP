@@ -15,6 +15,8 @@ describe('money_check_double_entry: reading CSV', () => {
 
   it('matches a header name exactly, else by letter case alone', () => {
     expect(check('.csv', 'T,A\nX,1\nX,-1\n', { columns }).balanced).toBe(true);
+    // An exact match wins over others that differ in letter case only: "a" is the amount here, not "A".
+    expect(check('.csv', 't,A,a\nX,999,1\nX,999,-1\n', { columns }).balanced).toBe(true);
   });
 
   it('ignores spaces around header names, as around every value', () => {

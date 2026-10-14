@@ -1,6 +1,7 @@
 // Running the scripts in the worker thread (worker.js), with the time limits that keep a stuck or
 // endless migration from holding the server (SPEC.md §3.4, §3.9). Resolves with the catalog's answers;
-// rejects with a ToolError naming the file that failed, hung or ran out of time.
+// rejects with a ToolError naming the file that failed, hung or ran out of time, or with a
+// DatabaseStartError when the database could not start (not a ToolError: the server's own fault).
 
 import process from 'node:process';
 import { Worker } from 'node:worker_threads';
@@ -40,9 +41,9 @@ export interface DatabaseOutcome {
 const SANITY_MS = 5000;
 
 /**
- * How much the server's memory may grow while the scripts run, over what it was once the database had
- * started (SPEC.md §3.9). resourceLimits caps only the worker's JavaScript heap; PGlite keeps its
- * WebAssembly memory and its in-memory files outside it, so the process as a whole is watched.
+ * How much more memory the lint may take while the scripts run than it had once the database had
+ * started (SPEC.md §3.9; measured by lintMemory). resourceLimits caps only the worker's JavaScript heap;
+ * PGlite keeps its WebAssembly memory and its in-memory files outside it, so the process is watched.
  */
 export const MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024;
 
@@ -59,7 +60,16 @@ function lintMemory(): number {
   return m.rss - m.heapTotal - m.external;
 }
 
-const TOO_BIG = 'The file needs more than the lint database can give it (memory or a size limit). Leave the file out with files, or lint the migrations in smaller groups.';
+/** A setup script (the preset or the setup file) fails as SETUP_FAILED, a migration as MIGRATION_FAILED. */
+function failedCode(script: Script): 'SETUP_FAILED' | 'MIGRATION_FAILED' {
+  return script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
+}
+
+/** The fix for a file that needs more than the database can give. The setup file is not one of the migrations, so files cannot leave it out. */
+function tooBig(script: Script): string {
+  const way = script.phase === 'setup' ? 'Take that part out of the setup file.' : 'Leave the file out with files, or lint the migrations in smaller groups.';
+  return `The file needs more than the lint database can give it (memory or a size limit). ${way}`;
+}
 
 type Message =
   | { type: 'ready'; version: string; available: string[]; reserved: string[] }
@@ -93,7 +103,9 @@ const MISSING_OBJECT = new Set(['42704', '3F000', '42883', '42P01']);
 
 /** The ToolError for a script that PostgreSQL refused, with a hint fitted to the error. */
 export function failure(script: Script, err: DbError, context: { available: readonly string[]; preset: boolean; filesGiven?: boolean }): ToolError {
-  const code = script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
+  const code = failedCode(script);
+  // The setup file runs before the migrations and is not one of them: its advice is to change it.
+  const setup = script.phase === 'setup';
   const position = err.position === undefined ? Number.NaN : Number(err.position);
   const at = Number.isInteger(position) && position > 0 ? locate(script.text, position) : null;
   const where = at === null ? script.name : `${script.name} line ${at.line}, column ${at.column}`;
@@ -105,10 +117,14 @@ export function failure(script: Script, err: DbError, context: { available: read
   let fix: string;
   if (/^extension ".*" is not available$/.test(err.message)) {
     fix =
-      `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, leave the file out with files. ` +
+      `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, ${setup ? 'take that part out of the setup file' : 'leave the file out with files'}. ` +
       'A whole-database dump (pg_dump, supabase db dump) also creates the extensions a platform provides: lint the migrations folder instead (supabase/migrations for Supabase).';
   } else if (err.code === '42883' && err.message.startsWith('operator does not exist')) {
     fix = 'The two sides of an operator have types that do not go together (uuid and text, say): cast one side, or fix the column type.';
+  } else if (setup && err.code !== undefined && MISSING_OBJECT.has(err.code)) {
+    fix = context.preset
+      ? 'The Supabase preset does not create this: create it earlier in the setup file.'
+      : 'The setup file runs before the migrations: create what it needs earlier in the same file, or, for a Supabase project, call again with preset "supabase".';
   } else if (err.code !== undefined && MISSING_OBJECT.has(err.code)) {
     // A missing table or function is often one of the project's own, created by a file that sorts later
     // (Flyway's R__ files sort before V1__): say that first.
@@ -122,19 +138,21 @@ export function failure(script: Script, err: DbError, context: { available: read
         ? 'The Supabase preset does not create this. Pass setup: a .sql file that creates it (it runs after the preset).'
         : 'This file needs objects your platform creates. For a Supabase project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE ROLE ..., CREATE SCHEMA ...).');
   } else if (err.code === '42601' && at !== null && (lines[at.line - 1] ?? '').startsWith('\\')) {
-    fix = 'That line is a psql meta-command, which only psql understands. Leave the file out with files, or lint a copy without that line.';
+    fix = `That line is a psql meta-command, which only psql understands. ${setup ? 'Take it out of the setup file.' : 'Leave the file out with files, or lint a copy without that line.'}`;
   } else if (err.code === '42601' && at !== null && lines.slice(0, at.line - 1).some((line) => /^COPY\s.+\sFROM\s+stdin;/i.test(line))) {
     // pg_dump writes table rows after "COPY ... FROM stdin;" lines; only psql can feed them in.
-    fix = 'The file holds table data after COPY ... FROM stdin (a pg_dump with data), which only psql can load. Lint a schema-only dump (pg_dump --schema-only) or the migrations folder instead.';
+    fix = `The file holds table data after COPY ... FROM stdin (a pg_dump with data), which only psql can load. ${setup ? 'Take the data out of the setup file.' : 'Lint a schema-only dump (pg_dump --schema-only) or the migrations folder instead.'}`;
   } else if (err.code === '25001') {
     const statement = /^(.+?) cannot run inside a transaction block$/.exec(err.message)?.[1] ?? 'this statement';
-    fix = `money-guard runs each file as one script, where ${clip(statement, 60)} cannot run (psql, which commits statement by statement, can). If the file does nothing else, leave it out with files.`;
+    fix = `money-guard runs each file as one script, where ${clip(statement, 60)} cannot run (psql, which commits statement by statement, can). ${setup ? 'Take it out of the setup file.' : 'If the file does nothing else, leave it out with files.'}`;
   } else if (err.code === '0A000' && /^cannot alter type of a column used (?:by|in) /.test(err.message)) {
     fix = 'Something else uses this column (a view, a rule, a policy, a trigger or a generated column): in the same migration, drop it before the ALTER and create it again after.';
   } else if (err.code === '55P04') {
-    fix = 'money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). Split the file in two, or leave it out with files.';
+    fix = `money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). ${setup ? 'Take that part out of the setup file.' : 'Split the file in two, or leave it out with files.'}`;
   } else if (err.code !== undefined && /^5[34]/.test(err.code)) {
-    fix = TOO_BIG;
+    fix = tooBig(script);
+  } else if (setup) {
+    fix = 'Fix the setup file at that place.';
   } else {
     fix = 'If this file runs on your real database, it probably needs objects your platform creates: pass setup or preset. Otherwise fix the SQL at that place.';
   }
@@ -206,7 +224,14 @@ export function runScripts(
         return err;
       }
       const script = scriptAt(running);
-      return new ToolError(script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED', `${script.name}: the database stopped while running this file (${clip(why, 200)}).`, 'Leave the file out with files, or lint it on its own to find the statement that stops the database.');
+      const fix = script.phase === 'setup' ? 'Take the statement that stops the database out of the setup file.' : 'Leave the file out with files, or lint it on its own to find the statement that stops the database.';
+      return new ToolError(failedCode(script), `${script.name}: the database stopped while running this file (${clip(why, 200)}).`, fix);
+    };
+    // After a statement PGlite cannot carry out (COPY ... PROGRAM), the database answers wrongly or not at all.
+    const stuck = (step: number, what: string): ToolError => {
+      const script = scriptAt(step);
+      const fix = script.phase === 'setup' ? 'Take that statement out of the setup file.' : 'Leave the file out with files.';
+      return new ToolError(failedCode(script), `${script.name}: after this file the database ${what} (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, fix);
     };
 
     const memoryLimit = options.memoryLimitBytes ?? MEMORY_LIMIT_BYTES;
@@ -214,8 +239,7 @@ export function runScripts(
     const memory = setInterval(() => {
       if (baseline === undefined || lintMemory() - baseline <= memoryLimit) return;
       const script = scriptAt(Math.max(running, 0));
-      const code = script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
-      finish({ error: new ToolError(code, `${script.name}: the lint database grew by more than ${formatMib(memoryLimit)} of memory while running this file.`, TOO_BIG) });
+      finish({ error: new ToolError(failedCode(script), `${script.name}: the lint database grew by more than ${formatMib(memoryLimit)} of memory while running this file.`, tooBig(script)) });
     }, MEMORY_CHECK_MS);
 
     const overall = setTimeout(() => {
@@ -242,9 +266,7 @@ export function runScripts(
             // The main thread may have been busy (a ledger or audit call) while the answer waited in the
             // queue: give a waiting message one turn of the event loop before calling the database stuck.
             setImmediate(() => {
-              if (answered < m.step) {
-                finish({ error: new ToolError('MIGRATION_FAILED', `${scriptAt(m.step).name}: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, 'Leave the file out with files.') });
-              }
+              if (answered < m.step) finish({ error: stuck(m.step, 'stopped answering') });
             });
           }, options.sanityMs ?? SANITY_MS);
           break;
@@ -265,7 +287,7 @@ export function runScripts(
           finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset, filesGiven: options.filesGiven ?? false }) });
           break;
         case 'unusable':
-          finish({ error: new ToolError('MIGRATION_FAILED', `${scriptAt(m.step).name}: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, 'Leave the file out with files.') });
+          finish({ error: stuck(m.step, 'no longer answers correctly') });
           break;
         case 'crashed':
           finish({ error: stopped(m.error.message, workerError(m.error)) });

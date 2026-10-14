@@ -565,8 +565,8 @@ shows it: the tool runs the new migration too.
 | Code | When | Message contents |
 |---|---|---|
 | `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file, line and column (from Postgres's `position`, counted in characters), SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
-| `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details. |
-| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead (the five most common file types, such as "It holds 3 .ts files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that its `.sql` files are all down steps, which are left out. |
+| `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
+| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead (the five most common file types, such as "It holds 3 .ts files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup). |
 | `TOO_MANY_FILES` | More than 2,000. | |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing, or lies outside `migrations`. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
@@ -756,9 +756,10 @@ Those functions throw at the first problem. This tool returns **every** problem.
   - A fraction (`10.5`) is `FRACTIONAL_MINOR_UNITS`. So is text with a decimal point even when the
     fraction is zero (`12.00`): it usually means the column holds pounds, so use `decimal`. Its message
     says so ("12.00 has a decimal point; minor units are whole numbers without one"). When at least as
-    many amounts are written with a decimal point as without (zeros aside; a JSON `12.00` counts, though
-    it is read as 12), the summary ends: "Most amounts have a decimal point: if the file holds pounds or
-    dollars (12.34), call again with amount_format "decimal"."
+    many amounts are plain decimals such as `12.34` as are whole numbers (zeros aside; a JSON `12.00`
+    counts, though it is read as 12; `£12.00` and `1,234.50` do not, as `decimal` refuses them too),
+    the summary ends: "Most amounts have a decimal point: if the file holds pounds or dollars (12.34),
+    call again with amount_format "decimal"." With amount_format `decimal` it never does.
   - Text that is not plain digits (`1e3`, `+5`, `(5)`, `1,000`) is `BAD_AMOUNT`, "is not written in plain
     digits, such as 1234"; a JSON object or array is "an object" or "an array".
 - **`decimal`:** a string or number of the form `-?[0-9]+(\.[0-9]+)?`.
@@ -1038,7 +1039,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 470); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 550); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
@@ -1048,17 +1049,21 @@ The tests are in `test/` (Vitest, about 470); each file starts with a comment sa
   Prisma folders, Flyway `files`, and the up and down markers of dbmate, goose, sql-migrate,
   node-pg-migrate and tern (down before up, and comments that only look like a marker); a pg_dump 18
   file with `\restrict`; failures with exact line and column, and each hint
-  as real PostgreSQL triggers it; the Supabase preset; a setup file inside the migrations folder;
-  pgvector; every kind of `fix_sql` run on stored rows, and none offered while a default, a CHECK
-  constraint or an index condition would keep amounts in pounds.
-- **Ledger cases:** the §4.9 example; every finding code; the three column shapes; decimal mode; CSV
-  line numbers (quoted line breaks, CR LF, a lone CR, a BOM, blank lines); JSON Pointers; JSONL with a
-  bad line; exact JSON numbers (ids a float would merge, fractions it would round away); pagination and
-  the result budget.
+  as real PostgreSQL triggers it; the Supabase preset; a setup file inside the migrations folder, a
+  folder that holds only the setup file, and a setup file that fails in each way (`SETUP_FAILED`,
+  with advice for the setup file); pgvector; every kind of `fix_sql` run on stored rows, with names
+  quoted as `quote_ident` quotes them, and none offered while a default, a CHECK constraint or an
+  index condition would keep amounts in pounds.
+- **Ledger cases:** the §4.9 example; every finding code; the three column shapes; decimal mode and
+  when the summary suggests it; header names matched exactly before letter case; CSV line numbers
+  (quoted line breaks, CR LF, a lone CR, a BOM, blank lines); JSON Pointers; JSONL with a bad line;
+  exact JSON numbers (ids a float would merge, fractions it would round away) and every hex digit of a
+  `\u` escape in both cases; pagination and the result budget.
 - **Audit cases:** a valid log; one log per reason a log can trigger (tampered, reordered, an entry
   deleted, a cut tail, a torn line, a wrong key, a forged seal, a rewritten line, CR LF line ends);
-  anchors from an earlier run (grown, emptied, replaced); and a scan of the library's code that fails
-  if it can return a reason this server does not map.
+  anchors from an earlier run (grown, emptied, replaced, and broken at the entry right after the
+  anchor, honestly or after a replacement); and a scan of the library's code that fails if it can
+  return a reason this server does not map.
 - **Every error code** and every finding code is produced by a test. **Names:** about 200 column names,
   most of them real, with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (the file-link cases skip
@@ -1068,7 +1073,9 @@ The tests are in `test/` (Vitest, about 470); each file starts with a comment sa
   checked by the tests' own Unicode-category test, not by the code under test); a migration that
   redefines `quote_ident` (`fix_sql` does not change); a migration that tries to read a real file on
   the machine three ways, or to run a program; key material never echoed, from results or from
-  malformed settings; the JSON Pointer pattern on hostile input; an oversized stdio message.
+  malformed settings, nor accepted as a key id (32 hex digits or more); every place that shows a path,
+  cut and escaped without the server's final pass; the JSON Pointer pattern on hostile input; an
+  oversized stdio message.
 - **Limits and time:** the 20,000-character budget with the longest names in a deep folder, with one
   migration 18 to 30 folders deep (its path cut in the middle) and with long records pointers (and
   every ledger result in the tests is held to it); a JSON number with long runs of zeros, read in
@@ -1078,20 +1085,22 @@ The tests are in `test/` (Vitest, about 470); each file starts with a comment sa
   which is `FILE_UNREADABLE`, not a crash (and a project folder nobody may open, which `ROOT_INVALID`
   says); an endless migration stopped at the time limit; a stand-in database thread that goes silent
   (caught within 5 seconds), answers late while the server's thread is busy (not called silent),
-  answers wrongly, runs forever (its heartbeat stops at the time limit and on a cancel), or cannot
-  start (`INTERNAL_ERROR` without detail, its cause in the log).
+  answers wrongly, dies while a file runs (that file is named), runs forever (its heartbeat stops at
+  the time limit and on a cancel), or cannot start (`INTERNAL_ERROR` without detail, its cause in the
+  log).
 - **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
   `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; a cancel that arrives before the
   call ran (logged `CANCELLED`, no answer); the client going away mid-lint (`DISCONNECTED`, then the
-  process exits); the host closing the server's stderr, or never reading it (it keeps answering); stdout purity (a stand-in
-  database thread that writes to stdout and stderr through Node's streams and console, as PGlite
-  prints, is contained; a thread could still write to file descriptor 1 directly, which PGlite never
-  does); advertised schemas that fit the Claude API (no root
-  combinators, short plain names, no type arrays); `listChanged: false`; `null` for every optional
-  argument; unknown and misspelt parameters refused; `INTERNAL_ERROR` without detail.
+  process exits); the host closing the server's stderr, or never reading it (it keeps answering; the
+  log queue drops lines past 100); stdout purity (a stand-in database thread that writes to stdout and
+  stderr through Node's streams and console, as PGlite prints, is contained; a thread could still
+  write to file descriptor 1 directly, which PGlite never does); advertised schemas that fit the Claude
+  API (no root combinators, short plain names, no type arrays); `listChanged: false`; `null` for
+  every optional argument; unknown and misspelt parameters refused; `INTERNAL_ERROR` without detail.
 - **Documents that cannot drift:** the README shows `examples/demo.mjs`, its exact output and the real
   lint result; the server instructions, tool descriptions and `fixes` texts here are compared with the
-  code; the bundle manifest is compared with `package.json`; no text file holds a raw hidden character.
+  code; the bundle manifest is compared with `package.json`; no text file holds a raw hidden character
+  (checked over the files git tracks, or the whole folder where git tracks none).
 - **Set up in CI, outside the suite** (run by hand so far, until CI runs): the official MCP Inspector
   in both eras (`--strict` reports nothing); the packed tarball installed into an empty project; the
   Claude Desktop bundle built and started from its manifest; Node.js 22.12, the oldest the package

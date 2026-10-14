@@ -25,17 +25,21 @@ function walk(dir: string): string[] {
  */
 function files(): string[] {
   try {
-    const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' }).split('\0');
-    return tracked.filter((rel) => TEXT.test(rel)).map((rel) => path.join(REPO, rel));
+    const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'utf8' }).split('\0').filter((rel) => rel !== '');
+    // A copy that git does not track (inside another repository, say) lists nothing: walk it instead.
+    if (tracked.length > 0) return tracked.filter((rel) => TEXT.test(rel)).map((rel) => path.join(REPO, rel));
   } catch {
-    return walk(REPO);
+    // no git: walk
   }
+  return walk(REPO);
 }
 
 describe('the repository', () => {
   it('holds no raw hidden characters in any text file', () => {
     const offenders: string[] = [];
-    for (const file of files()) {
+    const list = files();
+    expect(list.length).toBeGreaterThan(50); // the check covers the repository, not an empty list
+    for (const file of list) {
       // Tabs and line ends are ordinary; a byte order mark is hidden (Cf), so it counts.
       readFileSync(file, 'utf8')
         .split(/\r?\n/)

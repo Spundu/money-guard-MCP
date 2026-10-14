@@ -22,6 +22,11 @@ describe('parseLedgerJson', () => {
     expect(parse('{"a":"x\\ny\\u00e9","b":[true,false,null],"c":{"\\ud83d\\ude00":"\\/"}}')).toEqual({ a: 'x\nyé', b: [true, false, null], c: { '😀': '/' } });
   });
 
+  it('reads every hex digit of an escape, in either letter case (.NET writes them in capitals)', () => {
+    const escapes = ['0123', '4567', '89ab', 'cdef', '89AB', 'CDEF'].map((hex) => `\\u${hex}`).join('');
+    expect(parse(`"${escapes}"`)).toBe(String.fromCharCode(0x0123, 0x4567, 0x89ab, 0xcdef, 0x89ab, 0xcdef));
+  });
+
   it('keeps "__proto__" as an ordinary key, and the last of duplicate keys', () => {
     const value = parse('{"__proto__":{"x":1},"k":1,"k":2}') as Record<string, unknown>;
     expect(Object.hasOwn(value, '__proto__')).toBe(true);

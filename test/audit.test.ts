@@ -182,6 +182,15 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(r.notes).toEqual(['The anchor was not checked: the chain breaks at or before the last entry it covers, so entries it vouched for are damaged or gone.']);
   });
 
+  it('checks the anchor when the chain breaks at the entry right after it: an accident stays one, a replaced log cannot hide behind one', () => {
+    const torn = (log: string) => log.slice(0, -20); // a crash mid-write leaves the last line cut short
+    const honest = run(bytes(torn(text(chain([...DRAFTS, { event: 'payment.capture', amount_pence: 500 }])))), HEAD);
+    expect([honest.ok, honest.anchor_checked, honest.break?.code, honest.break?.entry_index]).toEqual([false, true, 'TORN_LAST_LINE', 3]);
+    expect(honest.notes).toEqual(['The entries the anchor covers are intact; the break comes after them.']);
+    const replaced = run(bytes(torn(text(chain([{ event: 'a' }, { event: 'b' }, { event: 'c' }, { event: 'd' }])))), HEAD);
+    expect([replaced.ok, replaced.anchor_checked, replaced.break?.code]).toEqual([false, true, 'ANCHOR_HEAD_MISMATCH']);
+  });
+
   it('still checks the anchor when the chain breaks after the entries it covers', () => {
     const r = run(bytes(FIVE.replace('"bob"', '"mallory"')), HEAD);
     expect([r.ok, r.anchor_checked, r.break?.code, r.break?.entry_index]).toEqual([false, true, 'CONTENT_TAMPERED', 4]);

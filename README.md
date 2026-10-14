@@ -363,8 +363,10 @@ saw only the code and the docs, each with one lens (security, the checkers' corr
 agent use, tests and CI, and the docs as a hiring manager would read them). Round 1 found about 45
 problems and round 2 about 50, among them hidden characters reaching the model, a `fix_sql` that
 broke column defaults, and a server that spun when its host closed stderr. Every finding was
-reproduced before it was fixed, and every fix came with a test shown to fail without it. The rounds go
-on until one finds no high-severity problem. It has had no independent human review yet.
+reproduced before it was fixed, and fixes came with tests shown to fail without them; where a
+reviewer later found part of a fix untested (by planting bugs the tests did not catch), the test was
+added. The rounds go on until one finds no high-severity problem. It has had no independent human
+review yet.
 
 ## License
 

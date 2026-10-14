@@ -127,8 +127,9 @@ describe('money_lint_schema: judging columns', () => {
   });
 
   it('treats listed columns as money, skips ignored ones and counts them', async () => {
-    const files = { 'db/migrations/0001.sql': 'create table orders (grand double precision, cost_center_total double precision);' };
-    const r = await lint(files, { money_columns: ['orders.grand'], ignore_columns: ['public.orders.cost_center_total'] });
+    // fee_pence is bigint, so ignoring it hides no finding: ignored_count counts findings, not columns.
+    const files = { 'db/migrations/0001.sql': 'create table orders (grand double precision, cost_center_total double precision, fee_pence bigint);' };
+    const r = await lint(files, { money_columns: ['orders.grand'], ignore_columns: ['public.orders.cost_center_total', 'orders.fee_pence'] });
     expect(r.findings.map((f) => f.column)).toEqual(['grand']);
     expect(r.ignored_count).toBe(1);
     expect(r.summary).toBe('1 problem in 1 money column (1 error, 0 warnings). 1 migration file applied. 1 ignored.');
@@ -154,10 +155,11 @@ describe('money_lint_schema: judging columns', () => {
     const r = await lint({
       'db/migrations/0001.sql':
         'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, ' +
-        'fee numeric(10,2), total numeric, amount numeric(12,0), unit_price numeric(12,4), amount_pence numeric(10,2), refund money, charge smallint, deposit numeric(10,-2));',
+        'fee numeric(10,2), total numeric, amount numeric(12,0), unit_price numeric(12,4), amount_pence numeric(10,1), refund money, charge smallint, deposit numeric(10,-2));',
     });
     const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
-    expect([fix.unit_price, fix.amount_pence]).toEqual([null, null]); // finer than a penny: choose the unit first
+    // Finer than a penny (a tenth of one, in pence): choose the unit first.
+    expect([fix.unit_price, fix.amount_pence]).toEqual([null, null]);
     expect(r.fixes.NUMERIC_MONEY).toContain(NULL_FIX_NOTE.trim());
     expect(r.fixes.FLOAT_MONEY).not.toContain('Where fix_sql is null');
     // Run each fix on real rows: pounds become pence, minor units and whole numbers stay as they are.
@@ -362,6 +364,24 @@ describe('money_lint_schema: judging columns', () => {
       await db.exec('create table "user" (total double precision, "q""price" double precision); insert into "user" values (1.5, 2.25);');
       for (const f of r.findings) await db.exec(f.fix_sql ?? 'fix_sql missing');
       expect((await db.query('select total::text, "q""price"::text as q from "user"')).rows).toEqual([{ total: '150', q: '225' }]);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('quotes every keyword quote_ident quotes, not only the fully reserved ones', async () => {
+    // "left" may name a function or a type but not a column: written bare, the fix would not run.
+    const table = 'create table t ("left" double precision, "between" double precision);';
+    const r = await lint({ 'db/migrations/0001.sql': table }, { money_columns: ['t.left', 't.between'] });
+    const fixes = r.findings.map((f) => f.fix_sql ?? 'fix_sql missing');
+    expect(fixes).toEqual([
+      'ALTER TABLE public.t ALTER COLUMN "between" TYPE bigint USING round("between" * 100)::bigint;',
+      'ALTER TABLE public.t ALTER COLUMN "left" TYPE bigint USING round("left" * 100)::bigint;',
+    ]);
+    const db = await PGlite.create();
+    try {
+      await db.exec(table);
+      for (const fix of fixes) await db.exec(fix);
     } finally {
       await db.close();
     }

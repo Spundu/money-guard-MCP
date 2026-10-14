@@ -165,6 +165,11 @@ describe('money_check_double_entry: the rules', () => {
     // A pence file with one bad transaction keeps the plain summary: most of its amounts are whole.
     const pence = check('.csv', 't,a\nA,1000\nA,-1000\nC,250\nC,-250\nB,10.5\nB,-10.5\n', { columns: { transaction_id: 't', amount: 'a' } });
     expect(pence.summary).not.toMatch(/amount_format/);
+    // Amounts that amount_format "decimal" would refuse too (a currency sign, a thousands comma) do not
+    // send the model there: only plain decimals such as 12.34 count.
+    const signs = check('.csv', 't,a\nA,£12.00\nA,-£12.00\nB,"1,234.50"\nB,"-1,234.50"\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(signs.findings.map((f) => f.code)).toEqual(['BAD_AMOUNT', 'BAD_AMOUNT', 'BAD_AMOUNT', 'BAD_AMOUNT']);
+    expect(signs.summary).not.toMatch(/amount_format/);
   });
 
   it('names a currency column that is not mapped, since every row then counts as one currency', () => {
@@ -196,6 +201,7 @@ describe('money_check_double_entry: the rules', () => {
   it('reports a decimal amount with too many places', () => {
     const r = check('.csv', 't,a\nA,10.001\nA,-10.001\n', { columns: { transaction_id: 't', amount: 'a' }, amount_format: 'decimal' });
     expect(r.findings[0]).toMatchObject({ code: 'FRACTIONAL_MINOR_UNITS', value: '10.001', message: '10.001 has more than 2 decimal places' });
+    expect(r.summary).not.toMatch(/amount_format/); // already "decimal": no advice to call again with it
     expect(check('.csv', 't,a\nA,1500\nA,-1500\n', { columns: { transaction_id: 't', amount: 'a' }, amount_format: 'decimal', decimal_places: 0 }).balanced).toBe(true);
   });
 
