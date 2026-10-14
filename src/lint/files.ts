@@ -1,6 +1,6 @@
 // Which migration files run, in which order, and as what text (SPEC.md §3.3). Only file-format markers
-// are recognised, line by line: dbmate's "-- migrate:down" and pg_dump's \restrict lines. The SQL
-// itself is never parsed; Postgres runs it.
+// are recognised, line by line: the up and down markers of tools that keep both directions in one file,
+// and pg_dump's \restrict lines. The SQL itself is never parsed; Postgres runs it.
 
 import { createHash } from 'node:crypto';
 import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
@@ -70,31 +70,38 @@ function isDownFile(name: string): boolean {
 }
 
 /**
- * The lines that start the "down" part of a file that holds both directions: dbmate ("-- migrate:down",
- * maybe followed by options), goose ("-- +goose Down"), sql-migrate ("-- +migrate Down"), node-pg-migrate
- * ("-- Down Migration") and tern ("---- create above / drop below ----"). They are markers the tools
- * write, matched by line, not SQL: the up part is everything before the first one.
+ * The markers of tools that keep both directions in one file, matched by line, not SQL: dbmate
+ * ("-- migrate:up", "-- migrate:down", maybe followed by options), goose ("-- +goose Up"), sql-migrate
+ * ("-- +migrate Up"), node-pg-migrate ("-- Up Migration", as its own parser reads it: indented, or
+ * with more dashes) and tern ("---- create above / drop below ----", which has no up marker). A down
+ * marker counts only in a file that holds its tool's up marker, so a comment such as "-- Down migration
+ * (manual)" in an ordinary file cuts nothing.
  */
-const DOWN_MARKERS: readonly RegExp[] = [
-  /^--\s*migrate:down(?:\s|$)/,
-  /^--\s*\+goose\s+down(?:\s|$)/i,
-  /^--\s*\+migrate\s+down(?:\s|$)/i,
-  /^--\s*down\s+migration(?:\s|$)/i,
-  /^-{4}\s*create above\s*\/\s*drop below\s*-{4}/i,
+const TOOLS: ReadonlyArray<{ up: RegExp | null; down: RegExp }> = [
+  { up: /^--\s*migrate:up(?:\s|$)/, down: /^--\s*migrate:down(?:\s|$)/ },
+  { up: /^--\s*\+goose\s+up(?:\s|$)/i, down: /^--\s*\+goose\s+down(?:\s|$)/i },
+  { up: /^--\s*\+migrate\s+up(?:\s|$)/i, down: /^--\s*\+migrate\s+down(?:\s|$)/i },
+  { up: /^\s*--[\s-]*up\s+migration/i, down: /^\s*--[\s-]*down\s+migration/i },
+  { up: null, down: /^-{4}\s*create above\s*\/\s*drop below\s*-{4}/i },
 ];
 
 /**
- * The SQL as it runs: the up part only (before the first down marker). Lines starting \restrict or
- * \unrestrict (psql directives written by pg_dump 17.6 and later) become spaces of the same length, so
- * the positions Postgres reports still point at the right line and column.
+ * The SQL as it runs: the down part of a file that holds both directions, from a down marker to the
+ * next up marker (or the end), becomes spaces, and so do lines starting \restrict or \unrestrict (psql
+ * directives written by pg_dump 17.6 and later). Every line keeps its length, so the positions
+ * Postgres reports still point at the right line and column.
  */
 export function prepareSql(text: string): string {
-  const out: string[] = [];
-  for (const line of text.split('\n')) {
-    if (DOWN_MARKERS.some((marker) => marker.test(line))) break;
-    out.push(/^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) ? ' '.repeat(line.length) : line);
-  }
-  return out.join('\n');
+  const lines = text.split('\n');
+  const tool = TOOLS.find((t) => lines.some((line) => (t.up ?? t.down).test(line)));
+  let down = false;
+  return lines
+    .map((line) => {
+      if (tool?.up?.test(line)) down = false;
+      else if (tool?.down.test(line)) down = true;
+      return down || /^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) ? ' '.repeat(line.length) : line;
+    })
+    .join('\n');
 }
 
 function tooManyFiles(): ToolError {

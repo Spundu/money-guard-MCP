@@ -13,8 +13,9 @@ Rules:
 - Read-only and offline: no writes, no network, no shell, no child processes. stdout carries only the
   protocol; diagnostics go to stderr, never file content, keys or absolute paths.
 - Never parse SQL text: execute it (PGlite, in `src/lint/worker.js`) and read the catalog. The only text
-  recognised is file-format markers, matched by line: the down markers of dbmate, goose, sql-migrate,
-  node-pg-migrate and tern, and pg_dump's `\restrict` (an error hint also looks for `COPY ... FROM stdin;`).
+  recognised is file-format markers, matched by line: the up and down markers of dbmate, goose,
+  sql-migrate, node-pg-migrate and tern, and pg_dump's `\restrict` (an error hint also looks for
+  `COPY ... FROM stdin;`).
 - Never `JSON.parse` untrusted JSON: use `parseLedgerJson` (src/ledger/json.ts; V8 12.9+ misparses
   escaped one-character keys). It keeps numbers as their exact text: never turn one into a float.
 - Money is integers: `BigInt` for sums; amounts in results are strings of minor units; no floats.

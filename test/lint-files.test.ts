@@ -122,6 +122,30 @@ describe('money_lint_schema: which files run', () => {
     expect(r.files_applied_count).toBe(7);
   });
 
+  it('cuts nothing at a comment that only looks like a down marker: a down marker counts only next to the up marker of the same tool', async () => {
+    // A Supabase file with a note for a manual rollback: before, the lint stopped at the note and said
+    // "No problems" about a float amount it never saw.
+    const r = await lint({
+      'db/migrations/0001.sql': 'create table a (id int);',
+      'db/migrations/0002.sql': '-- Down migration (manual, if ever needed): drop table orders;\ncreate table orders (id int, amount double precision);\n',
+      'db/migrations/0003.sql': '-- migrate:down is not used in this project\ncreate table refunds (total double precision);\n',
+    });
+    expect(r.findings.map((f) => f.table)).toEqual(['public.orders', 'public.refunds']);
+  });
+
+  it('reads node-pg-migrate files as its own parser does: an indented marker, more dashes, down before up', async () => {
+    const r = await lint({
+      'db/migrations/0001.sql': '  -- Up Migration\ncreate table a (price double precision);\n---- Down Migration\ndrop table a;\n',
+      'db/migrations/0002.sql': '-- Down Migration\ndrop table b;\n-- Up Migration\ncreate table b (fee double precision);\n',
+    });
+    expect(r.findings.map((f) => f.table)).toEqual(['public.a', 'public.b']);
+  });
+
+  it('keeps line numbers exact after a down part that comes first', async () => {
+    const e = await failure({ 'db/migrations/0001.sql': '-- migrate:down\ndrop table x;\n-- migrate:up\ncreate table t (x nosuchtype);\n' });
+    expect(e.message).toMatch(/0001\.sql line 4, column 19: type "nosuchtype" does not exist/);
+  });
+
   it('says plainly when no table is left to check, instead of reporting a clean schema', async () => {
     const r = await lint({ 'db/migrations/0001.sql': '-- a format that keeps both directions\ncreate table t (price double precision);\ndrop table t;\n' });
     expect(r.summary).toBe(
