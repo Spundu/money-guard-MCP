@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolError } from '../src/errors.js';
 import { failure, locate, runScripts } from '../src/lint/database.js';
 import { trace } from '../src/server.js';
+import { lintWhileTaking } from './support/memory.js';
 import { tempDir } from './support/tmp.js';
 
 describe('runScripts', () => {
@@ -198,19 +199,8 @@ describe('runScripts with a database that misbehaves', () => {
 
   it('does not count memory that the server thread takes meanwhile (a ledger or audit call) against the lint', async () => {
     const MIB = 1024 * 1024;
-    const started = path.join(tempDir(), 'started');
-    process.env.MONEY_GUARD_TEST_HEARTBEAT = started;
-    process.env.MONEY_GUARD_TEST_WORKER = 'slow';
-    const outcome = runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, memoryLimitBytes: 64 * MIB }).then(
-      (ok) => ({ ok }),
-      (error: unknown) => ({ error }),
-    );
-    await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000 });
-    await new Promise((r) => setTimeout(r, 100)); // the database has started: the memory baseline is taken
-    const held = Buffer.alloc(256 * MIB, 1); // as an audit call holds the file it reads
-    await new Promise((r) => setTimeout(r, 500)); // five memory checks
-    writeFileSync(`${started}.go`, '');
-    expect(await outcome).toMatchObject({ ok: { postgres: 'PostgreSQL 0 (fake)' } });
+    const { answer, held } = await lintWhileTaking(() => Buffer.alloc(256 * MIB, 1), 64 * MIB); // as an audit call holds the file it reads
+    expect(answer).toBe('PostgreSQL 0 (fake)');
     expect(held.byteLength).toBe(256 * MIB); // held until the lint ended
   });
 

@@ -1,5 +1,5 @@
 // The lint's database thread itself (src/lint/database.ts, SPEC.md §3.4, §3.9): one at a time, the
-// messages the real one sends, and the limits it gets when the caller sets none.
+// messages the real one sends, the limits it gets when the caller sets none, and what its memory is.
 import { existsSync, writeFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
@@ -7,6 +7,7 @@ import process from 'node:process';
 import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MEMORY_LIMIT_BYTES, runScripts } from '../src/lint/database.js';
+import { lintWhileTaking } from './support/memory.js';
 import { tempDir } from './support/tmp.js';
 
 const FAKE = new URL('./support/fake-worker.mjs', import.meta.url);
@@ -95,32 +96,13 @@ describe('the limits a lint gets when the caller sets none (SPEC.md §3.9)', () 
   });
 });
 
-describe('runScripts memory, measured beside a busy server thread', () => {
-  // Node.js 22.16 and later measure the database thread alone; older Node.js measures the process,
-  // less the main thread's JavaScript heap and external memory. Neither may blame the lint for what a
-  // ledger or audit call holds meanwhile: plain JavaScript objects (a parsed export) and buffers.
-  const measures = ["the thread's own memory", "the process's memory, as on older Node.js"];
-  it.each(measures)('does not count the JavaScript objects and buffers the server thread holds against the lint: %s', async (measure) => {
-    const own = Object.getOwnPropertyDescriptor(Worker.prototype, 'getHeapStatistics');
-    if (measure !== measures[0] && own !== undefined) delete (Worker.prototype as { getHeapStatistics?: unknown }).getHeapStatistics;
-    try {
-      const started = path.join(tempDir(), 'started');
-      process.env.MONEY_GUARD_TEST_HEARTBEAT = started;
-      process.env.MONEY_GUARD_TEST_WORKER = 'slow';
-      const outcome = runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, memoryLimitBytes: 64 * MIB }).then(
-        (ok) => ok.postgres,
-        (error: unknown) => `failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000 });
-      await new Promise((r) => setTimeout(r, 100)); // the database has started: the memory baseline is taken
-      const rows = Array.from({ length: 2_500_000 }, (_, i) => ({ i, text: `row ${i}` })); // about 250 MB
-      const file = Buffer.alloc(64 * MIB, 1);
-      await new Promise((r) => setTimeout(r, 500)); // five memory checks
-      writeFileSync(`${started}.go`, '');
-      expect(await outcome).toBe('PostgreSQL 0 (fake)');
-      expect([rows.length, file.byteLength]).toEqual([2_500_000, 64 * MIB]); // held until the lint ended
-    } finally {
-      if (own !== undefined) Object.defineProperty(Worker.prototype, 'getHeapStatistics', own);
-    }
+describe('runScripts memory, measured beside a busy server thread (Node.js 22.16 and later)', () => {
+  // The database thread's own memory: what a ledger or audit call holds meanwhile on the server's
+  // thread, a parsed export's many small objects and the file's buffer, is not the lint's. (Older
+  // Node.js measures the process instead: test/database-memory-fallback.test.ts.)
+  it.skipIf(!('getHeapStatistics' in Worker.prototype))('does not count the JavaScript objects and buffers the server thread holds against the lint', async () => {
+    const { answer, held } = await lintWhileTaking(() => [Array.from({ length: 2_500_000 }, (_, i) => ({ i, text: `row ${i}` })), Buffer.alloc(64 * MIB, 1)] as const, 64 * MIB);
+    expect(answer).toBe('PostgreSQL 0 (fake)');
+    expect([held[0].length, held[1].byteLength]).toEqual([2_500_000, 64 * MIB]); // about 250 MB of objects, and the buffer
   });
 });

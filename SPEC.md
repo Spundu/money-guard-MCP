@@ -672,13 +672,14 @@ ROLE ..., CREATE SCHEMA ...).`
   had started. That is the database thread's own memory: its JavaScript heap and what it holds outside
   it (PGlite's WebAssembly memory and in-memory files), as Node.js 22.16 and later report for one
   thread, so a ledger or audit call has no effect on it. (Older Node.js cannot measure one thread: there
-  the process's memory, less what the main thread's JavaScript holds, stands in, and memory a ledger
-  call frees but the system keeps can count against the lint.) It is checked ten times a second, so one
-  statement can briefly take more before the check sees it; the checks and the time limit run on the
-  server's main thread, so while a ledger or audit call runs (a few seconds at most) they wait, and a
-  lint can take more for that long. A file that needs more fails as `MIGRATION_FAILED`
-  (`SETUP_FAILED` for setup) with a hint, and its database is discarded. (The worker's JavaScript heap
-  has its own 1 GiB limit too.)
+  the process's memory, less what the main thread's JavaScript heap and buffers hold, stands in, and
+  memory a ledger call frees but the system keeps can count against the lint: on Linux, 200 MiB of
+  small objects freed during a lint counted up to 164 MiB. Node.js 22.16 or later avoids this.) It is
+  checked ten times a second, so one statement can briefly take more before the check sees it; the
+  checks and the time limit run on the server's main thread, so while a ledger or audit call runs (a
+  few seconds at most) they wait, and a lint can take more for that long. A file that needs more fails
+  as `MIGRATION_FAILED` (`SETUP_FAILED` for setup) with a hint, and its database is discarded. (The
+  worker's JavaScript heap has its own 1 GiB limit too.)
 - One lint at a time, and one database thread at a time (§3.4).
 - At most 50 findings in a result. The counts still cover them all, and the model fixes those and runs
   the tool again.
@@ -1175,8 +1176,8 @@ The tests are in `test/` (Vitest, about 550); each file starts with a comment sa
   database thread dies (`SETUP_FAILED`); one database thread at a time (the next waits for the last
   to end, even when ending is slow), and the messages the real thread sends; the limits a lint gets
   when the caller sets none (a 1 GiB JavaScript heap, 1 GiB of growth, a stuck database called stuck
-  after 5 seconds and not sooner); memory that the server's own thread holds during a lint, as
-  JavaScript objects and as buffers, on both ways of measuring it; and EPERM and EBUSY, which this
+  after 5 seconds and not sooner); memory that the server's own thread holds during a lint, its
+  JavaScript heap and buffers, on both ways of measuring it (the older one in a process of its own); and EPERM and EBUSY, which this
   machine cannot raise, through a wrapped file system.
 - **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
   `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; a cancel that arrives before the
