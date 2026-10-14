@@ -14,16 +14,18 @@ internet and never touches a real database.
 1. **Schema check** (`money_lint_schema`). The agent points it at the folder of database migration
    files. The tool runs them in a private, temporary Postgres that lives only in memory, then reads the
    real column types. It flags money stored as a "float" (floats lose pennies) or in Postgres's `money`
-   type, names the migration file that did it, and gives the SQL to fix it. The agent writes the fix as
-   a new migration and runs the check again; the check runs the fix too.
+   type, names the migration file that did it and, where the conversion is clear, gives the SQL that
+   starts the fix. The agent writes the fix as a new migration and runs the check again; the check runs
+   the fix too.
 2. **Ledger check** (`money_check_double_entry`). The agent points it at an export (CSV, JSON or
    JSONL) and says which column is which. The tool checks that every transaction adds up to zero
    (debits = credits) and that every amount is whole pennies, using exact whole-number maths. It gives
-   the exact line numbers of every problem.
+   the line number (or, in JSON, the JSON Pointer) of every problem.
 3. **Audit log check** (`audit_verify_chain`). It uses
    [sealed-audit-chain](https://github.com/Spundu/audit-chain) to prove a log was not edited, reordered
    or forged and, given the head of an earlier check, not cut short. The secret key stays in the
-   server's settings: the agent never sees it.
+   server's settings: money-guard never returns, logs or asks for it (§2.2 says what an agent with a
+   shell can still read).
 
 ---
 
@@ -37,15 +39,16 @@ internet and never touches a real database.
 | 4 | SDK v2 version and API? | **`@modelcontextprotocol/server` 2.3.1** (2026-10-05), Node ≥ 20, zod ^4.2, Apache-2.0. `registerTool(name, { title, description, inputSchema, outputSchema, annotations, icons, _meta }, handler(args, ctx))`; `ctx.mcpReq.signal` reports cancellation. Arguments that fail the schema come back as an `isError` result before the handler runs; a thrown error becomes an `isError` result; output validation is skipped on `isError`. `maxToolInputElements` caps argument size. **Correction to the plan:** `serveStdio(factory, { legacy })` takes a **factory**, and its default is already `'serve'` (it also serves 2025 clients). **Testing correction:** `InMemoryTransport.createLinkedPair()` connects **2025-era** instances only; 2026-era in-process tests go through `createMcpHandler(factory)` + `handler.fetch`; stdio via `StdioClientTransport`; a client picks the era with `versionNegotiation` (`'auto'` or a pin on `'2026-07-28'`; the default is the 2025 handshake). | npm registry; SDK docs: [tools](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/tools.md), [errors](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/errors.md), [stdio](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/stdio.md), [legacy clients](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/legacy-clients.md), [testing](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/testing.md), [protocol versions](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/protocol-versions.md); the installed `.d.ts` | Entry point is `serveStdio(createServer)`. Tests cover both eras (§7). |
 | 5 | Inspector CLI flags? | **v2.11.0** (Node ≥ 22.19); the v1 flags changed. `npx --yes @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list --format json`; `--method tools/call --tool-name X --tool-args-json '{...}'`; `--protocol-era legacy\|auto\|modern`; `--strict` checks schema portability (exit 6). Exit codes: 0 ok, 1 usage, 4 unreachable, 5 tool error. | [Inspector README](https://github.com/modelcontextprotocol/inspector), [CLI smoke-testing guide](https://github.com/modelcontextprotocol/inspector/blob/main/docs/cli-smoke-testing.md), [CLI README](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md) | CI smoke test in both eras, `--strict` must report nothing (§7). |
 | 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib extensions ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start). pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code` and a 1-based `position`. A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
-| 7 | Other | `money-guard-mcp` and `sealed-audit-chain` are both **still free on npm**. `csv-parse` 7.0.3 is MIT with no dependencies. The 2026-07-28 security page: servers meant to run locally "SHOULD ... use the `stdio` transport to limit access to just the MCP client". | npm registry; [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) | stdio only. Claim the npm names soon. |
+| 7 | Other | `money-guard-mcp` and `sealed-audit-chain` are both **still free on npm**. `csv-parse` 7.0.3 is MIT with no dependencies. The 2026-07-28 security page: servers meant to run locally "SHOULD ... use the `stdio` transport to limit access to just the MCP client". | npm registry; [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) | stdio only. |
 
 ---
 
 ## 2. The server (rules for all three tools)
 
 ### 2.1 How it runs
-- TypeScript, Node.js **22.12 or newer** (the same floor as sealed-audit-chain; CI runs Node 22, 24 and 26
-  on **Ubuntu and Windows**, because path safety differs on Windows).
+- TypeScript, Node.js **22.12 or newer** (the same floor as sealed-audit-chain). CI is set up to run
+  Node 22, 24 and 26 on **Ubuntu and Windows**, because path safety differs on Windows; it runs once the
+  repository is public.
 - Entry point: `serveStdio(createServer)` from `@modelcontextprotocol/server/stdio`. One binary serves
   MCP **2026-07-28** (`server/discover`, no `initialize`) and the **2025 era** (`initialize`), decided per
   connection.
@@ -94,18 +97,24 @@ internet and never touches a real database.
     in either case.
   - `KEYS_INVALID` names the pair that is wrong by its position only ("pair 2"), never by any of its
     text: in a malformed setting the text before `=` may be a key.
+- **What money-guard promises about keys:** it never returns, logs or asks for one. It cannot stop an
+  agent that runs shell commands from reading what its host can read: with the `.mcp.json` below, the
+  key is in the environment Claude Code started with, which `printenv` shows. Anyone who holds the key
+  can re-seal a forged log so that it verifies. Where the agent must not be able to do that, verify
+  logs where it has no shell (Claude Desktop, or CI).
 - Claude Code project config, once the package is on npm (until then `"command": "node"` with the
   path to `dist/index.js`). `${VAR:-}` expansion keeps the key out of the file and out of the repo:
   ```json
   { "mcpServers": { "money-guard": { "type": "stdio", "command": "npx", "args": ["-y", "money-guard-mcp"],
       "env": { "MONEY_GUARD_AUDIT_KEYS": "${MONEY_GUARD_AUDIT_KEYS:-}" } } } }
   ```
+  On native Windows, `npx` needs a shell to start: `"command": "cmd", "args": ["/c", "npx", "-y", "money-guard-mcp"]`.
 - **Claude Desktop (MCPB):** `mcpb/manifest.json` (manifest version 0.3) gives a folder picker for the
   root (`project_folder`, required) and a field for the keys (`audit_keys`, `sensitive`). The keys
   field has `default: ""`, so a blank field reaches the server as an empty value, not as a placeholder.
   `npm run bundle` builds `money-guard-mcp-<version>.mcpb` from the packed npm tarball, with
   production dependencies only. It then unpacks the bundle and starts it as its manifest says (§7).
-  Anthropic's directory no longer accepts MCPB submissions, so the bundle ships on GitHub Releases.
+  The bundle ships on GitHub Releases.
 
 ### 2.3 Which files the tools may read
 Every path argument:
@@ -149,7 +158,8 @@ already read the files).
 ### 2.4 What a successful result looks like
 - `structuredContent`: a JSON object that the SDK validates against the tool's `outputSchema`. Plus
   one text block holding the same JSON (compact), as the spec recommends.
-- The first field is always `summary`: one plain sentence for the model and for people. The fields come
+- The first field is always `summary`: a short plain summary (one to three sentences) for the model
+  and for people. The fields come
   in the order of the output tables below, so every result reads the same way.
 - **Size budget: at most 20,000 characters per result.** That is well under Claude Code's
   50,000-character file threshold and its 25,000-token cap. Long lists are capped or paginated, and
@@ -184,8 +194,8 @@ already read the files).
 - **Deterministic.** The same files and the same arguments give byte-identical results. Findings are
   sorted; there are no timestamps, durations or random ids. The tests rely on this, and so will the
   planned agent evaluation, which will cache results.
-- An optional parameter sent as `null` means "not given". Models sometimes send `null`; jarvis
-  `vault-mcp` hit exactly this bug with zod's `.optional()`. A test proves it (§7).
+- An optional parameter sent as `null` means "not given". Models sometimes send `null`, which zod's
+  `.optional()` alone would refuse. A test proves it (§7).
 
 ### 2.5 Errors
 - **Tool errors:** a result with `isError: true` and one text block: `CODE: what went wrong. Fix: what
@@ -276,9 +286,10 @@ Tool names, parameter names, output field names, finding codes and error codes a
 
 ## 3. Tool 1: `money_lint_schema`
 
-**Where it comes from:** the idea comes from Revwyn's `check-money-columns.mjs`. That script ran a
-regex over the source; this tool runs the SQL instead, the lesson from `verification-instruments`,
-whose regex SQL provers "never converged". Interview line: *verify by executing, not by parsing.*
+**Where it comes from:** a check script in one of the author's apps ran a regex over the SQL; this tool
+runs the SQL instead. That is the lesson of
+[verification-instruments](https://github.com/Spundu/verification-instruments), whose regex SQL provers
+never converged: verify by executing, not by parsing.
 
 ### 3.1 Description (exact, shown to the model)
 > Find database columns that store money unsafely. Runs the project's SQL migrations in order inside a
@@ -520,11 +531,11 @@ shows it: the tool runs the new migration too.
 |---|---|---|
 | `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file, line and column (from Postgres's `position`, counted in characters), SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details. |
-| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it found instead: other file types (".ts files: Knex/TypeORM migrations are code; generate SQL first (`drizzle-kit generate`, `prisma migrate diff --script`, `pg_dump --schema-only`)"), or only down steps, which are left out. |
+| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead (the five most common file types, such as "It holds 3 .ts files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that its `.sql` files are all down steps, which are left out. |
 | `TOO_MANY_FILES` | More than 2,000. | |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing, or lies outside `migrations`. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
-| `TIMEOUT` | The time limit was hit. | Which file was running, and the limit. |
+| `TIMEOUT` | The time limit was hit. | Which file was running, and the limit; the fix says a larger limit helps only with a client that waits longer than 60 seconds. |
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
@@ -911,7 +922,7 @@ mapped.
 | `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks before the last entry it covers (a note says so). |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |
@@ -980,7 +991,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 370); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 470); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
@@ -1022,16 +1033,20 @@ The tests are in `test/` (Vitest, about 370); each file starts with a comment sa
 - **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
   `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; a cancel that arrives before the
   call ran (logged `CANCELLED`, no answer); the client going away mid-lint (`DISCONNECTED`, then the
-  process exits); the host closing the server's stderr (it keeps answering); stdout purity (a stand-in thread
-  that writes everywhere is contained); advertised schemas that fit the Claude API (no root
+  process exits); the host closing the server's stderr (it keeps answering); stdout purity (a stand-in
+  database thread that writes to stdout and stderr through Node's streams and console, as PGlite
+  prints, is contained; a thread could still write to file descriptor 1 directly, which PGlite never
+  does); advertised schemas that fit the Claude API (no root
   combinators, short plain names, no type arrays); `listChanged: false`; `null` for every optional
   argument; unknown and misspelt parameters refused; `INTERNAL_ERROR` without detail.
 - **Documents that cannot drift:** the README shows `examples/demo.mjs`, its exact output and the real
   lint result; the server instructions, tool descriptions and `fixes` texts here are compared with the
   code; the bundle manifest is compared with `package.json`; no text file holds a raw hidden character.
-- **In CI, outside the suite:** the official MCP Inspector in both eras (`--strict` reports nothing);
-  the packed tarball installed into an empty project; the Claude Desktop bundle built and started from
-  its manifest; Node.js 22.12, the oldest the package supports.
+- **Set up in CI, outside the suite** (run by hand so far, until CI runs): the official MCP Inspector
+  in both eras (`--strict` reports nothing); the packed tarball installed into an empty project; the
+  Claude Desktop bundle built and started from its manifest; Node.js 22.12, the oldest the package
+  supports. The whole suite has passed on Windows (Node 24) and on Linux (Node 22, in WSL), where the
+  file-link and permission tests that Windows skips run too.
 - **Way of working:** each test added in a review round is shown to fail on the code before its fix;
   review rounds go on until one finds no HIGH; a fresh-clone rehearsal comes before publishing.
 
@@ -1039,8 +1054,7 @@ The tests are in `test/` (Vitest, about 370); each file starts with a comment sa
 
 ## 8. Design decisions (2026-10-14)
 1. **Supabase preset in v1? → YES.** Many AI-built apps use Supabase, and without the
-   preset their migrations fail on `auth.users` or `TO authenticated`. Cost: about half a day,
-   including a fixture.
+   preset their migrations fail on `auth.users` or `TO authenticated`.
 2. **How strict about `numeric` money columns? → A WARNING**, which `accept_numeric: true` turns
    off. `numeric` is exact, so it is not a rounding bug, but money-guard's own approach is integer
    minor units. The other choices are an error, or no report at all.

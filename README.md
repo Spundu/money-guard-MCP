@@ -12,7 +12,8 @@ network.
 
 **Status:** 0.1.0. Not on npm yet: run it from a clone (below). It speaks MCP 2026-07-28, and the 2025
 protocol versions for older clients. [SPEC.md](SPEC.md) fixes every parameter, result field, code and
-limit.
+limit. Its CI has not run yet; the tests pass on Windows and Linux machines ([How it is
+tested](#how-it-is-tested)).
 
 ## What it checks
 
@@ -20,7 +21,7 @@ limit.
 |---|---|
 | `money_lint_schema` | Runs your SQL migrations, in order, in a throwaway in-memory PostgreSQL 18 ([PGlite](https://pglite.dev)), then reads the column types Postgres really built. Money stored as `real`/`double precision` (floats lose pennies) or in Postgres's `money` type is an error; `numeric` and `smallint` are warnings. Each finding names the migration that introduced it and, where the conversion is clear, gives an `ALTER TABLE` to start the fix. |
 | `money_check_double_entry` | Reads a ledger export (CSV, JSON or JSONL) and checks that every transaction's legs net to zero in each currency, in whole minor units (pence, cents), with exact integer maths. Every problem comes with its line number (CSV, JSONL) or JSON Pointer (JSON). |
-| `audit_verify_chain` | Verifies an audit log written with [sealed-audit-chain](https://github.com/Spundu/audit-chain), byte for byte: the first entry that was edited, reordered or forged, and why. Given the head of an earlier check, it also catches entries cut off the end. The HMAC keys stay in the server's settings; the agent never sees them. |
+| `audit_verify_chain` | Verifies an audit log written with [sealed-audit-chain](https://github.com/Spundu/audit-chain), byte for byte: the first entry that was edited, reordered or forged, and why. Given the head of an earlier check, it also catches entries cut off the end. The HMAC keys stay in the server's settings: money-guard never returns, logs or asks for one. |
 
 Why run the migrations instead of reading them? Patterns over SQL text easily miss a later `ALTER
 COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database that ran the migrations
@@ -42,7 +43,9 @@ Then, in your own project's folder, add the server to Claude Code:
 claude mcp add --transport stdio money-guard -- node /path/to/money-guard-mcp/dist/index.js
 ```
 
-On Windows, write the path with forward slashes: `C:/Users/you/money-guard-mcp/dist/index.js`.
+On Windows, write the path with forward slashes: `C:/Users/you/money-guard-mcp/dist/index.js`. Type
+`/mcp` in Claude Code to see that the server is connected. (To verify audit logs, use the project
+file under [Settings](#settings) instead of this command: it passes the key.)
 
 Claude Code tells the server which project is open (`CLAUDE_PROJECT_DIR`), and every path the tools
 take is relative to that folder. Then ask, for example:
@@ -114,9 +117,12 @@ error", which has no code.)
 
 ## What the agent gets back
 
-Every result is a JSON object whose first field is a one-sentence `summary`. The same JSON is also
-sent as text, for clients that ignore structured results. This is `money_lint_schema` on the demo
-project:
+Every result is a JSON object whose first field is a short `summary` (one to three sentences). The
+same JSON is also sent as text, for clients that ignore structured results. This is
+`money_lint_schema` on the demo project:
+
+<details>
+<summary>The whole result (50 lines of JSON)</summary>
 
 ```json
 {
@@ -166,6 +172,8 @@ project:
 }
 ```
 
+</details>
+
 `fix_sql` is a starting point. It converts pounds to pence and keeps amounts that are already in
 pence (or cents) as they are; the tests run each kind of conversion on stored rows. It is `null` where
 the unit needs a decision (a column with four decimal places), and where a default, a CHECK
@@ -184,10 +192,11 @@ full results of the other two tools (§4.9, §5.8).
 A bad setting does not stop the server. The tools that need it explain what is wrong, and the others
 keep working.
 
-To verify audit logs in Claude Code, keep the key in your shell's environment and pass it through a
-project `.mcp.json` instead of the `claude mcp add` command above. Remove that first (`claude mcp
-remove money-guard`): an entry added with the command takes precedence over the file's. The file holds
-no secret, only a reference to the variable; its path to `dist/index.js` is the one on your machine:
+To verify audit logs in Claude Code, keep the key in your environment and pass it through a project
+`.mcp.json` instead of the `claude mcp add` command above. If you ran that command, remove its entry
+first (`claude mcp remove money-guard`): an entry added with the command takes precedence over the
+file's. The file holds no secret, only a reference to the variable; its path to `dist/index.js` is the
+one on your machine:
 
 ```json
 {
@@ -202,13 +211,24 @@ no secret, only a reference to the variable; its path to `dist/index.js` is the 
 }
 ```
 
-Never paste a key into the chat. The server does not need it there, and it never shows a key.
+Set the variable where Claude Code starts, then start Claude Code again:
+
+- macOS or Linux: add `export MONEY_GUARD_AUDIT_KEYS='k1=<64 hex digits>'` to your shell profile
+  (`~/.zshrc` or `~/.bashrc`) and open a new terminal.
+- Windows: run `[Environment]::SetEnvironmentVariable('MONEY_GUARD_AUDIT_KEYS', 'k1=<64 hex digits>',
+  'User')` in PowerShell and open a new terminal.
+
+Claude Code asks you to approve a server from a project file the first time; `/mcp` then shows it
+connected. Never paste a key into the chat: money-guard never asks for one, never returns one and
+never logs one. An agent that runs shell commands can still read the environment Claude Code started
+with (`printenv`), and with the key it could re-seal a forged log so that it verifies. Where that
+matters, verify logs where the agent has no shell: in Claude Desktop, or in CI.
 
 **Claude Desktop:** in the clone, `npm run bundle` builds `money-guard-mcp-0.1.0.mcpb` and tests it.
 Open that file with Claude Desktop: double-click it, or use Settings → Extensions → Advanced settings
 → Install Extension. Choose the project folder. Add audit keys only if you verify audit logs; Claude
-Desktop keeps them in the system keychain. The bundle passes the official `mcpb` validator, and CI
-starts it the way its manifest says, but it has not yet been tried in Claude Desktop itself.
+Desktop keeps them in the system keychain. The bundle passes the official `mcpb` validator, and its
+test starts it the way its manifest says, but it has not yet been tried in Claude Desktop itself.
 
 **Other MCP clients:** run `node /path/to/money-guard-mcp/dist/index.js` over stdio, with
 `MONEY_GUARD_ROOT` set to the project folder.
@@ -270,10 +290,11 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
   exact rules.
 - **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
   project that does not look like a secret.
-- **Keys never leave the server.** They come only from its environment, and never appear in a result,
-  an error or a log line; an error about a malformed key setting names the bad pair by its position
-  only. The log (stderr) has a startup line and one line per call: the tool, the time it took and the
-  outcome code.
+- **Keys are never shown.** They come only from the server's environment, and never appear in a
+  result, an error or a log line; an error about a malformed key setting names the bad pair by its
+  position only. An agent with shell access can still read its host's environment: see
+  [Settings](#settings). The log (stderr) has a startup line and one line per call: the tool, the time
+  it took and the outcome code.
 - **One schema lint at a time.** A second one gets `BUSY` straight away. The other two tools answer
   one call after another. Cancelling a lint stops its database at once.
 
@@ -293,8 +314,10 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
 
 ## How it is tested
 
-- `npm test` runs about 370 tests. The CI workflow runs them on Linux and Windows with Node 22, 24 and
-  26, and on Node 22.12, the oldest the package supports; the badge at the top shows the latest run.
+- `npm test` runs about 470 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+  the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
+  on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
+  has not run yet, and the badge at the top will show its latest run.
   - This README's example output and JSON, and the example results in SPEC.md (field by field, in
     order), are checked against what the tools return on the demo project.
   - Every sealed-audit-chain failure reason maps to its own code.
@@ -305,14 +328,16 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
     machine (three ways) or run a program, an endless migration, a client's cancel, and a scan that no
     result or error holds a key.
   - stdout carries only protocol messages: a stand-in database thread that writes to stdout and
-    stderr in every way it can is fully contained, and that test fails when the capture is removed.
+    stderr through Node's streams and console, as PGlite prints, is fully contained, and that test fails
+    when the capture is removed. (A thread could still write to file descriptor 1 directly; PGlite
+    does not.)
   - Each test added in the review rounds was shown to fail on the code before its fix; the reviews
     are summed up in [How this was built](#how-this-was-built).
-- CI also runs the official [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 2.11.0
-  in both protocol eras: `--strict` finds no schema-portability problem.
-- CI installs the packed npm tarball into an empty project and starts it over stdio.
-- CI builds the Claude Desktop bundle, unpacks it into an empty folder, starts it from its manifest and
-  calls each tool, with the audit keys set and with them left blank.
+- Outside the suite, and in CI once it runs: the official
+  [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 2.11.0 in both protocol eras
+  (`--strict` finds no schema-portability problem); the packed npm tarball installed into an empty
+  project and started over stdio; the Claude Desktop bundle built, unpacked into an empty folder,
+  started from its manifest and called, with the audit keys set and with them left blank.
 
 ## Development
 
@@ -329,7 +354,15 @@ change in behaviour changes it first.
 Written with Claude Code (every commit says so) and directed by the author, who set the scope, agreed
 the spec and made the design decisions. The checks come from the author's own apps: the posting rules
 of [integer-pence-ledger](https://github.com/Spundu/integer-pence-ledger) and the log format of
-[audit-chain](https://github.com/Spundu/audit-chain). It has had no independent human review yet.
+[audit-chain](https://github.com/Spundu/audit-chain).
+
+Before publishing, it went through rounds of review by AI agents: Claude, each in a fresh session that
+saw only the code and the docs, each with one lens (security, the checkers' correctness, MCP and
+agent use, tests and CI, and the docs as a hiring manager would read them). Round 1 found about 45
+problems and round 2 about 50, among them hidden characters reaching the model, a `fix_sql` that
+broke column defaults, and a server that spun when its host closed stderr. Every finding was
+reproduced before it was fixed, and every fix came with a test shown to fail without it. The rounds go
+on until one finds no high-severity problem. It has had no independent human review yet.
 
 ## License
 

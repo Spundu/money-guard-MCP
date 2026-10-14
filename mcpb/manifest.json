@@ -39,7 +39,7 @@
     },
     {
       "name": "audit_verify_chain",
-      "description": "Proves an audit log written with sealed-audit-chain was not edited, reordered, forged or cut short."
+      "description": "Proves an audit log written with sealed-audit-chain was not edited, reordered or forged and, with an anchor from an earlier check, not cut short."
     }
   ],
   "user_config": {

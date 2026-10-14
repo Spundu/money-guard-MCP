@@ -204,7 +204,7 @@ export function runScripts(
 
     const overall = setTimeout(() => {
       const name = running >= 0 ? scriptAt(running).name : 'the database start-up';
-      finish({ error: new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while running ${name}.`, 'Pass a larger timeout_seconds (at most 300), or leave slow data-loading files out with files.') });
+      finish({ error: new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while running ${name}.`, 'Leave slow data-loading files out with files. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.') });
     }, options.timeoutMs);
     const onAbort = () => finish({ error: options.signal?.reason ?? new Error('cancelled') });
     if (options.signal?.aborted) onAbort();
