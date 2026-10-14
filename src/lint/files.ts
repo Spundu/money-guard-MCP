@@ -95,13 +95,27 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
     let isDir = entry.isDirectory();
     let isFile = entry.isFile();
     if (entry.isSymbolicLink()) {
-      real = realpathSync.native(full);
+      // A link gets the same checks as a path argument (src/paths.ts): its real target must exist, lie
+      // inside the project, not look like a secret and, for a file, be .sql. A hostile repository could
+      // otherwise ship db/migrations/0002.sql pointing at ../../.env, and run the secrets as SQL.
+      const shown = `"${clip(toPosix(path.relative(root.real, full)), 120)}"`;
+      try {
+        real = realpathSync.native(full);
+      } catch {
+        throw new ToolError('PATH_NOT_FOUND', `${shown} is a link to something that does not exist.`, 'Remove the broken link, or pass files with the migrations to run.');
+      }
       if (!isInside(root.real, real)) {
-        throw new ToolError('PATH_OUTSIDE_ROOT', `"${clip(toPosix(path.relative(root.real, full)), 120)}" is a link to a place outside the project folder (${root.name}).`, 'Remove the link, or pass files with the migrations to run.');
+        throw new ToolError('PATH_OUTSIDE_ROOT', `${shown} is a link to a place outside the project folder (${root.name}).`, 'Remove the link, or pass files with the migrations to run.');
+      }
+      if (isSensitive(path.relative(root.real, real))) {
+        throw new ToolError('SENSITIVE_PATH', `${shown} is a link to a file that looks like a secret (an .env file, a private key or credentials).`, 'money-guard never reads secret files. Remove the link.');
       }
       const stat = statSync(real);
       isDir = stat.isDirectory();
       isFile = stat.isFile();
+      if (isFile && entry.name.toLowerCase().endsWith('.sql') && !real.toLowerCase().endsWith('.sql')) {
+        throw new ToolError('FILE_TYPE_NOT_ALLOWED', `${shown} is a link to a file that is not .sql.`, 'Remove the link, or pass files with the migrations to run.');
+      }
     }
     if (isDir) {
       walk(root, real, base, out, visited);

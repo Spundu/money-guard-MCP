@@ -10,10 +10,13 @@
 // the non-null branch has a keyword of its own (a title, a minLength), so each one has.
 
 import * as z from 'zod/v4';
+import { hasUnsafe } from './echo.js';
 
 const path = (what: string) => z.string().min(1).max(1024).describe(what);
 const name = z.string().min(1).max(200);
-const POINTER = /^(?:\/(?:[^~]|~[01])*)*$/;
+// A JSON Pointer (RFC 6901). A token may not hold "/": if "[^~]" could also match the separators, a
+// failing match (40 slashes and a "~") would backtrack for hours inside argument validation.
+export const POINTER = /^(?:\/(?:[^~/]|~[01])*)*$/;
 const columnName = name.refine((v) => !v.startsWith('/') || POINTER.test(v), 'a name starting with "/" must be a valid JSON Pointer');
 
 // ------------------------------------------------------------------------------------------- inputs
@@ -54,7 +57,14 @@ export const ledgerInput = z
     decimal_places: z.number().int().min(0).max(4).nullish().describe('Decimal places allowed with amount_format decimal: 2 (default), 0 for JPY, 3 for BHD.'),
     format: z.enum(['csv', 'json', 'jsonl']).nullish().describe('Overrides the format the extension gives.'),
     delimiter: z.enum([',', ';', '\t', '|']).nullish().describe('CSV delimiter. Default "," (tab for .tsv).'),
-    records_pointer: z.string().max(256).regex(POINTER).nullish().describe('JSON only: the JSON Pointer of the array of records, such as "/data/entries". Default: the top of the file.'),
+    records_pointer: z
+      .string()
+      .max(256)
+      .regex(POINTER)
+      // Every location in a JSON finding repeats it, so it must read as it is and stay short.
+      .refine((v) => !hasUnsafe(v), 'records_pointer cannot hold control or invisible characters')
+      .nullish()
+      .describe('JSON only: the JSON Pointer of the array of records, such as "/data/entries". Default: the top of the file.'),
     offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish().describe('The first finding to return. Default 0.'),
     limit: z.number().int().min(1).max(50).nullish().describe('How many findings to return. Default 20, at most 50.'),
   })

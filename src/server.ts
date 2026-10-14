@@ -7,6 +7,7 @@ import process from 'node:process';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { verifyAuditLog } from './audit/verify.js';
 import type { Config } from './config.js';
+import { escapeStrings, escapeUnsafe } from './echo.js';
 import { ToolError } from './errors.js';
 import { checkLedgerFile } from './ledger/run.js';
 import { lintSchema } from './lint/run.js';
@@ -35,16 +36,17 @@ function given<T>(value: T | null | undefined): T | undefined {
 }
 
 /**
- * An unexpected error, for the log: its type and the code locations it came from, file names only.
- * Never its message, which might quote a file.
+ * An unexpected error, for the log: its type and the code locations it came from, as file:line:column
+ * only. Never its message, which might quote a file, and never a folder: the location is taken from the
+ * end of each frame, so folder names with spaces or brackets cannot leave words behind.
  */
-function trace(err: unknown): string {
+export function trace(err: unknown): string {
   if (!(err instanceof Error)) return typeof err;
   const frames = (err.stack ?? '')
     .split('\n')
     .filter((line) => line.trimStart().startsWith('at '))
     .slice(0, 4)
-    .map((line) => line.trim().replace(/[^\s()]*[\\/]/g, ''));
+    .map((line) => /([^\\/\s()]+:\d+:\d+)\)?\s*$/.exec(line)?.[1] ?? '?');
   return [err.name, ...frames].join(' | ');
 }
 
@@ -58,18 +60,19 @@ async function answer(tool: string, log: Log, signal: AbortSignal | undefined, w
   }
   inFlight += 1;
   try {
-    const result = await work();
+    // Every string escaped once more on the way out (SPEC.md §2.4): a field a tool forgot cannot arrive raw.
+    const result = escapeStrings(await work());
     log(`${NAME}: ${tool} ok ${ms()}`);
     return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result as Record<string, unknown> };
   } catch (err) {
     if (signal?.aborted) throw err; // cancelled: the client is no longer waiting for an answer
     if (err instanceof ToolError) {
       log(`${NAME}: ${tool} ${err.code} ${ms()}`);
-      return { content: [{ type: 'text', text: err.toText() }], isError: true };
+      return { content: [{ type: 'text', text: escapeUnsafe(err.toText()) }], isError: true };
     }
     log(`${NAME}: ${tool} INTERNAL_ERROR ${ms()} ${trace(err)}`);
     const internal = new ToolError('INTERNAL_ERROR', `money-guard failed unexpectedly (${err instanceof Error ? err.name : typeof err}).`, 'This is a bug in money-guard: please report it. The server log has the details.');
-    return { content: [{ type: 'text', text: internal.toText() }], isError: true };
+    return { content: [{ type: 'text', text: escapeUnsafe(internal.toText()) }], isError: true };
   } finally {
     inFlight -= 1;
   }
@@ -140,7 +143,7 @@ export function createServer(config: Config, log: Log = stderrLog): McpServer {
       answer('audit_verify_chain', log, ctx.mcpReq.signal, () => {
         const target = resolveInRoot(root(), args.file, { kind: 'file', extensions: ['.jsonl', '.ndjson', '.log'], maxBytes: AUDIT_MAX_BYTES });
         if (!config.auditKeys.ok) throw config.auditKeys.error;
-        return verifyAuditLog({ file: target.rel, bytes: readFileSync(target.real), keys: config.auditKeys.value, anchor: given(args.anchor) });
+        return verifyAuditLog({ file: escapeUnsafe(target.rel), bytes: readFileSync(target.real), keys: config.auditKeys.value, anchor: given(args.anchor) });
       }),
   );
 

@@ -49,6 +49,20 @@ describe('the stdio process', () => {
     }
   });
 
+  it('logs a message too large for stdio (the SDK stops reading past 10 MiB) instead of ending in silence', async () => {
+    const child = spawn(process.execPath, [ENTRY], { env: { ...getDefaultEnvironment(), MONEY_GUARD_ROOT: SHOP }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
+    const exited = new Promise<number | null>((resolve) => child.on('exit', resolve));
+    child.stdin.on('error', () => {}); // the server stops reading part-way: that is what is under test
+    const pad = 'x'.repeat(11 * 1024 * 1024);
+    child.stdin.write(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"money_lint_schema","arguments":{"migrations":"${pad}"}}}\n`);
+    child.stdin.end();
+    await exited;
+    expect(stderr).toMatch(/^money-guard-mcp: transport error \(\w+\)$/m);
+    expect(stderr).not.toContain('xxxxxxxx');
+  }, 30_000);
+
   it('writes nothing but protocol messages to stdout, and no file content to stderr, then exits when stdin closes', async () => {
     const project = tempDir();
     writeTree(project, {

@@ -7,8 +7,10 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import { FIXTURE_KEY_HEX, SHOP } from '../scripts/fixtures.mjs';
 import { resolveConfig, type Config } from '../src/config.js';
+import { hasUnsafe } from '../src/echo.js';
 import { createServer } from '../src/server.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from '../src/text.js';
+import { tempDir, writeTree } from './support/tmp.js';
 
 type Era = 'modern' | 'legacy';
 const ERAS: Era[] = ['modern', 'legacy'];
@@ -138,6 +140,38 @@ describe('the server with bad settings', () => {
     expect(textOf(audit)).toMatch(/^KEYS_NOT_CONFIGURED: /);
     const ledger = await client.callTool({ name: 'money_check_double_entry', arguments: JOURNAL_ARGS });
     expect(ledger.isError ?? false).toBe(false);
+  });
+});
+
+describe('a hostile project', () => {
+  it('never sends a control or invisible character raw, in a result or in an error (SPEC.md §2.4)', async () => {
+    // U+202E (right-to-left override) in folder names, file names, table and column names, ids and
+    // currencies: the "Trojan Source" trick for making text read differently from what it is.
+    const RLO = '‮';
+    const dir = tempDir();
+    writeTree(dir, {
+      [`db/${RLO}ok/0001_${RLO}a.sql`]: `create table o ("total_${RLO}x" double precision);`,
+      [`db/${RLO}bad/0001_${RLO}b.sql`]: 'create table broken (;',
+      [`db/${RLO}none/notes.txt`]: 'not sql',
+      [`exports/${RLO}j.csv`]: `t,a,c\nT${RLO}1,5,GBP${RLO}\nT${RLO}1,-4,GBP${RLO}\n`,
+      [`logs/${RLO}a.jsonl`]: '{"x":1}\n',
+    });
+    const client = await connect('modern', resolveConfig({ MONEY_GUARD_ROOT: dir, MONEY_GUARD_AUDIT_KEYS: `k1=${FIXTURE_KEY_HEX}` }, dir));
+    const outcomes: string[] = [];
+    for (const [name, args] of [
+      ['money_lint_schema', { migrations: `db/${RLO}ok` }],
+      ['money_lint_schema', { migrations: `db/${RLO}bad` }],
+      ['money_lint_schema', { migrations: `db/${RLO}none` }],
+      ['money_check_double_entry', { file: `exports/${RLO}j.csv`, columns: { transaction_id: 't', amount: 'a', currency: 'c' } }],
+      ['audit_verify_chain', { file: `logs/${RLO}a.jsonl` }],
+      ['money_check_double_entry', { file: `exports/${RLO}missing.csv`, columns: { transaction_id: 't', amount: 'a' } }],
+    ] as const) {
+      const r = await client.callTool({ name, arguments: args });
+      outcomes.push(r.isError ? textOf(r).replace(/:.*$/s, '') : 'ok');
+      expect(hasUnsafe(textOf(r)), `${name} ${JSON.stringify(args)}`).toBe(false);
+      expect(hasUnsafe(JSON.stringify(r.structuredContent ?? null)), name).toBe(false);
+    }
+    expect(outcomes).toEqual(['ok', 'MIGRATION_FAILED', 'NO_SQL_FILES', 'ok', 'ok', 'PATH_NOT_FOUND']);
   });
 });
 

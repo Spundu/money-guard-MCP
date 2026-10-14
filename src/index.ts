@@ -6,14 +6,18 @@
 import process from 'node:process';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { resolveConfig } from './config.js';
+import { clip } from './echo.js';
 import { NAME, VERSION, createServer } from './server.js';
 
 const config = resolveConfig(process.env, process.cwd());
-const handle = serveStdio(() => createServer(config));
+// Transport problems (a message over the SDK's 10 MiB stdio limit, which closes the connection, or a
+// line that is not JSON) arrive here. Log the kind only: the content could quote a file or an argument.
+const handle = serveStdio(() => createServer(config), { onerror: (err) => process.stderr.write(`${NAME}: transport error (${err.name})\n`) });
 
-const root = config.root.ok ? `project folder "${config.root.value.name}"` : 'no usable project folder (the tools answer ROOT_INVALID)';
+const root = config.root.ok ? `project folder "${clip(config.root.value.name, 80)}"` : 'no usable project folder (the tools answer ROOT_INVALID)';
 const keys = config.auditKeys.ok ? `${config.auditKeys.value.ids.length} audit key id(s)` : 'no audit keys';
-process.stderr.write(`${NAME} ${VERSION} on stdio: ${root}; ${keys}.\n`);
+// The Node.js version helps when a host (Claude Desktop) runs the server with its own built-in Node.
+process.stderr.write(`${NAME} ${VERSION} (Node.js ${process.version}) on stdio: ${root}; ${keys}.\n`);
 
 // A failure no handler caught must not take the server down with it; it is logged without its message,
 // which could quote a file.

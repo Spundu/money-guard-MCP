@@ -248,10 +248,16 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
   `..`, absolute paths outside the project, and Windows device and UNC paths are refused. Files that
   look like secrets (`.env`, private keys, `.npmrc`, anything in `.git`) are refused even inside the
   project.
-- **Little is copied out of your files.** A value repeated in a result is cut to 40 characters, with
-  control characters escaped, and a whole result is at most 20,000 characters.
+- **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
+  cut to 40 characters. Table, column and file names stay whole, so the agent can act on them. In
+  every result and error, control characters and the invisible characters that can make text read
+  differently from what it is (the "Trojan Source" trick) are escaped. A result is at most 20,000
+  characters. SPEC.md §2.4 has the exact rules.
+- **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
+  project that does not look like a secret.
 - **Keys never leave the server.** They come only from its environment, and never appear in a result,
-  an error or a log line. The log (stderr) has one line per call: the tool, the time it took and the
+  an error or a log line; an error about a malformed key setting names the bad pair by its position
+  only. The log (stderr) has a startup line and one line per call: the tool, the time it took and the
   outcome code.
 - **One schema lint at a time, and at most 8 calls at once.** A call over either limit gets `BUSY`
   straight away.

@@ -31,6 +31,9 @@ type Env = Readonly<Record<string, string | undefined>>;
  */
 const PLACEHOLDER = /^\$\{[^}]*\}$/;
 
+/** The variable a placeholder names, as in `${NAME}`, `${NAME:-default}` or `${user_config.name}`. */
+const PLACEHOLDER_NAME = /^\$\{([A-Za-z_][A-Za-z0-9_.]{0,63})(?::-[^}]*)?\}$/;
+
 export function resolveConfig(env: Env, cwd: string): Config {
   return { root: resolveRoot(env, cwd), auditKeys: parseAuditKeys(env.MONEY_GUARD_AUDIT_KEYS) };
 }
@@ -66,7 +69,7 @@ export const MAX_KEYS = 64;
 /**
  * MONEY_GUARD_AUDIT_KEYS: comma-separated `id=hex` pairs, at most MAX_KEYS. Ids are 1-64 characters
  * with no "=", "," or whitespace, and unique; keys are hex, at least MIN_KEY_BYTES bytes. Errors name
- * the pair, never a key value.
+ * the pair by its position, never by any of its text.
  */
 export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
   if (raw === undefined || raw.trim() === '') {
@@ -81,11 +84,14 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
     };
   }
   if (PLACEHOLDER.test(raw.trim())) {
+    // Name the variable, never the rest: a default after ":-" could be a key.
+    const variable = PLACEHOLDER_NAME.exec(raw.trim())?.[1];
+    const which = variable === undefined ? 'a ${...} placeholder' : `the placeholder for ${variable}`;
     return {
       ok: false,
       error: new ToolError(
         'KEYS_NOT_CONFIGURED',
-        `MONEY_GUARD_AUDIT_KEYS holds "${clip(raw.trim(), 80)}", a placeholder the MCP host did not fill in: the variable or setting it names has no value.`,
+        `MONEY_GUARD_AUDIT_KEYS holds ${which}, which the MCP host did not fill in: the variable or setting it names has no value.`,
         'Set that variable in the environment that starts your MCP client, or fill in the setting, then restart the client. Never paste a key into the chat.',
       ),
     };
@@ -110,10 +116,11 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
     if (id.length === 0 || id.length > 64 || /\s/.test(id)) {
       return invalid(`pair ${n} has an id that is empty, longer than 64 characters or contains spaces`);
     }
-    const name = `pair ${n} ("${clip(id)}")`;
-    if (Object.hasOwn(keys, id)) return invalid(`${name} repeats an id`);
-    if (!HEX.test(hex) || hex.length % 2 !== 0) return invalid(`${name} has a key that is not an even number of hex digits`);
-    if (hex.length < MIN_KEY_BYTES * 2) return invalid(`${name} has a key shorter than ${MIN_KEY_BYTES} bytes (${MIN_KEY_BYTES * 2} hex digits)`);
+    // Errors name pairs by position only: if the setting is malformed, the text before "=" may be key
+    // material (a key written where the id belongs), so no part of a pair is ever repeated.
+    if (Object.hasOwn(keys, id)) return invalid(`pair ${n} repeats the id of pair ${ids.indexOf(id) + 1}`);
+    if (!HEX.test(hex) || hex.length % 2 !== 0) return invalid(`pair ${n} has a key that is not an even number of hex digits`);
+    if (hex.length < MIN_KEY_BYTES * 2) return invalid(`pair ${n} has a key shorter than ${MIN_KEY_BYTES} bytes (${MIN_KEY_BYTES * 2} hex digits)`);
     keys[id] = Buffer.from(hex, 'hex');
     ids.push(id);
   }

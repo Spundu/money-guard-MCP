@@ -2,7 +2,7 @@
 // PostgreSQL, judge every column, and report. One lint runs at a time: each starts a database.
 
 import { overBudget } from '../budget.js';
-import { clip } from '../echo.js';
+import { clip, escapeUnsafe } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { Root } from '../paths.js';
 import { FIXES, baseType, displayType, fixSql, isMoneyColumn, judge, type LintCode, type LintFinding } from './catalog.js';
@@ -101,7 +101,8 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     const since = db.since.get(row.col);
     if (since === undefined || since < 0) continue; // made by the preset or the setup file, never changed since
     const key = `${row.schema_name}.${row.table_name}.${row.column_name}`;
-    tables.add(`${row.schema_name}.${row.table_name}`);
+    const table = `${row.schema_name}.${row.table_name}`;
+    tables.add(table);
     const base = baseType(row);
     const money = isMoneyColumn(row, listed);
     if (ignored.has(key)) {
@@ -111,17 +112,18 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     if (money || base === 'money') moneyChecked += 1;
     const code = judge(row, money, params.accept_numeric ?? false);
     if (code !== null) {
+      // Names and paths come from the project, which may be hostile: whole, but escaped (SPEC.md §2.4).
       findings.push({
         code,
         severity: code === 'FLOAT_MONEY' || code === 'MONEY_TYPE' ? 'error' : 'warning',
-        table: `${row.schema_name}.${row.table_name}`,
-        column: row.column_name,
-        type: displayType(row),
-        introduced_in: sources.files[since]?.rel ?? '?',
+        table: escapeUnsafe(table),
+        column: escapeUnsafe(row.column_name),
+        type: escapeUnsafe(displayType(row)),
+        introduced_in: escapeUnsafe(sources.files[since]?.rel ?? '?'),
         fix_sql: fixSql(row, code),
       });
     } else if (!money && (base === 'real' || base === 'double precision')) {
-      otherFloats.push(key);
+      otherFloats.push(escapeUnsafe(key));
     }
   }
 
@@ -136,11 +138,11 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const fixes: Partial<Record<LintCode, string>> = {};
   for (const f of findings) fixes[f.code] = FIXES[f.code];
   otherFloats.sort();
-  const applied = sources.files.map((f) => f.rel);
+  const applied = sources.files.map((f) => escapeUnsafe(f.rel));
 
   const result: LintResult = {
     summary: summarise(findings.length, errors, warnings, ignoredCount, moneyChecked, tables.size, otherFloats.length, applied.length),
-    migrations: sources.migrations,
+    migrations: escapeUnsafe(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
     files_applied_count: applied.length,

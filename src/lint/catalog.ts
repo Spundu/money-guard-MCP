@@ -4,6 +4,7 @@
 // Every catalog object is named with its schema (pg_catalog.), so a migration that changes search_path
 // (pg_dump output does) cannot change what these queries read.
 
+import { hasUnsafe } from '../echo.js';
 import { looksLikeMoney, namesMinorUnits } from './names.js';
 
 /** Ordinary and partitioned tables in non-system schemas: the relations whose columns are checked. */
@@ -142,10 +143,13 @@ export function judge(row: DetailRow, isMoney: boolean, acceptNumeric: boolean):
 
 /**
  * A starting point for the fix, or null where the change belongs elsewhere: a domain (change the
- * domain), an array, or a generated column (change its expression).
+ * domain), an array, or a generated column (change its expression). Also null when a name holds a
+ * control or invisible character: results show such names escaped, and SQL built from the escaped
+ * text would name a different column.
  */
 export function fixSql(row: DetailRow, code: LintCode): string | null {
   if (row.domain_name !== null || row.via_array || row.generated !== '') return null;
+  if (hasUnsafe(row.quoted_table) || hasUnsafe(row.quoted_column)) return null;
   const head = `ALTER TABLE ${row.quoted_table} ALTER COLUMN ${row.quoted_column} TYPE bigint`;
   const c = row.quoted_column;
   switch (code) {

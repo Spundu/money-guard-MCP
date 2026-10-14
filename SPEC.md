@@ -54,8 +54,11 @@ internet and never touches a real database.
   2026-07-28).
 - No network requests, no shell, no child processes. PGlite runs in a worker thread inside the same
   process.
-- stdout carries only protocol messages. Diagnostics go to stderr: one line per call (tool, milliseconds,
-  outcome code). The line never contains file content, keys or absolute paths.
+- stdout carries only protocol messages. Diagnostics go to stderr: a startup line (version, Node.js
+  version, the project folder's name, how many key ids), one line per answered call (tool, milliseconds,
+  outcome code), and the type of any transport error (for example a message over the SDK's 10 MiB stdio
+  limit, after which the SDK closes the connection). No line contains file content, keys or absolute
+  paths; an unexpected error is logged as its type and `file:line:column` locations only.
 - One bad call never kills the server. Every handler catches everything. An unexpected exception
   becomes `INTERNAL_ERROR` with no internal detail; the detail goes to stderr only.
 - Starts in well under a second. PGlite loads only inside a `money_lint_schema` call, at about
@@ -79,7 +82,8 @@ internet and never touches a real database.
   - `id`: 1-64 characters, with no `=`, `,` or whitespace. Duplicate ids are invalid.
   - `hex`: an even number of hex digits, at least 32 (16 bytes = sealed-audit-chain's `MIN_KEY_BYTES`),
     in either case.
-  - `KEYS_INVALID` names the position or the id that is wrong, never a key value.
+  - `KEYS_INVALID` names the pair that is wrong by its position only ("pair 2"), never by any of its
+    text: in a malformed setting the text before `=` may be a key.
 - Claude Code project config. `${VAR:-}` expansion keeps the key out of the file and out of the repo:
   ```json
   { "mcpServers": { "money-guard": { "type": "stdio", "command": "npx", "args": ["-y", "money-guard-mcp"],
@@ -117,6 +121,13 @@ Every path argument:
 
 Paths in results are relative to the root and use `/`. Error messages name the root by its folder
 name only, never its absolute path.
+
+The same rules hold for every link `money_lint_schema` meets while it walks a migrations folder: the
+real target must exist (`PATH_NOT_FOUND`), lie inside the root (`PATH_OUTSIDE_ROOT`) and not look like
+a secret (`SENSITIVE_PATH`), and a link named `*.sql` must lead to a `.sql` file
+(`FILE_TYPE_NOT_ALLOWED`). Otherwise a hostile repository could ship `db/migrations/0002.sql` linking
+to `../../.env` and have the secrets run as SQL.
+
 **Out of scope:** a local attacker who can swap symlinks between the check and the read (they could
 already read the files).
 
@@ -136,9 +147,18 @@ already read the files).
     finding left out, so paging still reaches every finding.
 - **Money values are strings of integer minor units** (`"-150"`). That is exact at any size; sums use
   `BigInt`. No floating point touches an amount, anywhere.
-- **Data minimisation.** A value copied from a file into a result is cut at 40 characters (`…` marks
-  the cut), with control characters escaped. A result never holds a whole line from a file, and never
-  any key material.
+- **Data minimisation.** A value copied from a data file into a result (a ledger cell, a header name,
+  a transaction id, a currency) is cut at 40 characters, `…` marking the cut. A few things are cut at
+  other lengths: a log entry's `writer_key_id` at 64, a library reason at 120, a finding's `message` at
+  120, and a Postgres error message at 300 (it can quote the migration's own text, such as a path the
+  migration names). Names that must stay whole for the model to act on them are not cut: database
+  table, column and type names (PostgreSQL caps a name at 63 bytes) and paths inside the project.
+  A result never holds a whole line from a file, and never any key material.
+- **Hidden characters are always escaped.** Control characters, line and paragraph separators and the
+  bidirectional overrides and isolates (the "Trojan Source" characters, which make text read
+  differently from what it is) appear as `\uXXXX` in every string a client receives: each tool escapes
+  what it copies, and the server escapes every result and error once more on the way out. Names that
+  hold such characters get no `fix_sql` (§3.6).
 - **Deterministic.** The same files and the same arguments give byte-identical results. Findings are
   sorted; there are no timestamps, durations or random ids. Tests and the eval cache rely on this.
 - An optional parameter sent as `null` means "not given". Models sometimes send `null`; jarvis
@@ -380,7 +400,8 @@ Postgres's own `quote_ident`.
 - **`MONEY_TYPE`:** `... USING (<c>::numeric * 100)::bigint;`
 - **`SMALLINT_MONEY`:** `... TYPE bigint;`
 - **`null`** for domain, array and generated columns, where the fix belongs elsewhere (explained in
-  `fixes`).
+  `fixes`), and for a table or column name that holds hidden characters: the result shows such a name
+  escaped, and SQL built from the escaped text would name a different column.
 
 If a fix fails, for example because a view depends on the column, the next lint run shows it: the tool
 runs the new migration too.
@@ -524,7 +545,7 @@ Those functions throw at the first problem. This tool returns **every** problem.
 | `decimal_places` | integer 0-4 | 2 | Decimal places allowed in `decimal` format (0 for JPY, 3 for BHD). |
 | `format` | `"csv"`, `"json"` or `"jsonl"` | from the extension (`.csv`/`.tsv` csv, `.json` json, `.jsonl`/`.ndjson` jsonl) | Overrides the extension, e.g. for a `.json` file that holds one object per line. |
 | `delimiter` | `","`, `";"`, `"\t"` or `"\|"` | `","` (`"\t"` for `.tsv`) | CSV only. |
-| `records_pointer` | string (a JSON Pointer, ≤ 256 characters) | `""` (the root must be an array) | JSON only: where the array of records is, e.g. `"/data/entries"`. Every location in a JSON finding starts with it, so it is kept short. |
+| `records_pointer` | string (a JSON Pointer, ≤ 256 characters, no control or invisible characters) | `""` (the root must be an array) | JSON only: where the array of records is, e.g. `"/data/entries"`. Every location in a JSON finding starts with it, so it is kept short and plain. |
 | `offset` | integer ≥ 0 | 0 | The first finding to return. |
 | `limit` | integer 1-50 | 20 | How many findings to return. |
 

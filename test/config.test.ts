@@ -20,13 +20,26 @@ describe('parseAuditKeys', () => {
     }
   });
 
-  it('reports KEYS_NOT_CONFIGURED, naming it, for a placeholder the MCP host did not fill in', () => {
+  it('reports KEYS_NOT_CONFIGURED, naming the variable, for a placeholder the MCP host did not fill in', () => {
     // Claude Code leaves ${VAR} as it is when VAR is not set; Claude Desktop does the same for an
     // optional setting without a value.
-    for (const raw of ['${MONEY_GUARD_AUDIT_KEYS}', '${MONEY_GUARD_AUDIT_KEYS:-}', ' ${user_config.audit_keys} ']) {
-      expect(errorText(parseAuditKeys(raw))).toMatch(
-        new RegExp(`^KEYS_NOT_CONFIGURED: MONEY_GUARD_AUDIT_KEYS holds "${raw.trim().replace(/[$.{}]/g, '\\$&')}", a placeholder the MCP host did not fill in`),
-      );
+    const cases: Array<[string, string]> = [
+      ['${MONEY_GUARD_AUDIT_KEYS}', 'the placeholder for MONEY_GUARD_AUDIT_KEYS'],
+      ['${MONEY_GUARD_AUDIT_KEYS:-}', 'the placeholder for MONEY_GUARD_AUDIT_KEYS'],
+      [' ${user_config.audit_keys} ', 'the placeholder for user_config.audit_keys'],
+    ];
+    for (const [raw, which] of cases) {
+      expect(errorText(parseAuditKeys(raw))).toMatch(new RegExp(`^KEYS_NOT_CONFIGURED: MONEY_GUARD_AUDIT_KEYS holds ${which}, which the MCP host did not fill in`));
+    }
+  });
+
+  it('never repeats key material from a malformed setting or placeholder', () => {
+    // A key written where the id belongs, a key with a stray "=", a base64 key pasted without an id
+    // (base64 ends in "="), and keys inside placeholders.
+    const BASE64 = Buffer.from(KEY_B, 'hex').toString('base64');
+    for (const raw of [`${KEY_B}=`, `${KEY_B}=k1`, `k1=${KEY_A},${KEY_B}=${KEY_B}0`, BASE64, `\${MONEY_GUARD_AUDIT_KEYS:-k1=${KEY_B}}`, `\${k1=${KEY_B}}`]) {
+      const text = errorText(parseAuditKeys(raw));
+      for (const secret of [KEY_A.slice(0, 8), KEY_B.slice(0, 8), BASE64.slice(0, 8)]) expect(text, raw).not.toContain(secret);
     }
   });
 
@@ -53,7 +66,7 @@ describe('parseAuditKeys', () => {
       [`=${KEY_A}`, /pair 1 has an id that is empty/],
       [`my key=${KEY_A}`, /pair 1 has an id that is empty, longer than 64 characters or contains spaces/],
       [`${'k'.repeat(65)}=${KEY_A}`, /pair 1 has an id/],
-      [`k1=${KEY_A},k1=${KEY_B}`, /pair 2 \("k1"\) repeats an id/],
+      [`k1=${KEY_A},k1=${KEY_B}`, /pair 2 repeats the id of pair 1/],
       [`k1=${KEY_A}0`, /not an even number of hex digits/],
       [`k1=${KEY_A.slice(0, -2)}zz`, /not an even number of hex digits/],
       [`k1=${KEY_A.slice(0, -2)}`, /shorter than 16 bytes/],

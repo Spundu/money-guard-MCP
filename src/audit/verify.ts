@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { GENESIS_HASH, jsonlEntryAt, jsonlLineCount, verifyJsonl, type ChainAnchor } from 'sealed-audit-chain';
 import type { AuditKeys } from '../config.js';
-import { clip } from '../echo.js';
+import { clip, escapeUnsafe } from '../echo.js';
 
 export type ReasonCode =
   | 'TORN_LAST_LINE'
@@ -136,7 +136,7 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
     break: brk,
     anchor_checked: anchor !== undefined,
     head,
-    key_ids_configured: [...keys.ids],
+    key_ids_configured: keys.ids.map(escapeUnsafe), // from the settings, but shown like any other text
     notes,
   });
 

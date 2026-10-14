@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { hasUnsafe } from '../src/echo.js';
 import { ToolError, type ErrorCode } from '../src/errors.js';
+import { collectSources } from '../src/lint/files.js';
 import { lintSchema, type LintParams } from '../src/lint/run.js';
 import type { Root } from '../src/paths.js';
-import { rootOf, tempDir, writeTree } from './support/tmp.js';
+import { rootOf, tempDir, trySymlink, writeTree } from './support/tmp.js';
 
 let root: Root;
 let n = 0;
@@ -205,6 +208,62 @@ describe('money_lint_schema: judging columns', () => {
     expect(r.findings.length).toBeLessThan(50);
     expect([r.findings_truncated, r.error_count]).toEqual([true, 60]);
     expect(r.findings[0]?.column).toBe(`price_00_${'x'.repeat(54)}`);
+  });
+});
+
+describe('money_lint_schema: names from a hostile project', () => {
+  it('shows table, column and file names whole but escaped, and gives no fix_sql for a name with hidden characters', async () => {
+    // U+202E reverses how the text after it shows: SQL built from the escaped name would name another column.
+    const r = await lint({ 'db/migrations/0001_‮evil.sql': 'create table o ("total_‮DANGER" double precision, price double precision, "lat_‮x" double precision);' });
+    expect(hasUnsafe(JSON.stringify(r))).toBe(false);
+    expect(r.findings.map((f) => [f.column, f.fix_sql === null])).toEqual([
+      ['price', false],
+      ['total_\\u202eDANGER', true],
+    ]);
+    expect(r.findings[0]?.introduced_in).toMatch(/\/db\/migrations\/0001_\\u202eevil\.sql$/);
+    expect(r.files_applied[0]).toBe(r.findings[0]?.introduced_in);
+    expect(r.other_float_columns).toEqual(['public.o.lat_\\u202ex']);
+  });
+});
+
+describe('money_lint_schema: links in the migrations folder', () => {
+  // The walk gives a link the checks a path argument gets (src/paths.ts). Collecting the files is
+  // enough to show it: nothing runs.
+  function sourcesCode(dir: string): ErrorCode | 'no error' {
+    try {
+      collectSources(rootOf(dir), { migrations: 'db/migrations' });
+      return 'no error';
+    } catch (err) {
+      if (err instanceof ToolError) return err.code;
+      throw err;
+    }
+  }
+
+  it('refuses a folder link that leads outside the project, and a folder link to nothing', () => {
+    // Folder links need no privilege (junctions on Windows), so this test never skips.
+    const outside = tempDir();
+    writeTree(outside, { 'other/0001.sql': 'select 1;' });
+    const dir = tempDir();
+    writeTree(dir, { 'db/migrations/0001.sql': 'select 1;', 'gone/0002.sql': 'select 1;' });
+    expect(trySymlink(path.join(outside, 'other'), path.join(dir, 'db', 'migrations', 'out'), 'dir')).toBe(true);
+    expect(sourcesCode(dir)).toBe('PATH_OUTSIDE_ROOT');
+    rmSync(path.join(dir, 'db', 'migrations', 'out'), { recursive: true, force: true });
+    expect(trySymlink(path.join(dir, 'gone'), path.join(dir, 'db', 'migrations', 'legacy'), 'dir')).toBe(true);
+    rmSync(path.join(dir, 'gone'), { recursive: true, force: true });
+    expect(sourcesCode(dir)).toBe('PATH_NOT_FOUND');
+  });
+
+  it('refuses a .sql link to a secrets file or to a file that is not .sql, even inside the project', (ctx) => {
+    const dir = tempDir();
+    writeTree(dir, { '.env': 'STRIPE_SECRET_KEY=x\n', 'notes.txt': 'select 1;', 'db/migrations/0001.sql': 'select 1;' });
+    if (!trySymlink(path.join(dir, '.env'), path.join(dir, 'db', 'migrations', '0002.sql'), 'file')) {
+      console.warn('SKIPPED: this machine cannot create file symlinks (Windows without Developer Mode).');
+      ctx.skip();
+    }
+    expect(sourcesCode(dir)).toBe('SENSITIVE_PATH');
+    rmSync(path.join(dir, 'db', 'migrations', '0002.sql'));
+    expect(trySymlink(path.join(dir, 'notes.txt'), path.join(dir, 'db', 'migrations', '0002.sql'), 'file')).toBe(true);
+    expect(sourcesCode(dir)).toBe('FILE_TYPE_NOT_ALLOWED');
   });
 });
 
