@@ -121,7 +121,7 @@ function startLines(bytes: Uint8Array, ends: readonly number[]): number[] {
   return lines;
 }
 
-function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): LedgerRow[] {
+function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledger {
   // Where each record ends (a byte offset), collected as records are read: a broken record starts
   // right after the last good one, which gives its line even though the parse failed.
   const ends: number[] = [];
@@ -146,15 +146,16 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledg
     throw new ToolError('PARSE_ERROR', `Line ${line}: ${problem}.`, 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.');
   }
   const [header, ...data] = records;
-  if (header === undefined) return [];
+  if (header === undefined) return { rows: [], names: [] };
   if (data.length > MAX_ROWS) throw tooManyRows();
   const indexes = mappedEntries(columns).map(([field, name]) => [field, findColumn(header, field, name)] as const);
   const lines = startLines(bytes, ends);
-  return data.map((record, seq) => {
+  const rows = data.map((record, seq) => {
     const values: Partial<Record<MappedField, unknown>> = {};
     for (const [field, index] of indexes) values[field] = record[index];
     return { seq, line: lines[seq + 1] ?? 0, values };
   });
+  return { rows, names: header };
 }
 
 // --------------------------------------------------------------------------------------------- JSON
@@ -233,7 +234,7 @@ function parseOrThrow(text: string): unknown {
   }
 }
 
-function readJson(text: string, columns: ColumnMap, recordsPointer: string): LedgerRow[] {
+function readJson(text: string, columns: ColumnMap, recordsPointer: string): Ledger {
   const records = resolvePointer(parseOrThrow(text), recordsPointer);
   if (!Array.isArray(records)) {
     const where = recordsPointer === '' ? 'The top of the file' : `The value at "${clip(recordsPointer, 80)}"`;
@@ -244,11 +245,12 @@ function readJson(text: string, columns: ColumnMap, recordsPointer: string): Led
     const pointer = `${recordsPointer}/${seq}`;
     return isRecord(record) ? { seq, pointer, values: valuesOf(record, columns) } : { seq, pointer, values: {}, bad: 'the record is not a JSON object' };
   });
-  requireMappedFields(rows, columns, records.find(isRecord));
-  return rows;
+  const first = records.find(isRecord);
+  requireMappedFields(rows, columns, first);
+  return { rows, names: first === undefined ? [] : Object.keys(first) };
 }
 
-function readJsonl(text: string, columns: ColumnMap): LedgerRow[] {
+function readJsonl(text: string, columns: ColumnMap): Ledger {
   const rows: LedgerRow[] = [];
   let first: Record<string, unknown> | undefined;
   const lines = text.split('\n');
@@ -269,7 +271,13 @@ function readJsonl(text: string, columns: ColumnMap): LedgerRow[] {
     rows.push(isRecord(value) ? { ...base, values: valuesOf(value, columns) } : { ...base, values: {}, bad: 'the line is not a JSON object' });
   }
   requireMappedFields(rows, columns, first);
-  return rows;
+  return { rows, names: first === undefined ? [] : Object.keys(first) };
+}
+
+/** The rows of a ledger export, and the column or field names it has (the CSV header, or the first record's fields). */
+export interface Ledger {
+  rows: LedgerRow[];
+  names: string[];
 }
 
 /**
@@ -280,7 +288,7 @@ export function readLedger(
   bytes: Uint8Array,
   text: string,
   options: { format: LedgerFormat; columns: ColumnMap; delimiter: string; recordsPointer: string },
-): LedgerRow[] {
+): Ledger {
   switch (options.format) {
     case 'csv':
       return readCsv(bytes, options.columns, options.delimiter);

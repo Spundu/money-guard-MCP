@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { overBudget } from '../budget.js';
-import { clipPath } from '../echo.js';
+import { clip, clipPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
 import { readChecked, resolveInRoot, type Root } from '../paths.js';
@@ -73,7 +73,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const delimiter = params.delimiter ?? (extension === '.tsv' ? '\t' : ',');
 
   const bytes = readChecked(target.real, target.rel);
-  const rows = readLedger(bytes, decodeUtf8(bytes), { format, columns: params.columns, delimiter, recordsPointer: params.records_pointer ?? '' });
+  const { rows, names } = readLedger(bytes, decodeUtf8(bytes), { format, columns: params.columns, delimiter, recordsPointer: params.records_pointer ?? '' });
   const outcome = checkLedger(
     rows,
     mode,
@@ -93,7 +93,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
   const result: LedgerResult = {
-    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, all.filter((f) => f.transaction_id === null).length) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts),
+    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, all.filter((f) => f.transaction_id === null).length) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names),
     file: clipPath(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -125,11 +125,18 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   return result;
 }
 
-/** When no amount was whole and some had decimals, the file most likely holds pounds read as pence: say how to read it. */
-function poundsHint(format: AmountFormat, amounts: { whole: number; fractional: number }): string {
-  return format === 'minor_units' && amounts.whole === 0 && amounts.fractional > 0
-    ? ' No amount was a whole number: if the file holds pounds or dollars (12.34), call again with amount_format "decimal".'
+/** When at least as many amounts have a decimal point as not (zeros aside), the file most likely holds pounds read as pence: say how to read it. */
+function poundsHint(format: AmountFormat, amounts: { decimalPoint: number; plain: number }): string {
+  return format === 'minor_units' && amounts.decimalPoint > 0 && amounts.decimalPoint >= amounts.plain
+    ? ' Most amounts have a decimal point: if the file holds pounds or dollars (12.34), call again with amount_format "decimal".'
     : '';
+}
+
+/** A column that looks like a currency but is not mapped: every row then counts as one currency. */
+function currencyHint(columns: ColumnMap, names: readonly string[]): string {
+  if (columns.currency !== undefined) return '';
+  const name = names.find((n) => /^(?:currency(?:[_ -]?code)?|ccy|cur)$/i.test(n.trim()));
+  return name === undefined ? '' : ` The file has a column "${clip(name)}" that is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }
 
 function summarise(

@@ -52,8 +52,8 @@ export interface CheckOptions {
 export interface CheckOutcome {
   /** Every finding, sorted by first location, then code. */
   findings: Finding[];
-  /** Amounts read as whole minor units, and amounts refused as FRACTIONAL_MINOR_UNITS: together they show a file of pounds read as pence. */
-  amounts: { whole: number; fractional: number };
+  /** Amounts written with a decimal point, and non-zero amounts written without one: together they show a file of pounds read as pence. */
+  amounts: { decimalPoint: number; plain: number };
   rowsRead: number;
   transactionsFound: number;
   transactionsNotChecked: number;
@@ -119,8 +119,13 @@ function refs(rows: readonly LedgerRow[]): Pick<Finding, 'lines' | 'pointers' | 
   return out;
 }
 
+/** A value from the file as a result shows it: text and numbers as written, other JSON values by kind. */
 function shownValue(raw: unknown): string {
-  return clip(typeof raw === 'string' ? raw.trim() : String(raw));
+  if (typeof raw === 'string') return clip(raw.trim());
+  if (raw instanceof JsonNumber) return clip(raw.text);
+  if (Array.isArray(raw)) return 'an array';
+  if (raw !== null && typeof raw === 'object') return 'an object';
+  return clip(String(raw));
 }
 
 const SIDES: Readonly<Record<string, 1n | -1n>> = { D: 1n, DR: 1n, DEBIT: 1n, C: -1n, CR: -1n, CREDIT: -1n };
@@ -138,11 +143,10 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
     const raw = row.values[field];
     const parsed = parseAmount(raw, opts.amountFormat, opts.decimalPlaces);
     if (parsed === null) return null;
-    if (parsed.ok) {
-      tally.whole += 1;
-      return parsed.minor;
-    }
-    if (parsed.problem === 'FRACTIONAL_MINOR_UNITS') tally.fractional += 1;
+    const written = raw instanceof JsonNumber ? raw.text : typeof raw === 'string' ? raw : '';
+    if (written.includes('.')) tally.decimalPoint += 1;
+    else if (parsed.ok && parsed.minor !== 0n) tally.plain += 1;
+    if (parsed.ok) return parsed.minor;
     problem(parsed.problem, field, `${shownValue(raw)} ${parsed.why}`, raw);
     return undefined;
   };
@@ -170,7 +174,7 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
         sign = SIDES[side];
       }
       if (typeof value === 'bigint' && value < 0n) {
-        problem('NEGATIVE_WITH_SIDE', 'amount', `${value} is negative, but side already gives the direction`, row.values.amount);
+        problem('NEGATIVE_WITH_SIDE', 'amount', `${shownValue(row.values.amount)} is negative, but side already gives the direction`, row.values.amount);
         sign = undefined;
       }
     }
@@ -181,6 +185,7 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
   if (hasCurrency) {
     const raw = row.values.currency;
     if (typeof raw === 'string' && raw.trim() !== '') currency = raw.trim().toUpperCase();
+    else if (raw instanceof JsonNumber) currency = raw.text; // an ISO 4217 numeric code, such as 826
     else problem('MISSING_VALUE', 'currency', typeof raw === 'string' || raw === undefined || raw === null ? 'no currency' : 'the currency is not text');
   }
   if (findings.length > 0 || minor === undefined) return { findings };
@@ -219,7 +224,7 @@ function netsText(nets: Net[]): string {
 export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckOptions, hasCurrency: boolean): CheckOutcome {
   const findings: Array<Finding & { order: number }> = [];
   const txs = new Map<string, Tx>();
-  const amounts = { whole: 0, fractional: 0 };
+  const amounts = { decimalPoint: 0, plain: 0 };
 
   for (const row of rows) {
     if (row.bad !== undefined) {

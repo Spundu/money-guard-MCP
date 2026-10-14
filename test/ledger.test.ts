@@ -155,10 +155,37 @@ describe('money_check_double_entry: the rules', () => {
       '19.99 is not a whole number of minor units',
       '-19.99 is not a whole number of minor units',
     ]);
-    expect(r.summary).toMatch(/ No amount was a whole number: if the file holds pounds or dollars \(12\.34\), call again with amount_format "decimal"\.$/);
-    // A pence file with one bad row keeps the plain summary: most of its amounts were whole.
-    const pence = check('.csv', 't,a\nA,1000\nA,-1000\nB,10.5\nB,-10.5\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(r.summary).toMatch(/ Most amounts have a decimal point: if the file holds pounds or dollars \(12\.34\), call again with amount_format "decimal"\.$/);
+    // Half of the amounts with a decimal point, and a leg of 0, which says nothing: still worth the hint.
+    const excel = check('.csv', 't,a\nA,12.5\nA,-12.5\nB,3\nB,-3\nB,0\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(excel.summary).toMatch(/ Most amounts have a decimal point/);
+    // JSON as PostgreSQL's json_agg writes numeric(10,2): 12.00 is a whole number, but written in pounds.
+    const json = check('.json', '[{"t":"A","a":12.00},{"t":"A","a":-12.00}]', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(json.summary).toMatch(/^Balanced: .* Most amounts have a decimal point/);
+    // A pence file with one bad transaction keeps the plain summary: most of its amounts are whole.
+    const pence = check('.csv', 't,a\nA,1000\nA,-1000\nC,250\nC,-250\nB,10.5\nB,-10.5\n', { columns: { transaction_id: 't', amount: 'a' } });
     expect(pence.summary).not.toMatch(/amount_format/);
+  });
+
+  it('names a currency column that is not mapped, since every row then counts as one currency', () => {
+    const r = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence' } });
+    expect(r.summary).toBe('Balanced: the 1 transaction nets to zero in whole minor units. The file has a column "Currency" that is not mapped: map it as currency to check each currency on its own (now every row counts as one).');
+    const mapped = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'Currency' } });
+    expect(mapped.findings[0]?.code).toBe('UNBALANCED');
+  });
+
+  it('says true things about odd values: written-out numbers, objects, the value as written', () => {
+    const r = check('.jsonl', '{"t":"A","a":"1e3"}\n{"t":"A","a":{"value":5}}\n{"t":"B","a":[1]}\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(r.findings.map((f) => [f.value, f.message])).toEqual([
+      ['1e3', '1e3 is not written in plain digits, such as 1234'],
+      ['an object', 'an object is not a number'],
+      ['an array', 'an array is not a number'],
+    ]);
+    const side = check('.csv', 't,a,s\nB,-5.00,D\nB,5.00,C\n', { columns: { transaction_id: 't', amount: 'a', side: 's' }, amount_format: 'decimal' });
+    expect(side.findings[0]).toMatchObject({ code: 'NEGATIVE_WITH_SIDE', value: '-5.00', message: '-5.00 is negative, but side already gives the direction' });
+    // An ISO 4217 numeric currency code is a currency.
+    const iso = check('.jsonl', '{"t":"A","a":5,"c":826}\n{"t":"A","a":-5,"c":826}\n', { columns: { transaction_id: 't', amount: 'a', currency: 'c' } });
+    expect(iso.balanced).toBe(true);
   });
 
   it('says why a JSON number cannot be an id when it is too large', () => {

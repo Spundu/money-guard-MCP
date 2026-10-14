@@ -675,7 +675,8 @@ Those functions throw at the first problem. This tool returns **every** problem.
 > leg (debit or credit), groups rows by transaction id and reports every transaction whose legs do not
 > net to zero in each currency, that has fewer than two non-zero legs, or whose amounts are not whole
 > minor units (10.5 pence) or cannot be read. Map the columns: transaction_id plus either a signed
-> amount, an amount with a debit/credit side column, or separate debit and credit columns. Amounts are
+> amount, an amount with a debit/credit side column, or separate debit and credit columns; map currency
+> too when the file has one (without it, every row counts as one currency). Amounts are
 > integers in minor units by default (amount_format "decimal" reads 12.34 as 1234); no floating point is
 > used. Findings give the exact line numbers (or JSON Pointers) and come in pages: for the next page,
 > pass the next_offset the result gives as offset (a page can hold fewer than limit findings).
@@ -745,9 +746,12 @@ Those functions throw at the first problem. This tool returns **every** problem.
     `-?[0-9]+`.
   - A fraction (`10.5`) is `FRACTIONAL_MINOR_UNITS`. So is text with a decimal point even when the
     fraction is zero (`12.00`): it usually means the column holds pounds, so use `decimal`. Its message
-    says so ("12.00 has a decimal point; minor units are whole numbers without one"), and when no
-    amount in the file was whole, the summary ends: "No amount was a whole number: if the file holds
-    pounds or dollars (12.34), call again with amount_format "decimal"."
+    says so ("12.00 has a decimal point; minor units are whole numbers without one"). When at least as
+    many amounts are written with a decimal point as without (zeros aside; a JSON `12.00` counts, though
+    it is read as 12), the summary ends: "Most amounts have a decimal point: if the file holds pounds or
+    dollars (12.34), call again with amount_format "decimal"."
+  - Text that is not plain digits (`1e3`, `+5`, `(5)`, `1,000`) is `BAD_AMOUNT`, "is not written in plain
+    digits, such as 1234"; a JSON object or array is "an object" or "an array".
 - **`decimal`:** a string or number of the form `-?[0-9]+(\.[0-9]+)?`.
   - Digits past `decimal_places` must be zeros: with 2 places `12.340` is 1234, and `12.345` is
     `FRACTIONAL_MINOR_UNITS`.

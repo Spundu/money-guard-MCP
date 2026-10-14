@@ -38,7 +38,7 @@ function fromText(text: string, format: AmountFormat, places: number): AmountRes
       const why = /^-?\d+\.0+$/.test(text) ? 'has a decimal point; minor units are whole numbers without one' : 'is not a whole number of minor units';
       return { ok: false, problem: 'FRACTIONAL_MINOR_UNITS', why };
     }
-    return { ok: false, problem: 'BAD_AMOUNT', why: 'is not a whole number of minor units' };
+    return { ok: false, problem: 'BAD_AMOUNT', why: 'is not written in plain digits, such as 1234' };
   }
   if (!DECIMAL.test(text)) return { ok: false, problem: 'BAD_AMOUNT', why: 'is not a decimal amount such as 12.34' };
   const [whole = '0', fraction = ''] = text.slice(sign.length).split('.');
