@@ -177,8 +177,9 @@ same JSON is also sent as text, for clients that ignore structured results. This
 `fix_sql` is a starting point. It converts pounds to pence and keeps amounts that are already in
 pence (or cents) as they are; the tests run each kind of conversion on stored rows. It is `null` where
 the unit needs a decision (a column with four decimal places), and where a default, a CHECK
-constraint or an index condition holds amounts in pounds: Postgres's type change would leave those
-unconverted, so the agent writes that migration by hand. The agent adds it as a new
+constraint or a unique index condition may hold amounts in pounds, in the table or in a partition or
+child table: Postgres's type change would leave those unconverted, so the agent writes that migration
+by hand. (A CHECK such as `amount >= 0` is fine.) The agent adds it as a new
 migration and runs the check again, and the check runs that migration too. [SPEC.md](SPEC.md) shows
 full results of the other two tools (§4.9, §5.8).
 

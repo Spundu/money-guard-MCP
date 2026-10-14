@@ -91,6 +91,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const db = await runScripts(scripts, {
     timeoutMs: (params.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000,
     preset: params.preset !== undefined,
+    filesGiven: params.files !== undefined,
     signal,
   });
 
@@ -107,6 +108,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
 
   const findings: LintFinding[] = [];
   const tables = new Set<string>();
+  const moneyTables = new Set<string>(); // the tables that hold a money column whose type was judged
   const otherFloats: string[] = [];
   let moneyChecked = 0;
   let moneyOther = 0;
@@ -123,7 +125,10 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
       if (judge(row, money, params.accept_numeric ?? false) !== null) ignoredCount += 1;
       continue;
     }
-    if (base !== null && (money || base === 'money')) moneyChecked += 1;
+    if (base !== null && (money || base === 'money')) {
+      moneyChecked += 1;
+      moneyTables.add(table);
+    }
     else if (money && canHoldAmount(row)) moneyOther += 1; // text, JSON, a composite: not checked (SPEC.md §6)
     const code = judge(row, money, params.accept_numeric ?? false);
     if (code !== null) {
@@ -158,7 +163,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const applied = sources.files.map((f) => clipPath(f.rel));
 
   const result: LintResult = {
-    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, money: moneyChecked, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length }),
+    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length }),
     migrations: clipPath(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -196,6 +201,7 @@ interface Counts {
   warnings: number;
   ignored: number;
   money: number;
+  moneyTables: number;
   moneyOther: number;
   tables: number;
   /** Whether tables exist that setup or the preset made (and no migration changed). */
@@ -215,10 +221,13 @@ function summarise(c: Counts): string {
     if (c.setupTables) return `No table was created or changed by ${ran}, so nothing was checked: the tables that exist come from setup or the preset.`;
     return `No tables exist after ${c.files === 1 ? 'the 1 migration file' : `the ${c.files} migration files`}, so nothing was checked. If a file also holds its down step, that step dropped what the file created: pass files, or lint a copy without the down steps.`;
   }
+  // Float columns the name rule did not take for money are where money it misses would be: say so
+  // wherever the summary would otherwise read as all clear.
+  const floatsNote = c.floats > 0 ? ` ${plural(c.floats, 'other float column')} (other_float_columns): check that none holds money.` : '';
   if (c.problems > 0) {
-    return `${plural(c.problems, 'problem')} in ${plural(c.problems, 'money column')} (${plural(c.errors, 'error')}, ${plural(c.warnings, 'warning')}). ${applied}${ignoredNote}${otherNote}`;
+    return `${plural(c.problems, 'problem')} in ${plural(c.problems, 'money column')} (${plural(c.errors, 'error')}, ${plural(c.warnings, 'warning')}). ${applied}${ignoredNote}${otherNote}${floatsNote}`;
   }
-  if (c.money > 0) return `No problems: ${plural(c.money, 'money column')} in ${plural(c.tables, 'table')} ${c.money === 1 ? 'uses a safe type' : 'use safe types'}. ${applied}${ignoredNote}${otherNote}`;
+  if (c.money > 0) return `No problems: ${plural(c.money, 'money column')} in ${plural(c.moneyTables, 'table')} ${c.money === 1 ? 'uses a safe type' : 'use safe types'}. ${applied}${ignoredNote}${otherNote}${floatsNote}`;
   const floats = c.floats > 0 ? `; ${plural(c.floats, 'float column')} in other_float_columns, in case one holds money` : '';
   return `No money columns found in ${plural(c.tables, 'table')}${floats}. ${applied}${ignoredNote}${otherNote}`;
 }

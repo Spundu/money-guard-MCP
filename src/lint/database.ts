@@ -82,7 +82,7 @@ export function locate(text: string, position: number): { line: number; column: 
 const MISSING_OBJECT = new Set(['42704', '3F000', '42883', '42P01']);
 
 /** The ToolError for a script that PostgreSQL refused, with a hint fitted to the error. */
-export function failure(script: Script, err: DbError, context: { available: readonly string[]; preset: boolean }): ToolError {
+export function failure(script: Script, err: DbError, context: { available: readonly string[]; preset: boolean; filesGiven?: boolean }): ToolError {
   const code = script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
   const position = err.position === undefined ? Number.NaN : Number(err.position);
   const at = Number.isInteger(position) && position > 0 ? locate(script.text, position) : null;
@@ -97,13 +97,15 @@ export function failure(script: Script, err: DbError, context: { available: read
     fix =
       `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, leave the file out with files. ` +
       'A whole-database dump (pg_dump, supabase db dump) also creates the extensions a platform provides: lint the migrations folder instead (supabase/migrations for Supabase).';
+  } else if (err.code === '42883' && err.message.startsWith('operator does not exist')) {
+    fix = 'The two sides of an operator have types that do not go together (uuid and text, say): cast one side, or fix the column type.';
   } else if (err.code !== undefined && MISSING_OBJECT.has(err.code)) {
     // A missing table or function is often one of the project's own, created by a file that sorts later
     // (Flyway's R__ files sort before V1__): say that first.
-    const order =
-      err.code === '42P01' || err.code === '42883'
-        ? 'If one of your migrations creates it, the files ran out of order: money-guard runs them in natural order of their paths; pass files to give the order your tool uses. '
-        : '';
+    const ran = context.filesGiven
+      ? 'the files ran in the order files gives; put the file that creates it first. '
+      : 'money-guard runs them in natural order of their paths; pass files to give the order your tool uses. ';
+    const order = err.code === '42P01' || err.code === '42883' ? `If one of your migrations creates it, the files ran out of order: ${ran}` : '';
     fix =
       order +
       (context.preset
@@ -115,7 +117,10 @@ export function failure(script: Script, err: DbError, context: { available: read
     // pg_dump writes table rows after "COPY ... FROM stdin;" lines; only psql can feed them in.
     fix = 'The file holds table data after COPY ... FROM stdin (a pg_dump with data), which only psql can load. Lint a schema-only dump (pg_dump --schema-only) or the migrations folder instead.';
   } else if (err.code === '25001') {
-    fix = 'money-guard runs each file as one script, where CREATE INDEX CONCURRENTLY cannot run. If the file only creates indexes, leave it out with files.';
+    const statement = /^(.+?) cannot run inside a transaction block$/.exec(err.message)?.[1] ?? 'this statement';
+    fix = `money-guard runs each file as one script, where ${clip(statement, 60)} cannot run (psql, which commits statement by statement, can). If the file does nothing else, leave it out with files.`;
+  } else if (err.code === '0A000' && /^cannot alter type of a column used (?:by|in) /.test(err.message)) {
+    fix = 'Something else uses this column (a view, a rule, a policy, a trigger or a generated column): in the same migration, drop it before the ALTER and create it again after.';
   } else if (err.code === '55P04') {
     fix = 'money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). Split the file in two, or leave it out with files.';
   } else if (err.code !== undefined && /^5[34]/.test(err.code)) {
@@ -144,7 +149,7 @@ const WORKER = new URL('./worker.js', import.meta.url);
 
 export function runScripts(
   scripts: readonly Script[],
-  options: { timeoutMs: number; preset: boolean; signal?: AbortSignal | undefined; worker?: URL | undefined; memoryLimitBytes?: number | undefined },
+  options: { timeoutMs: number; preset: boolean; filesGiven?: boolean | undefined; signal?: AbortSignal | undefined; worker?: URL | undefined; memoryLimitBytes?: number | undefined },
 ): Promise<DatabaseOutcome> {
   const firstMigration = scripts.findIndex((s) => s.phase === 'migration');
   return new Promise<DatabaseOutcome>((resolve, reject) => {
@@ -239,7 +244,7 @@ export function runScripts(
           break;
         }
         case 'failed':
-          finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset }) });
+          finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset, filesGiven: options.filesGiven ?? false }) });
           break;
         case 'unusable':
           finish({ error: new ToolError('MIGRATION_FAILED', `${scriptAt(m.step).name}: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, 'Leave the file out with files.') });

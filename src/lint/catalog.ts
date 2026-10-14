@@ -32,24 +32,40 @@ export const SNAPSHOT_SQL = `
  * Taken once, at the end: everything the findings need. Domains are followed to their base type at any
  * depth, and arrays to their element type. Partitions are left out (their parent is reported),
  * inherited columns too (reported where defined), and tables that belong to an extension. For fix_sql,
- * what else holds amounts of the column: its default, and whether a CHECK constraint or an index with
- * an expression or a WHERE clause uses it (such an index depends on the column in pg_depend).
+ * what else may hold amounts of the column, in its table and in every partition or inheritance child
+ * (an ALTER of the parent changes their column too, matched by name): the defaults; the CHECK
+ * constraints, as written back (null for one that also uses another column); and whether a unique or
+ * exclusion index with an expression or a WHERE clause depends on it (pg_depend). An ordinary index's
+ * condition only decides which rows it speeds up, so it does not count.
  */
 export const DETAIL_SQL = `
-  WITH RECURSIVE cols AS (
+  WITH RECURSIVE descendants AS (
+    SELECT i.inhparent AS root, i.inhrelid AS rel FROM pg_catalog.pg_inherits i
+    UNION
+    SELECT d.root, i.inhrelid FROM descendants d JOIN pg_catalog.pg_inherits i ON i.inhparent = d.rel
+  ),
+  cols AS (
     SELECT a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
            n.nspname AS schema_name, c.relname AS table_name, a.attname AS column_name,
            pg_catalog.format_type(a.atttypid, a.atttypmod) AS declared, a.atttypid AS typid,
-           a.attgenerated::pg_catalog.text AS generated,
-           (SELECT pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) FROM pg_catalog.pg_attrdef ad
-            WHERE ad.adrelid = a.attrelid AND ad.adnum = a.attnum) AS default_expr,
-           EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k
-                   WHERE k.conrelid = c.oid AND k.contype = 'c' AND a.attnum = ANY (k.conkey)) AS in_check,
-           EXISTS (SELECT 1 FROM pg_catalog.pg_index i
+           a.attgenerated::pg_catalog.text AS generated, a.attinhcount > 0 AS inherited,
+           (SELECT pg_catalog.array_agg(pg_catalog.pg_get_expr(ad.adbin, ad.adrelid))
+            FROM pg_catalog.pg_attribute fa
+            JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = fa.attrelid AND ad.adnum = fa.attnum
+            WHERE fa.attname = a.attname AND NOT fa.attisdropped
+              AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS defaults,
+           (SELECT pg_catalog.array_agg(CASE WHEN pg_catalog.array_length(k.conkey, 1) = 1 THEN pg_catalog.pg_get_expr(k.conbin, k.conrelid) END)
+            FROM pg_catalog.pg_attribute fa
+            JOIN pg_catalog.pg_constraint k ON k.conrelid = fa.attrelid AND k.contype = 'c' AND fa.attnum = ANY (k.conkey)
+            WHERE fa.attname = a.attname AND NOT fa.attisdropped
+              AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS checks,
+           EXISTS (SELECT 1 FROM pg_catalog.pg_attribute fa
+                   JOIN pg_catalog.pg_index i ON i.indrelid = fa.attrelid AND (i.indisunique OR i.indisexclusion)
+                     AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
                    JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
-                   WHERE i.indrelid = c.oid AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
-                     AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = c.oid
-                     AND p.refobjsubid = a.attnum) AS in_index_expr
+                     AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = fa.attrelid AND p.refobjsubid = fa.attnum
+                   WHERE fa.attname = a.attname AND NOT fa.attisdropped
+                     AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS in_index_expr
     ${USER_TABLES}
       AND NOT c.relispartition AND a.attislocal
       AND NOT EXISTS (
@@ -77,8 +93,8 @@ export const DETAIL_SQL = `
     JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
     ORDER BY ch.start, ch.depth DESC
   )
-  SELECT cols.col, cols.schema_name, cols.table_name, cols.column_name, cols.declared, cols.generated,
-         cols.default_expr, cols.in_check, cols.in_index_expr,
+  SELECT cols.col, cols.schema_name, cols.table_name, cols.column_name, cols.declared, cols.generated, cols.inherited,
+         cols.defaults, cols.checks, cols.in_index_expr,
          base.via_array, base.domain_name, base.base_name, base.base_schema, base.base_kind
   FROM cols JOIN base ON base.start = cols.typid
   ORDER BY cols.schema_name, cols.table_name, cols.column_name`;
@@ -91,9 +107,13 @@ export interface DetailRow {
   declared: string;
   /** '' for an ordinary column, 's' or 'v' for a generated one. */
   generated: string;
-  /** The column's default as PostgreSQL writes it back ("0.00", "'0'::numeric"), or null. */
-  default_expr: string | null;
-  in_check: boolean;
+  /** Whether the column comes from a parent table too (a child that declares it again has it as its own as well). */
+  inherited: boolean;
+  /** The defaults of the column, in its table and in every partition or child, as PostgreSQL writes them back ("0.00", "'0'::numeric"); null when there are none. */
+  defaults: string[] | null;
+  /** Each CHECK constraint on the column (in its table, partitions and children) as written back; null for one that also uses another column. Null when there are none. */
+  checks: Array<string | null> | null;
+  /** Whether a unique or exclusion index with an expression or a WHERE clause depends on the column, in its table or a partition or child. */
   in_index_expr: boolean;
   via_array: boolean;
   domain_name: string | null;
@@ -128,7 +148,7 @@ export const FIXES: Readonly<Record<LintCode, string>> = {
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), amounts finer than a penny (choose the unit first), a default, CHECK constraint or index condition that holds amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), or a name holding hidden characters (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), or a name holding hidden characters (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -183,6 +203,16 @@ export function isZeroOrNullDefault(expr: string): boolean {
 }
 
 /**
+ * Whether a CHECK expression, as PostgreSQL writes it back, can hold no amount: no number but zero
+ * ("(total >= (0)::double precision)", "IS NOT NULL") and no function call, whose result could be one.
+ * Converting the column keeps such a check right; "amount <= 1000.00" or "amount <= max_total()" would
+ * turn into a cap a hundred times lower.
+ */
+export function holdsNoAmount(expr: string): boolean {
+  return !/[1-9]/.test(expr) && !/[\p{L}\p{N}_"]\(/u.test(expr);
+}
+
+/**
  * A name as PostgreSQL's quote_ident writes it: bare when it would read back as the same name (lowercase
  * letters, digits and "_", and not a keyword in `reserved`), otherwise in double quotes with any double
  * quote doubled. Done here, not by quote_ident in the database: the migrations control that database,
@@ -199,18 +229,20 @@ export function quoteIdent(name: string, reserved: ReadonlySet<string>): string 
  * (results show such names escaped, and SQL built from the escaped text would name a different column).
  * The conversion follows the name: amounts already in minor units (pence, cents, minor) are only
  * rounded; anything else is taken to be in pounds or dollars and multiplied by 100. A conversion that
- * multiplies is null too while the column's default, a CHECK constraint or an index condition holds an
- * amount: ALTER COLUMN ... TYPE converts the stored rows with USING but leaves those in the old unit (a
- * default of 2.50 pounds becomes 3 pence), and the next lint could not see it. `reserved` is
+ * multiplies is null too while the column's default, a CHECK constraint or a unique index's condition
+ * may hold an amount: ALTER COLUMN ... TYPE converts the stored rows with USING but leaves those in the
+ * old unit (a default of 2.50 pounds becomes 3 pence), and the next lint could not see it. `reserved` is
  * PostgreSQL's list of keywords that must be quoted, read before any migration ran.
  */
 export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>): string | null {
-  if (row.domain_name !== null || row.via_array || row.generated !== '') return null;
+  // A column a child inherits changes with its parent: ALTER refuses it on the child.
+  if (row.domain_name !== null || row.via_array || row.generated !== '' || row.inherited) return null;
   if ([row.schema_name, row.table_name, row.column_name].some(hasUnsafe)) return null;
   const c = quoteIdent(row.column_name, reserved);
   const head = `ALTER TABLE ${quoteIdent(row.schema_name, reserved)}.${quoteIdent(row.table_name, reserved)} ALTER COLUMN ${c} TYPE bigint`;
   const minor = namesMinorUnits(row.column_name);
-  const keepsOldUnit = row.in_check || row.in_index_expr || (row.default_expr !== null && !isZeroOrNullDefault(row.default_expr));
+  const checkHoldsAmount = (row.checks ?? []).some((expr) => expr === null || !holdsNoAmount(expr));
+  const keepsOldUnit = checkHoldsAmount || row.in_index_expr || (row.defaults ?? []).some((expr) => !isZeroOrNullDefault(expr));
   const times100 = (using: string) => (keepsOldUnit ? null : `${head} USING ${using};`);
   const convert = minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
   switch (code) {
@@ -219,7 +251,7 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
     case 'MONEY_TYPE':
       // The money type holds major units with 2 decimals. A default written as a money value (0::money)
       // cannot be cast to bigint, so the ALTER would fail: that one needs writing by hand.
-      if (row.default_expr !== null && /::money$/.test(row.default_expr)) return null;
+      if ((row.defaults ?? []).some((expr) => /::money$/.test(expr))) return null;
       return times100(`(${c}::numeric * 100)::bigint`);
     case 'FLOAT_MONEY':
       return convert;

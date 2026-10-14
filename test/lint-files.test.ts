@@ -327,12 +327,20 @@ describe('money_lint_schema: failures', () => {
       [{ 'db/migrations/0001.sql': "select repeat('x', 2000000000);" }, '54000', /^The file needs more than the lint database can give it/],
       [{ 'db/migrations/0001_view.sql': 'create view v as select * from orders;', 'db/migrations/0002_orders.sql': 'create table orders (id int);' }, '42P01', /^If one of your migrations creates it, the files ran out of order/],
       [{ 'db/migrations/0001.sql': 'select no_such_function();' }, '42883', /^If one of your migrations creates it, the files ran out of order.* preset "supabase"/],
+      [{ 'db/migrations/0001.sql': "create table t (id uuid, user_id text);\nselect * from t where id = user_id;" }, '42883', /^The two sides of an operator have types that do not go together/],
+      [{ 'db/migrations/0001.sql': 'create table t (id int);\nvacuum t;' }, '25001', /^money-guard runs each file as one script, where VACUUM cannot run/],
+      [{ 'db/migrations/0001.sql': 'create table t (price double precision);\ncreate view v as select price from t;\nalter table t alter column price type bigint;' }, '0A000', /^Something else uses this column \(a view, a rule/],
     ];
     for (const [files, state, hint] of cases) {
       const e = await failure(files);
       expect(e.message, state).toContain(`(SQLSTATE ${state})`);
       expect(e.fix, state).toMatch(hint);
     }
+  });
+
+  it('says the files ran in the order files gave, when files gave it', async () => {
+    const e = await failure({ 'db/migrations/a.sql': 'create table b2 as select * from b1;', 'db/migrations/b.sql': 'create table b1 (id int);' }, { files: ['a.sql', 'b.sql'] });
+    expect(e.fix).toMatch(/^If one of your migrations creates it, the files ran out of order: the files ran in the order files gives; put the file that creates it first\./);
   });
 
   it('reports a broken setup file as SETUP_FAILED', async () => {

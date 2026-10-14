@@ -488,14 +488,19 @@ conversion follows the name and the declared scale; the test suite runs each kin
   `null` when the default is written as a money value (`0::money`): PostgreSQL cannot cast it to
   bigint, so the ALTER would fail.
 - **`SMALLINT_MONEY`:** `... TYPE bigint;`
-- **`null`** also for domain, array and generated columns, where the fix belongs elsewhere, and for a
-  table or column name that holds hidden characters: the result shows such a name escaped, and SQL
-  built from the escaped text would name a different column.
-- **`null`** too for a conversion that multiplies by 100 (pounds to pence, the money type) while the
-  column's default, a CHECK constraint or an index with an expression or a `WHERE` clause holds an
-  amount. `ALTER COLUMN ... TYPE` converts the stored rows with `USING`, but leaves those in the old
-  unit: a default of 2.50 becomes 3 pence, and `CHECK (amount <= 1000.00)` a cap of £10. The next lint
-  could not see that, so such a fix is not offered. A default of zero or `NULL` is fine.
+- **`null`** also for domain, array and generated columns and for a column a child table inherits,
+  where the fix belongs elsewhere (the domain, the expression, the parent table), and for a table or
+  column name that holds hidden characters: the result shows such a name escaped, and SQL built from
+  the escaped text would name a different column.
+- **`null`** too for a conversion that multiplies by 100 (pounds to pence, the money type) while
+  something else may hold amounts of the column in the old unit, in its table or in any partition or
+  inheritance child (an ALTER of the parent changes their column too): a default other than zero or
+  `NULL`; a CHECK constraint that holds a number other than zero, calls a function or also uses
+  another column; or a unique or exclusion index with an expression or a `WHERE` clause (it decides
+  which rows may exist together). `ALTER COLUMN ... TYPE` converts the stored rows with `USING`, but
+  leaves those as written: a default of 2.50 becomes 3 pence, and `CHECK (amount <= 1000.00)` a cap of
+  £10. The next lint could not see that, so such a fix is not offered. A CHECK such as `amount >= 0`,
+  and an ordinary index with a condition (it only decides which rows it speeds up), are fine.
 
 When any finding of a code has a null `fix_sql`, that code's text in `fixes` ends with a sentence
 that says why. If a fix fails, for example because a view depends on the column, the next lint run
@@ -504,7 +509,7 @@ shows it: the tool runs the new migration too.
 ### 3.7 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "No table was created or changed by the 1 migration file, so nothing was checked: ..." |
+| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "No table was created or changed by the 1 migration file, so nothing was checked: ...". When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." "N money columns in M tables" counts only the tables that hold a money column. |
 | `migrations` | string | The path as given, normalised. |
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
@@ -545,14 +550,20 @@ shows it: the tool runs the new migration too.
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
   **42883** (no such function): "use `preset` or `setup`". For a table or a function it first says
-  that the files may have run out of order (pass `files`): such objects are often the project's own,
-  made by a file that sorts later (Flyway's `R__` files sort before `V1__`).
+  that the files may have run out of order (pass `files`, or, when `files` set the order, put the
+  file that creates it first): such objects are often the project's own, made by a file that sorts
+  later (Flyway's `R__` files sort before `V1__`).
+- **42883 for an operator** (`operator does not exist: uuid = text`): "cast one side, or fix the
+  column type".
+- **0A000 when a column's type cannot change** because a view, a rule, a policy, a trigger or a
+  generated column uses it (as after a `fix_sql`): "drop it before the ALTER and create it again
+  after, in the same migration".
 - **Extension not available:** the list of available extensions, and that a whole-database dump
   (`pg_dump`, `supabase db dump`) should be linted as its migrations folder instead.
 - **42601** (syntax error) on a line starting with `\`: "psql meta-command"; after a
   `COPY ... FROM stdin;` line: "a pg_dump with data; lint a schema-only dump".
-- **25001** (`CREATE INDEX CONCURRENTLY` inside a script): "leave this file out with `files` if it only
-  creates indexes".
+- **25001** (a statement that cannot run inside a script, such as `CREATE INDEX CONCURRENTLY` or
+  `VACUUM`): names the statement, and "if the file does nothing else, leave it out with `files`".
 - **55P04** (a new enum value used in the transaction that adds it): "split the file in two".
 - **Classes 53 and 54** (out of memory, a program limit): "the file needs more than the lint database
   can give it".
@@ -623,10 +634,11 @@ shortened):
 
 When a code has a finding whose `fix_sql` is null, its text ends with: "Where fix_sql is null, the
 change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element
-type), a generated column (change its expression), amounts finer than a penny (choose the unit first),
-a default, CHECK constraint or index condition that holds amounts in the old unit (convert those in
-the same migration: ALTER COLUMN ... TYPE does not), or a name holding hidden characters (write it by
-hand)."
+type), a generated column (change its expression), a column a child table inherits (change it on the
+parent), amounts finer than a penny (choose the unit first), a default, CHECK constraint or unique index
+condition that may hold amounts in the old unit (convert
+those in the same migration: ALTER COLUMN ... TYPE does not), or a name holding hidden characters
+(write it by hand)."
 
 ---
 
