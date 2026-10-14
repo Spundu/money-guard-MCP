@@ -106,7 +106,8 @@ internet and never touches a real database.
   agent that runs shell commands from reading what its host can read: with the `.mcp.json` below, the
   key is in the environment Claude Code started with, which `printenv` shows. Anyone who holds the key
   can re-seal a forged log so that it verifies. Where the agent must not be able to do that, verify
-  logs where it has no shell (Claude Desktop, or CI).
+  logs in a client where no tool can run commands or read the user's files (Claude Desktop with no
+  extension that can).
 - Claude Code project config, once the package is on npm (until then `"command": "node"` with the
   path to `dist/index.js`). `${VAR:-}` expansion keeps the key out of the file and out of the repo:
   ```json
@@ -119,7 +120,7 @@ internet and never touches a real database.
   field has `default: ""`, so a blank field reaches the server as an empty value, not as a placeholder.
   `npm run bundle` builds `money-guard-mcp-<version>.mcpb` from the packed npm tarball, with
   production dependencies only. It then unpacks the bundle and starts it as its manifest says (§7).
-  The bundle ships on GitHub Releases.
+  The bundle will ship on GitHub Releases.
 
 ### 2.3 Which files the tools may read
 Every path argument:
@@ -166,7 +167,7 @@ already read the files).
 ### 2.4 What a successful result looks like
 - `structuredContent`: a JSON object that the SDK validates against the tool's `outputSchema`. Plus
   one text block holding the same JSON (compact), as the spec recommends.
-- The first field is always `summary`: a short plain summary (one to three sentences) for the model
+- The first field is always `summary`: a short plain summary (a few sentences) for the model
   and for people. The fields come
   in the order of the output tables below, so every result reads the same way.
 - **Size budget: at most 20,000 characters per result.** That is well under Claude Code's
@@ -236,7 +237,8 @@ Shared error codes:
   `BUSY` straight away, with no hidden queue. (The MCP spec says servers MUST rate-limit tool calls.)
 - `money_check_double_entry` and `audit_verify_chain` run to the end before the server reads the next
   message, so they answer one call after another; on the largest files they allow (25 and 100 MiB)
-  that takes a second or two. A lint runs in its worker meanwhile.
+  that can take several seconds (about 4 for the largest CSV ledger). A lint runs in its worker
+  meanwhile.
 - A cancelled lint stops its work: the worker is terminated and its database discarded, the log gets
   a `CANCELLED` line, and the next lint can start at once. A ledger or audit call cannot be cancelled
   once it has started: a cancel that arrives while it runs is read only after it has ended, so the
@@ -282,7 +284,8 @@ Shared error codes:
 | `sealed-audit-chain` | Tool 3. Comes from npm once published; until then `github:Spundu/audit-chain#5fd1fec` | MIT (same author) |
 | `csv-parse` ^7 | RFC 4180 CSV with line numbers | MIT |
 
-Dev only: `@modelcontextprotocol/client` (tests), typescript, vitest, eslint and typescript-eslint.
+Dev only: `@modelcontextprotocol/client` (the tests and the README demo), typescript, vitest with
+vite, eslint with `@eslint/js` and typescript-eslint, and `@types/node`.
 Fetched by npm when needed, pinned: the mcpb CLI (`@anthropic-ai/mcpb` 2.1.2, by `npm run bundle`) and
 the MCP Inspector (2.11.0, by `scripts/inspector-smoke.sh`). The planned agent evaluation (not built
 yet) will use `@anthropic-ai/sdk`.
@@ -357,8 +360,8 @@ never converged: verify by executing, not by parsing.
    btree_gin, btree_gist, citext, cube, dict_int, dict_xsyn, earthdistance, file_fdw, fuzzystrmatch,
    hstore, insert_username, intarray, isn, lo, ltree, moddatetime, pageinspect, pg_buffercache,
    pg_freespacemap, pg_stat_statements, pg_surgery, pg_trgm, pg_visibility, pg_walinspect, pgcrypto,
-   plpgsql, refint, seg, tablefunc, tcn, tsm_system_rows, tsm_system_time, unaccent, uuid-ossp and
-   vector. The database lives in memory and sees only a **virtual filesystem**: a migration cannot read
+   plpgsql (installed already, as in every PostgreSQL), refint, seg, tablefunc, tcn, tsm_system_rows,
+   tsm_system_time, unaccent, uuid-ossp and vector. The database lives in memory and sees only a **virtual filesystem**: a migration cannot read
    or write the computer's files or run programs (§1, fact 6). The worker's output (a NOTICE a
    migration raises, say) is captured and dropped, so it never reaches the protocol channel or the log.
 3. Run `preset` (if given), then `setup` (if given). Then take a **baseline snapshot** of the catalog.
@@ -773,8 +776,10 @@ Those functions throw at the first problem. This tool returns **every** problem.
 - A JSON number is judged by its exact value: `1000`, `1000.0` and `1e3` are the same amount, and
   `4503599627370496.5` is not whole.
 - **Range:** every amount must fit ±(2^53 − 1) minor units (`AMOUNT_TOO_LARGE`). More than 20 whole
-  digits (after leading zeros), or a decimal point more than 400 places from the first or last
-  significant digit, is refused at once, before any arithmetic. The exponent and the digits are
+  digits (after leading zeros), or a decimal point more than 400 places from the first significant
+  digit (`1e400` and `1e-402`; `1e-401` is read as 401 decimal places), is refused at once, before any
+  arithmetic. Digits the file writes out are read whatever their number: they cost no more than the
+  file's own length. The exponent and the digits are
   weighed together: `1` followed by 2,000,000 zeros and `e-1999998` is 100. Reading a number takes
   time in proportion to its length. Sums use `BigInt`, so they are exact for any number of rows.
 
@@ -1033,8 +1038,9 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 - Audit logs in other formats.
 - A migration written to deceive the checker. It runs as a Postgres superuser and could edit the
   system catalogs. money-guard catches mistakes; it is not a defence against hostile migrations. Such
-  a migration still cannot write the `fix_sql` the model is told to run: money-guard builds it from
-  the names alone (§3.6).
+  a migration still cannot slip SQL into the `fix_sql` the model is told to run: money-guard writes it
+  itself and quotes every name (§3.6). What the catalog reports (a type, a default) still decides which
+  fix is offered.
 
 ---
 

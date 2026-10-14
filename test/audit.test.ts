@@ -97,6 +97,7 @@ const BROKEN: Array<{ name: string; log: () => Uint8Array; anchor?: Anchor; code
   { name: 'a float', log: () => bytes(`${VALID}{"a":1.5}\n`), code: 'OUTSIDE_CANONICAL_DOMAIN', index: 3, line: 4 },
   { name: 'a line that is not an object', log: () => bytes(`${VALID}[]\n`), code: 'NOT_AN_OBJECT', index: 3, line: 4 },
   { name: 'two entries swapped', log: () => bytes([LINES[1], LINES[0], LINES[2], ''].join('\n')), code: 'SEQ_MISMATCH', index: 0, line: 1 },
+  { name: 'an entry deleted', log: () => bytes([LINES[0], LINES[2], ''].join('\n')), code: 'SEQ_MISMATCH', index: 1, line: 2 },
   {
     name: 'an entry from another chain',
     log: () => {

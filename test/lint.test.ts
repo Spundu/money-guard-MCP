@@ -348,7 +348,7 @@ describe('money_lint_schema: judging columns', () => {
     expect(shown).toMatch(/^p\d+\/db\/migrations\/(?:\\u00(?:01|85))+…(?:\\u00(?:01|85))+\/0001\.sql$/);
   });
 
-  it('writes fix_sql from the names alone: a migration that redefines quote_ident cannot change it', async () => {
+  it('writes fix_sql itself, quoting every name: a migration that redefines quote_ident cannot change it', async () => {
     const r = await lint({
       'db/migrations/0001.sql':
         'create table "user" (total double precision, "q""price" double precision);\n' +

@@ -183,6 +183,7 @@ describe('money_lint_schema: safety', () => {
     const e = await failure({ 'db/migrations/0001.sql': 'select 1;', 'db/migrations/0002_loop.sql': 'do $$ begin loop end loop; end $$;' }, { timeout_seconds: 10 });
     expect(e.code).toBe('TIMEOUT');
     expect(e.message).toMatch(/ran out of time \(10 s\) while running p\d+\/db\/migrations\/0002_loop\.sql/);
+    expect(e.fix).toBe('Leave slow data-loading files out with files. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.');
     expect(Date.now() - started).toBeLessThan(20_000);
   });
 

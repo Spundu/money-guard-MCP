@@ -221,7 +221,8 @@ const MAX_EXPONENT_DIGITS = 15;
 /**
  * The exact value of a JSON number as plain decimal text, without an exponent or redundant zeros: "1e3"
  * is "1000", "12.50" is "12.5", "-0.0" is "0", "4503599627370496.5" stays as it is. "too large" or "too
- * small" when the decimal point would end up more than MAX_POINT_SHIFT digits away (1e401, 1e-401):
+ * small" when the decimal point would end up more than MAX_POINT_SHIFT digits from the first
+ * significant digit (1e400, 1e-402; 1e-401 is 401 decimal places):
  * such text would cost more than any amount or id is worth. Linear in the length of the text: zeros are
  * counted with loops, never with a regular expression, which would backtrack through a long run of them.
  */

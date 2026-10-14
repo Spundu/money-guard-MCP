@@ -117,12 +117,12 @@ error", which has no code.)
 
 ## What the agent gets back
 
-Every result is a JSON object whose first field is a short `summary` (one to three sentences). The
+Every result is a JSON object whose first field is a short `summary` (a few sentences). The
 same JSON is also sent as text, for clients that ignore structured results. This is
 `money_lint_schema` on the demo project:
 
 <details>
-<summary>The whole result (50 lines of JSON)</summary>
+<summary>The whole result, as JSON</summary>
 
 ```json
 {
@@ -193,11 +193,11 @@ full results of the other two tools (§4.9, §5.8).
 A bad setting does not stop the server. The tools that need it explain what is wrong, and the others
 keep working.
 
-To verify audit logs in Claude Code, keep the key in your environment and pass it through a project
-`.mcp.json` instead of the `claude mcp add` command above. If you ran that command, remove its entry
-first (`claude mcp remove money-guard`): an entry added with the command takes precedence over the
-file's. The file holds no secret, only a reference to the variable; its path to `dist/index.js` is the
-one on your machine:
+To verify audit logs in Claude Code, keep the key in your environment and pass it through a file
+named `.mcp.json` in your project's root folder, instead of the `claude mcp add` command above. If you
+ran that command, remove its entry first (`claude mcp remove money-guard`): an entry added with the
+command takes precedence over the file's. The file holds no secret, only a reference to the variable;
+its path to `dist/index.js` is the one on your machine (with forward slashes on Windows too):
 
 ```json
 {
@@ -223,7 +223,8 @@ Claude Code asks you to approve a server from a project file the first time; `/m
 connected. Never paste a key into the chat: money-guard never asks for one, never returns one and
 never logs one. An agent that runs shell commands can still read the environment Claude Code started
 with (`printenv`), and with the key it could re-seal a forged log so that it verifies. Where that
-matters, verify logs where the agent has no shell: in Claude Desktop, or in CI.
+matters, verify logs in a client where no tool can run commands or read your files (Claude Desktop
+with no extension that can).
 
 **Claude Desktop:** in the clone, `npm run bundle` builds `money-guard-mcp-0.1.0.mcpb` and tests it.
 Open that file with Claude Desktop: double-click it, or use Settings → Extensions → Advanced settings
@@ -284,11 +285,12 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
   project.
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
   cut to 40 characters. Table and column names stay whole, so the agent can act on them; a path over
-  400 characters is cut in the middle. Every character that can hide text is escaped in
-  money-guard's results and errors: control characters, the zero-width and direction characters of
-  the "Trojan Source" trick, and the invisible TAG characters that can spell out instructions a
-  person cannot see but a model reads. A result is at most 20,000 characters. SPEC.md §2.4 has the
-  exact rules.
+  400 characters is cut in the middle. Characters that can hide text are escaped in money-guard's
+  results and errors, by Unicode category: control characters, the zero-width and direction
+  characters of the "Trojan Source" trick, and the invisible TAG characters that can spell out
+  instructions a person cannot see but a model reads. (A few blank-looking characters, such as wide
+  spaces, are outside those categories and pass as they are.) A result is at most 20,000 characters.
+  SPEC.md §2.4 has the exact rules.
 - **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
   project that does not look like a secret.
 - **Keys are never shown.** They come only from the server's environment, and never appear in a
@@ -312,11 +314,13 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
 - Money kept in text or JSON columns, per-currency decimal places, FX, or chart-of-accounts rules.
 - Defend against a hostile migration. A migration runs as a Postgres superuser and could edit the
   catalog to hide a column. money-guard catches mistakes, not deception. Such a migration cannot
-  change the SQL money-guard suggests, though: `fix_sql` is built from the names alone.
+  slip SQL into the fix money-guard suggests, though: money-guard writes `fix_sql` itself and quotes
+  every name. (What the catalog reports, such as a column's type or default, still decides which fix
+  is offered.)
 
 ## How it is tested
 
-- `npm test` runs about 470 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 550 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.
@@ -342,6 +346,8 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
   started from its manifest and called, with the audit keys set and with them left blank.
 
 ## Development
+
+Development needs Node.js 22.13 or newer (ESLint 10 does); the server itself runs on 22.12.
 
 ```sh
 npm ci && npm run typecheck && npm run lint && npm test
