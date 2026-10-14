@@ -65,8 +65,8 @@ export const ledgerInput = z
       .refine((v) => !hasUnsafe(v), 'records_pointer cannot hold control or invisible characters')
       .nullish()
       .describe('JSON only: the JSON Pointer of the array of records, such as "/data/entries". Default: the top of the file.'),
-    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish().describe('The first finding to return. Default 0.'),
-    limit: z.number().int().min(1).max(50).nullish().describe('How many findings to return. Default 20, at most 50.'),
+    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish().describe('The first finding to return: 0 (default), or the next_offset of the previous page.'),
+    limit: z.number().int().min(1).max(50).nullish().describe('How many findings to return. Default 20, at most 50; a page holds fewer when the result would pass its size limit.'),
   })
   .strict();
 

@@ -132,6 +132,26 @@ describe('money_check_double_entry: the rules', () => {
     expect(r.transactions_balanced).toBe(1);
   });
 
+  it('tells a file of pounds read as pence what to pass, instead of calling 12.00 a fraction', () => {
+    // The most common export (12.00, 19.99) with the default amount_format.
+    const r = check('.csv', 't,a\nA,12.00\nA,-12.00\nB,19.99\nB,-19.99\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(r.findings.map((f) => f.message)).toEqual([
+      '12.00 has a decimal point; minor units are whole numbers without one',
+      '-12.00 has a decimal point; minor units are whole numbers without one',
+      '19.99 is not a whole number of minor units',
+      '-19.99 is not a whole number of minor units',
+    ]);
+    expect(r.summary).toMatch(/ No amount was a whole number: if the file holds pounds or dollars \(12\.34\), call again with amount_format "decimal"\.$/);
+    // A pence file with one bad row keeps the plain summary: most of its amounts were whole.
+    const pence = check('.csv', 't,a\nA,1000\nA,-1000\nB,10.5\nB,-10.5\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(pence.summary).not.toMatch(/amount_format/);
+  });
+
+  it('says why a JSON number cannot be an id when it is too large', () => {
+    const r = check('.jsonl', '{"t":1e400,"a":1}\n{"t":2,"a":1}\n{"t":2,"a":-1}\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(r.findings[0]).toMatchObject({ code: 'MISSING_VALUE', field: 'transaction_id', message: 'transaction_id is a number too large or too small to use as an id' });
+  });
+
   it('reports a decimal amount with too many places', () => {
     const r = check('.csv', 't,a\nA,10.001\nA,-10.001\n', { columns: { transaction_id: 't', amount: 'a' }, amount_format: 'decimal' });
     expect(r.findings[0]).toMatchObject({ code: 'FRACTIONAL_MINOR_UNITS', value: '10.001', message: '10.001 has more than 2 decimal places' });

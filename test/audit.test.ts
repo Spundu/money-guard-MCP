@@ -176,7 +176,21 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
   it('says the anchor was not checked when the chain breaks first', () => {
     const r = run(bytes(FIVE.replace('"alice"', '"mallory"')), HEAD);
     expect([r.ok, r.anchor_checked, r.break?.code]).toEqual([false, false, 'CONTENT_TAMPERED']);
-    expect(r.notes).toEqual(['The anchor was not checked, because the chain itself is broken.']);
+    expect(r.notes).toEqual(['The anchor was not checked: the chain breaks before the last entry it covers.']);
+  });
+
+  it('still checks the anchor when the chain breaks after the entries it covers', () => {
+    const r = run(bytes(FIVE.replace('"bob"', '"mallory"')), HEAD);
+    expect([r.ok, r.anchor_checked, r.break?.code, r.break?.entry_index]).toEqual([false, true, 'CONTENT_TAMPERED', 4]);
+    expect(r.notes).toEqual(['The entries the anchor covers are intact; the break comes after them.']);
+  });
+
+  it('does not let a torn last line hide a replaced log: the anchor is checked first', () => {
+    // Another validly sealed log of five entries, with its last line cut short: the chain breaks at
+    // entry 4 (TORN_LAST_LINE, which reads like an accident), but entry 2 is not the one the anchor recorded.
+    const other = text(chain([...DRAFTS.map((d) => ({ ...d, forged: true })), { event: 'x' }, { event: 'y' }]));
+    const r = run(bytes(other.slice(0, -1)), HEAD);
+    expect([r.ok, r.anchor_checked, r.break?.code, r.break?.entry_index]).toEqual([false, true, 'ANCHOR_HEAD_MISMATCH', 2]);
   });
 });
 

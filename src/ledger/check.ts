@@ -52,6 +52,8 @@ export interface CheckOptions {
 export interface CheckOutcome {
   /** Every finding, sorted by first location, then code. */
   findings: Finding[];
+  /** Amounts read as whole minor units, and amounts refused as FRACTIONAL_MINOR_UNITS: together they show a file of pounds read as pence. */
+  amounts: { whole: number; fractional: number };
   rowsRead: number;
   transactionsFound: number;
   transactionsNotChecked: number;
@@ -124,7 +126,7 @@ function shownValue(raw: unknown): string {
 const SIDES: Readonly<Record<string, 1n | -1n>> = { D: 1n, DR: 1n, DEBIT: 1n, C: -1n, CR: -1n, CREDIT: -1n };
 
 /** One row's leg, or the findings that stop it being one. */
-function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: boolean, txId: string | null): { leg?: Leg; findings: Finding[] } {
+function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: boolean, txId: string | null, tally: CheckOutcome['amounts']): { leg?: Leg; findings: Finding[] } {
   const findings: Finding[] = [];
   const at = refs([row]);
   const problem = (code: FindingCode, field: MappedField | 'debit/credit', message: string, raw?: unknown): void => {
@@ -136,7 +138,11 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
     const raw = row.values[field];
     const parsed = parseAmount(raw, opts.amountFormat, opts.decimalPlaces);
     if (parsed === null) return null;
-    if (parsed.ok) return parsed.minor;
+    if (parsed.ok) {
+      tally.whole += 1;
+      return parsed.minor;
+    }
+    if (parsed.problem === 'FRACTIONAL_MINOR_UNITS') tally.fractional += 1;
     problem(parsed.problem, field, `${shownValue(raw)} ${parsed.why}`, raw);
     return undefined;
   };
@@ -187,6 +193,11 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
 /** An id that is there but cannot be read: a symbol, so no real id (even "not text") can be mistaken for it. */
 const UNREADABLE = Symbol('unreadable id');
 
+/** Why an unreadable id cannot be read. */
+function unreadableId(raw: unknown): string {
+  return raw instanceof JsonNumber ? 'transaction_id is a number too large or too small to use as an id' : 'transaction_id is not text or a number';
+}
+
 /**
  * The transaction id a row is grouped by: text without spaces around it (a quoted CSV value keeps
  * them otherwise), or a JSON number's exact value as text, so 1234567890123456789 and
@@ -208,6 +219,7 @@ function netsText(nets: Net[]): string {
 export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckOptions, hasCurrency: boolean): CheckOutcome {
   const findings: Array<Finding & { order: number }> = [];
   const txs = new Map<string, Tx>();
+  const amounts = { whole: 0, fractional: 0 };
 
   for (const row of rows) {
     if (row.bad !== undefined) {
@@ -216,7 +228,7 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
     }
     const id = idOf(row.values.transaction_id);
     if (id === null || id === UNREADABLE) {
-      const message = id === null ? 'no transaction_id' : 'transaction_id is not text or a number';
+      const message = id === null ? 'no transaction_id' : unreadableId(row.values.transaction_id);
       findings.push({ order: row.seq, code: 'MISSING_VALUE', severity: 'error', transaction_id: null, ...refs([row]), field: 'transaction_id', message });
       continue;
     }
@@ -226,7 +238,7 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
       txs.set(id, tx);
     }
     tx.rows.push(row);
-    const { leg, findings: rowFindings } = legOf(row, mode, opts, hasCurrency, clip(id));
+    const { leg, findings: rowFindings } = legOf(row, mode, opts, hasCurrency, clip(id), amounts);
     for (const f of rowFindings) findings.push({ ...f, order: row.seq });
     if (leg === undefined) tx.hasRowError = true;
     else tx.legs.push(leg);
@@ -266,6 +278,7 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
   findings.sort((a, b) => a.order - b.order || CODE_ORDER.indexOf(a.code) - CODE_ORDER.indexOf(b.code));
   return {
     findings: findings.map(({ order: _order, ...f }) => inFieldOrder(f)),
+    amounts,
     rowsRead: rows.length,
     transactionsFound: txs.size,
     transactionsNotChecked: notChecked,

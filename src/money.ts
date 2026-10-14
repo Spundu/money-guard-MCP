@@ -34,7 +34,9 @@ function fromText(text: string, format: AmountFormat, places: number): AmountRes
   if (format === 'minor_units') {
     if (INTEGER.test(text)) return inRange(sign, text.slice(sign.length));
     if (DECIMAL.test(text)) {
-      return { ok: false, problem: 'FRACTIONAL_MINOR_UNITS', why: 'is not a whole number of minor units' };
+      // "12.00" is whole, but its decimal point says the column holds pounds or dollars, not pence.
+      const why = /^-?\d+\.0+$/.test(text) ? 'has a decimal point; minor units are whole numbers without one' : 'is not a whole number of minor units';
+      return { ok: false, problem: 'FRACTIONAL_MINOR_UNITS', why };
     }
     return { ok: false, problem: 'BAD_AMOUNT', why: 'is not a whole number of minor units' };
   }

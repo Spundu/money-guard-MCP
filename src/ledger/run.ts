@@ -93,7 +93,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
   const result: LedgerResult = {
-    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, all.filter((f) => f.transaction_id === null).length),
+    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, all.filter((f) => f.transaction_id === null).length) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts),
     file: clipPath(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -123,6 +123,13 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
     settle();
   }
   return result;
+}
+
+/** When no amount was whole and some had decimals, the file most likely holds pounds read as pence: say how to read it. */
+function poundsHint(format: AmountFormat, amounts: { whole: number; fractional: number }): string {
+  return format === 'minor_units' && amounts.whole === 0 && amounts.fractional > 0
+    ? ' No amount was a whole number: if the file holds pounds or dollars (12.34), call again with amount_format "decimal".'
+    : '';
 }
 
 function summarise(

@@ -87,7 +87,9 @@ internet and never touches a real database.
   `ROOT_INVALID`: a broken setting never falls back to another folder.
 - **Root rules:** it must exist and be a directory, and it must not be a filesystem root (`/`, `C:\`).
 - **Key rules:** comma-separated pairs `id=hex`, at most 64 pairs (every audit result lists the ids).
-  - `id`: 1-64 characters, with no `=`, `,` or whitespace. Duplicate ids are invalid.
+  - `id`: 1-64 characters, with no `=`, `,`, whitespace, control or invisible characters, and not 32
+    or more hex digits: every audit result lists the ids, so a key written where the id belongs would
+    be shown to the model. Duplicate ids are invalid.
   - `hex`: an even number of hex digits, at least 32 (16 bytes = sealed-audit-chain's `MIN_KEY_BYTES`),
     in either case.
   - `KEYS_INVALID` names the pair that is wrong by its position only ("pair 2"), never by any of its
@@ -123,6 +125,10 @@ Every path argument:
    - `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.keystore`
    - `id_rsa*`, `id_ed25519*`
    - `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`
+   - cloud credentials that have a readable extension: names starting `credentials` or `secrets`
+     (`credentials.csv`, `secrets.json`), and names holding `accesskeys`, `access_keys`, `rootkey`,
+     `client_secret` or `service-account` (AWS access-key downloads, Google OAuth and service-account
+     keys)
    - anything inside `.git/`
 
    This is defence in depth. The tools echo only tiny pieces of a file, but a read-only tool must
@@ -626,8 +632,9 @@ Those functions throw at the first problem. This tool returns **every** problem.
 > minor units (10.5 pence) or cannot be read. Map the columns: transaction_id plus either a signed
 > amount, an amount with a debit/credit side column, or separate debit and credit columns. Amounts are
 > integers in minor units by default (amount_format "decimal" reads 12.34 as 1234); no floating point is
-> used. Findings give the exact line numbers (or JSON Pointers) and are paginated with offset and
-> limit. Read-only.
+> used. Findings give the exact line numbers (or JSON Pointers) and come in pages: for the next page,
+> pass the next_offset the result gives as offset (a page can hold fewer than limit findings).
+> Read-only.
 
 ### 4.2 Input
 | Parameter | Type | Default | Meaning |
@@ -692,7 +699,10 @@ Those functions throw at the first problem. This tool returns **every** problem.
   - Accepted: a JSON number whose exact value is whole (`1000`, `1000.0`, `1e3`), or a string
     `-?[0-9]+`.
   - A fraction (`10.5`) is `FRACTIONAL_MINOR_UNITS`. So is text with a decimal point even when the
-    fraction is zero (`12.00`): it usually means the column holds pounds, so use `decimal`.
+    fraction is zero (`12.00`): it usually means the column holds pounds, so use `decimal`. Its message
+    says so ("12.00 has a decimal point; minor units are whole numbers without one"), and when no
+    amount in the file was whole, the summary ends: "No amount was a whole number: if the file holds
+    pounds or dollars (12.34), call again with amount_format "decimal"."
 - **`decimal`:** a string or number of the form `-?[0-9]+(\.[0-9]+)?`.
   - Digits past `decimal_places` must be zeros: with 2 places `12.340` is 1234, and `12.345` is
     `FRACTIONAL_MINOR_UNITS`.
@@ -726,7 +736,8 @@ Those functions throw at the first problem. This tool returns **every** problem.
 A transaction with any row error is **not checked** for `UNBALANCED` or `TOO_FEW_LEGS`; its sum would
 be noise. It is counted in `transactions_not_checked`. A transaction with fewer than two non-zero legs is
 reported as `TOO_FEW_LEGS` only: its imbalance follows from that. A row without a transaction id is
-reported on its own (`MISSING_VALUE`, `transaction_id: null`).
+reported on its own (`MISSING_VALUE`, `transaction_id: null`), as is a row whose id is a JSON number
+too large or too small to use (more than 400 places, §4.4).
 
 **Finding:**
 | Field | Type | Meaning |
@@ -859,7 +870,8 @@ Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", 
    at every append. An anchor here is a head from an earlier run, which an honest log grows past, so
    the tool checks it itself once the chain verifies: fewer entries than `count` is
    `ANCHOR_COUNT_MISMATCH`; entry `count − 1` with another hash is `ANCHOR_HEAD_MISMATCH`; more
-   entries are fine, and the summary says how many were added.
+   entries are fine, and the summary says how many were added. When the chain breaks after entry
+   `count − 1`, the anchor is still checked against the entries that verified, first.
 4. For `UNKNOWN_KEY_ID` and `HMAC_MISMATCH`, read that one entry's `writer_key_id` with `jsonlEntryAt`,
    so the message can say which key is missing (≤ 64 characters).
 5. When the log verifies, return its `head` (`count` and `last_hash`) as the anchor to keep.
@@ -894,9 +906,9 @@ mapped.
 | `summary` | string | |
 | `file`, `file_sha256` | string | |
 | `ok` | boolean | |
-| `entries_verified` | integer | The entries vouched for before any break (the library's `lastSeq + 1`). |
+| `entries_verified` | integer | The entries vouched for: all of them when `ok` (the library's `lastSeq + 1`); otherwise those before the break (`break.entry_index`). |
 | `break` | object or null | `{ entry_index, line, code, reason, writer_key_id? }`. `line` = `entry_index + 1`, or null when that line does not exist (an anchor that counts more entries). `reason` is sealed-audit-chain's wording, cut at 120 characters (a canonicalization error can quote a key name from the line). |
-| `anchor_checked` | boolean | True when an anchor was given and compared; false when the chain broke before it (a note says so). |
+| `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks before the last entry it covers (a note says so). |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
 | `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. |
@@ -905,7 +917,7 @@ mapped.
 | Code | When |
 |---|---|
 | `KEYS_NOT_CONFIGURED` | `MONEY_GUARD_AUDIT_KEYS` is unset or empty. The fix text says how to set it in the server's env (`.mcp.json` with `${...}`), never in chat. |
-| `KEYS_INVALID` | The setting is malformed, or has more than 64 pairs. Names the position or id, never a value. |
+| `KEYS_INVALID` | The setting is malformed, or has more than 64 pairs. Names the pair by its position only, never any of its text. |
 
 A bad `anchor` (wrong hex, a negative count) is refused by the input schema.
 

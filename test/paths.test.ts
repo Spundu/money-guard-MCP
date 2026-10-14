@@ -189,10 +189,11 @@ describe('readChecked', () => {
 
 describe('isSensitive', () => {
   it('matches the names in SPEC.md §2.3 and nothing ordinary', () => {
-    for (const p of ['.env', '.env.production', 'a/.git/HEAD', 'x.key', 'x.p12', 'x.pfx', 'store.keystore', '.pypirc', '.netrc', '.git-credentials']) {
+    for (const p of ['.env', '.env.production', 'a/.git/HEAD', 'x.key', 'x.p12', 'x.pfx', 'store.keystore', '.pypirc', '.netrc', '.git-credentials',
+      'credentials.csv', 'exports/credentials.json', 'secrets.json', 'alice_accessKeys.csv', 'rootkey.csv', 'client_secret_123.apps.json', 'my-project-service-account.json']) {
       expect(isSensitive(p), p).toBe(true);
     }
-    for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv']) {
+    for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv']) {
       expect(isSensitive(p), p).toBe(false);
     }
   });

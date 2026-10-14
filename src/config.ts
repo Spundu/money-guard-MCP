@@ -5,7 +5,7 @@
 import { realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { InMemoryKeyProvider, MIN_KEY_BYTES, type KeyProvider } from 'sealed-audit-chain';
-import { clip } from './echo.js';
+import { clip, hasUnsafe } from './echo.js';
 import { ToolError } from './errors.js';
 import type { Root } from './paths.js';
 
@@ -115,6 +115,11 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
     const hex = pair.slice(eq + 1).trim();
     if (id.length === 0 || id.length > 64 || /\s/.test(id)) {
       return invalid(`pair ${n} has an id that is empty, longer than 64 characters or contains spaces`);
+    }
+    if (hasUnsafe(id)) return invalid(`pair ${n} has an id with a control or invisible character`);
+    // Every audit result lists the ids: a key written where the id belongs would be shown to the model.
+    if (/^[0-9a-fA-F]{32,}$/.test(id)) {
+      return invalid(`pair ${n} has an id that looks like a key (32 or more hex digits); the id is a short name, and the key comes after "="`);
     }
     // Errors name pairs by position only: if the setting is malformed, the text before "=" may be key
     // material (a key written where the id belongs), so no part of a pair is ever repeated.

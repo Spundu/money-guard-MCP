@@ -53,7 +53,9 @@ export function isInside(root: string, candidate: string): boolean {
 
 /**
  * Names the tools refuse at any depth: environment files, private keys and certificates, package-manager
- * and git credentials, and anything inside .git (SPEC.md §2.3). Compared in lower case.
+ * and git credentials, cloud credential downloads that have a readable extension (AWS access-key CSVs,
+ * Google client secrets and service-account keys, credentials and secrets files), and anything inside
+ * .git (SPEC.md §2.3). Compared in lower case.
  */
 export function isSensitive(rel: string): boolean {
   const segments = rel.split(/[\\/]/).map((s) => s.toLowerCase());
@@ -65,7 +67,9 @@ export function isSensitive(rel: string): boolean {
     ['.npmrc', '.pypirc', '.netrc', '.git-credentials'].includes(base) ||
     base.startsWith('id_rsa') ||
     base.startsWith('id_ed25519') ||
-    ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext))
+    ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext)) ||
+    /^(?:credentials|secrets)(?:[._-]|$)/.test(base) ||
+    /accesskeys|access_keys|rootkey|client_secret|service[-_]account/.test(base)
   );
 }
 

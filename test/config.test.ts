@@ -67,6 +67,8 @@ describe('parseAuditKeys', () => {
       [`my key=${KEY_A}`, /pair 1 has an id that is empty, longer than 64 characters or contains spaces/],
       [`${'k'.repeat(65)}=${KEY_A}`, /pair 1 has an id/],
       [`k1=${KEY_A},k1=${KEY_B}`, /pair 2 repeats the id of pair 1/],
+      [`${KEY_B}=${KEY_A}`, /pair 1 has an id that looks like a key \(32 or more hex digits\)/],
+      [`k1\u{200b}=${KEY_A}`, /pair 1 has an id with a control or invisible character/],
       [`k1=${KEY_A}0`, /not an even number of hex digits/],
       [`k1=${KEY_A.slice(0, -2)}zz`, /not an even number of hex digits/],
       [`k1=${KEY_A.slice(0, -2)}`, /shorter than 16 bytes/],
