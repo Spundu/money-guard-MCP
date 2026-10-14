@@ -52,10 +52,11 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
   let real: string;
   try {
     real = realpathSync.native(path.resolve(cwd, value));
-  } catch {
-    return invalid('does not exist');
+    if (!statSync(real).isDirectory()) return invalid('is not a folder');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return invalid(code === 'EACCES' || code === 'EPERM' ? 'cannot be opened (permission denied)' : 'does not exist');
   }
-  if (!statSync(real).isDirectory()) return invalid('is not a folder');
   // A whole disk would put every file on it in reach of the tools.
   if (path.parse(real).root === real) return invalid('is the root of a disk');
   return { ok: true, value: { real, name: clip(path.basename(real), 80) } };

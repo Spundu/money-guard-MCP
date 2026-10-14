@@ -34,7 +34,7 @@ export const lintInput = z
     setup: z.string().min(1).max(1024).nullish().describe('A .sql file, relative to the project root, run before the migrations (after preset) to create what your platform provides: roles, schemas, functions. Its columns are not checked; if it lies in the migrations folder it is not run again as a migration.'),
     accept_numeric: z.boolean().meta({ title: 'Accept numeric' }).nullish().describe('Treat numeric/decimal money columns as fine instead of warning about them. Default false.'),
     money_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Extra columns to treat as money: "table.column" (schema public) or "schema.table.column".'),
-    ignore_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Columns never to report (false positives), as "table.column" or "schema.table.column". They are counted in ignored_count.'),
+    ignore_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Columns never to report (false positives), as "table.column" or "schema.table.column". The findings they would raise are counted in ignored_count.'),
     timeout_seconds: z.number().int().min(5).max(300).nullish().describe('Stop after this many seconds. Default 45: most clients wait at most 60 for an answer.'),
   })
   .strict();

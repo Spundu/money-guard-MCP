@@ -2,7 +2,6 @@
 // factory serves both protocol eras (index.ts hands it to serveStdio) and the in-process tests.
 
 import { createRequire } from 'node:module';
-import process from 'node:process';
 import { McpServer, SdkError, SdkErrorCode, type CallToolResult } from '@modelcontextprotocol/server';
 import { verifyAuditLog } from './audit/verify.js';
 import type { Config } from './config.js';
@@ -10,6 +9,7 @@ import { clipPath, escapeStrings, escapeUnsafe } from './echo.js';
 import { ToolError } from './errors.js';
 import { checkLedgerFile } from './ledger/run.js';
 import { lintSchema } from './lint/run.js';
+import { logLine } from './log.js';
 import { readChecked, resolveInRoot, type Root } from './paths.js';
 import { auditInput, auditOutput, ledgerInput, ledgerOutput, lintInput, lintOutput } from './schemas.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from './text.js';
@@ -23,7 +23,7 @@ const ANNOTATIONS = { readOnlyHint: true, destructiveHint: false, idempotentHint
 const AUDIT_MAX_BYTES = 100 * 1024 * 1024;
 
 export type Log = (line: string) => void;
-const stderrLog: Log = (line) => process.stderr.write(`${line}\n`);
+const stderrLog: Log = logLine;
 
 /** null and undefined both mean "not given" (SPEC.md §2.4). */
 function given<T>(value: T | null | undefined): T | undefined {

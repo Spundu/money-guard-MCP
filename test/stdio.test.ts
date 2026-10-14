@@ -124,6 +124,30 @@ describe('the stdio process', () => {
     }
   });
 
+  it('keeps answering when the host never reads its stderr: a full log pipe must not stop the server', async () => {
+    // On Windows Node writes to a pipe synchronously: the write waits until the other end reads. Nothing
+    // reads this one, and 6,000 logged calls (about 330 KB of log, in batches so that the log reaches
+    // the pipe between them) fill it several times over.
+    const child = spawn(process.execPath, [ENTRY], { env: { ...getDefaultEnvironment(), MONEY_GUARD_ROOT: SHOP }, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
+    try {
+      const messages: object[] = [
+        { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '1' } } },
+        { jsonrpc: '2.0', method: 'notifications/initialized' },
+      ];
+      for (let id = 2; id <= 6001; id += 1) messages.push({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'audit_verify_chain', arguments: { file: 'nope.jsonl' } } });
+      for (let i = 0; i < messages.length; i += 50) {
+        child.stdin.write(`${messages.slice(i, i + 50).map((m) => JSON.stringify(m)).join('\n')}\n`);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 9999, method: 'ping' })}\n`);
+      await vi.waitFor(() => expect(stdout).toContain('"id":9999'), { timeout: 30_000, interval: 200 });
+    } finally {
+      child.kill();
+    }
+  }, 60_000);
+
   it('logs a call the client cancelled before it ran as CANCELLED, not ok, and sends no answer for it', async () => {
     const server = raw({ MONEY_GUARD_ROOT: SHOP });
     try {

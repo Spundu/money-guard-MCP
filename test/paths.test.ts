@@ -1,6 +1,6 @@
 // Which files the tools may read (src/paths.ts, SPEC.md §2.3): confinement to the project, secret files,
 // file types, sizes, links, and a file that passes the checks but cannot be read.
-import { chmodSync } from 'node:fs';
+import { chmodSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -196,6 +196,37 @@ describe('readChecked', () => {
     } finally {
       chmodSync(file, 0o600);
       chmodSync(folder, 0o700);
+    }
+  });
+});
+
+describe('a path through a folder nobody may open', () => {
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('says "permission denied", not "does not exist" or a crash, wherever the path comes from (POSIX)', () => {
+    writeTree(root.real, { 'shut/ledger.csv': 't,a\n', 'shut/0002.sql': 'select 2;', 'listed/0001.sql': 'select 1;', 'linked/0001.sql': 'select 1;' });
+    symlinkSync(path.join(root.real, 'shut', '0002.sql'), path.join(root.real, 'linked', '0002.sql'));
+    const shut = path.join(root.real, 'shut');
+    const listed = path.join(root.real, 'listed');
+    chmodSync(shut, 0o000); // nothing in it can be listed or opened
+    chmodSync(listed, 0o444); // its names can be listed, but nothing in it opened
+    const textOf = (fn: () => unknown): string => {
+      try {
+        fn();
+        return 'no error';
+      } catch (err) {
+        return err instanceof ToolError ? err.toText() : String(err);
+      }
+    };
+    try {
+      // a path argument
+      expect(textOf(() => resolveInRoot(root, 'shut/ledger.csv', CSV))).toMatch(/^FILE_UNREADABLE: "shut\/ledger\.csv" cannot be read \(permission denied\)\./);
+      // a migration found in a folder, or named in files
+      expect(textOf(() => collectSources(root, { migrations: 'listed' }))).toMatch(/^FILE_UNREADABLE: "listed(?:\/0001\.sql)?" cannot be read \(permission denied\)\./);
+      expect(textOf(() => collectSources(root, { migrations: 'listed', files: ['0001.sql'] }))).toMatch(/^FILE_UNREADABLE: "listed\/0001\.sql" cannot be read \(permission denied\)\./);
+      // a link in a migrations folder
+      expect(textOf(() => collectSources(root, { migrations: 'linked' }))).toMatch(/^FILE_UNREADABLE: "linked\/0002\.sql" cannot be read \(permission denied\)\./);
+    } finally {
+      chmodSync(shut, 0o700);
+      chmodSync(listed, 0o700);
     }
   });
 });

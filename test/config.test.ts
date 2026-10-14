@@ -1,6 +1,8 @@
 // The server's settings (src/config.ts, SPEC.md §2.2): the key ring, which never echoes key material,
 // and the project root, which must exist, be a folder, not be a disk root, and be its real path.
+import { chmodSync } from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 import { describe, expect, it } from 'vitest';
 import { parseAuditKeys, resolveConfig } from '../src/config.js';
 import { checkLedgerFile } from '../src/ledger/run.js';
@@ -114,6 +116,18 @@ describe('resolveConfig root', () => {
     expect(errorText(missing)).not.toContain(dir);
     expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: path.join(dir, 'file.txt') }, dir).root)).toMatch(/is not a folder/);
     expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: path.parse(dir).root }, dir).root)).toMatch(/is the root of a disk/);
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('says a root it may not open cannot be opened, not that it does not exist (POSIX)', () => {
+    const dir = tempDir();
+    writeTree(dir, { 'shut/project/x.csv': 'x' });
+    chmodSync(path.join(dir, 'shut'), 0o000);
+    try {
+      const shut = resolveConfig({ MONEY_GUARD_ROOT: path.join(dir, 'shut', 'project') }, dir).root;
+      expect(errorText(shut)).toMatch(/^ROOT_INVALID: The project root \(from MONEY_GUARD_ROOT\) cannot be opened \(permission denied\)\./);
+    } finally {
+      chmodSync(path.join(dir, 'shut'), 0o700);
+    }
   });
 
   it('refuses a root that is still a placeholder, instead of falling back to another folder', () => {

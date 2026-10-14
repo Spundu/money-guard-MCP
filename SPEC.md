@@ -67,8 +67,12 @@ internet and never touches a real database.
   before the handler runs (bad arguments, an unknown tool) is not logged. No line contains file
   content, keys or absolute paths; an unexpected error is logged as its type, its error code (such as
   `EBUSY`) and its `file:line:column` locations only, then the same for its cause.
-- The log is a convenience: when the host closes the server's stderr, or dies, the server keeps
-  serving (or exits with its client) without it, never stuck on a write that fails.
+- The log is a convenience and never holds the server up. Lines are written one at a time in the
+  background (on Windows, Node would otherwise wait until the host reads the pipe); while one waits, at
+  most 100 more queue up and later ones are dropped. When the host closes the server's stderr, never
+  reads it, or dies, the server keeps serving without it. (On Windows, once a host that never reads
+  has let the pipe fill, a log line stays waiting, so after stdin closes the server ends when the host
+  ends it, as the MCP spec has hosts do with a server that does not exit.)
 - One bad call never kills the server. Every handler catches everything. An unexpected exception
   becomes `INTERNAL_ERROR` with no internal detail; the detail goes to stderr only. A lint database
   that cannot start (a broken install) is such an exception.
@@ -88,7 +92,8 @@ internet and never touches a real database.
   when `VAR` is not set, and Claude Desktop leaves `${user_config.x}` when an optional setting has no
   value. For the keys that is `KEYS_NOT_CONFIGURED`, naming the placeholder. For the root it is
   `ROOT_INVALID`: a broken setting never falls back to another folder.
-- **Root rules:** it must exist and be a directory, and it must not be a filesystem root (`/`, `C:\`).
+- **Root rules:** it must exist and be a directory the server may open, and it must not be a filesystem
+  root (`/`, `C:\`).
 - **Key rules:** comma-separated pairs `id=hex`, at most 64 pairs (every audit result lists the ids).
   - `id`: 1-64 characters, with no `=`, `,`, whitespace, control or invisible characters, and not 32
     or more hex digits: every audit result lists the ids, so a key written where the id belongs would
@@ -214,7 +219,7 @@ Shared error codes:
 
 | Code | When | Fix the message suggests |
 |---|---|---|
-| `ROOT_INVALID` | The root is missing, not a folder, or a filesystem root. | Set `MONEY_GUARD_ROOT` to the project folder. |
+| `ROOT_INVALID` | The root is missing, cannot be opened (permission denied), is not a folder, or is a filesystem root. | Set `MONEY_GUARD_ROOT` to the project folder. |
 | `PATH_INVALID` | Empty, too long, NUL, or a device/UNC path. | Pass a path relative to the project root. |
 | `PATH_OUTSIDE_ROOT` | Resolves outside the root (including through a symlink). | Use a path inside the project. |
 | `PATH_NOT_FOUND` | Nothing at that path. | Names the nearest existing parent folder. |
@@ -234,7 +239,8 @@ Shared error codes:
   that takes a second or two. A lint runs in its worker meanwhile.
 - A cancelled lint stops its work: the worker is terminated and its database discarded, the log gets
   a `CANCELLED` line, and the next lint can start at once. A ledger or audit call cannot be cancelled
-  once it has started; it ends within those seconds.
+  once it has started: a cancel that arrives while it runs is read only after it has ended, so the
+  call is answered and logged `ok`. It ends within those seconds.
 - Each tool's own limits are in its section.
 
 ### 2.7 How the tools are shown to the model
@@ -314,7 +320,7 @@ never converged: verify by executing, not by parsing.
 | `setup` | string, a `.sql` path relative to the project root | none | A file run before the migrations (after `preset`), to create what your platform provides: roles, schemas, functions. Columns it creates are not checked. If it lies in the migrations folder, it is not run again as a migration. |
 | `accept_numeric` | boolean | `false` | Treat `numeric`/`decimal` money columns as fine instead of warning about them. |
 | `money_columns` | array of ≤ 200 names (3-200 characters each) | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`. |
-| `ignore_columns` | array of ≤ 200 names (3-200 characters each) | none | Columns never to report (false positives), in the same format. They still count in `ignored_count`. |
+| `ignore_columns` | array of ≤ 200 names (3-200 characters each) | none | Columns never to report (false positives), in the same format. The findings they would raise still count in `ignored_count`. |
 | `timeout_seconds` | integer 5-300 | 45 | Stop after this long. The default stays under the 60 seconds that common MCP clients wait for an answer, so the model gets `TIMEOUT` with the file that was running, not a client error. A larger value only helps with a client that waits longer. |
 
 ### 3.3 Which files run, in which order
@@ -363,7 +369,9 @@ never converged: verify by executing, not by parsing.
    (SQLSTATE 55P04, with a hint), as does `CREATE INDEX CONCURRENTLY` (25001). After each file:
    - run a **sanity query** (`SELECT 1`, with its own 5-second limit). A file that leaves the database
      unusable or silent (for example `COPY ... PROGRAM`, which PGlite cannot run) fails as
-     `MIGRATION_FAILED` for that file.
+     `MIGRATION_FAILED` for that file. An answer that came while the server was busy with a ledger or
+     audit call still counts: the server reads the messages waiting for it before it calls the
+     database silent.
    - take a **snapshot**: every table column's declared type and base type. Domains are followed to
      their base type at any depth, and arrays to their element type.
    - Column identity is the table's internal id plus the column number, so renaming a table or a
@@ -594,12 +602,13 @@ ROLE ..., CREATE SCHEMA ...).`
 - At most 2,000 files.
 - Each file at most 5 MiB; all files together at most 20 MiB.
 - Time limit from `timeout_seconds`.
-- Memory: while the files run, the server's memory may grow by at most 1 GiB over what it was once
-  the database had started. It is checked ten times a second, so one statement can briefly take more
-  before the check sees it. A file that needs more fails as `MIGRATION_FAILED` (`SETUP_FAILED` for
-  setup) with a hint, and its database is discarded. (The worker's JavaScript heap has its own 1 GiB
-  limit, but PGlite keeps its WebAssembly memory and in-memory files outside that heap, so the process
-  as a whole is watched.)
+- Memory: while the files run, the lint may take at most 1 GiB more than it had once the database
+  had started. That is the process's memory less what the server's own JavaScript holds, so a ledger or
+  audit call running meanwhile does not count. It is checked ten times a second, so one statement can
+  briefly take more before the check sees it. A file that needs more fails as `MIGRATION_FAILED`
+  (`SETUP_FAILED` for setup) with a hint, and its database is discarded. (The worker's JavaScript heap
+  has its own 1 GiB limit, but PGlite keeps its WebAssembly memory and in-memory files outside that
+  heap, so the process's memory is what is watched.)
 - One lint at a time.
 - At most 50 findings in a result. The counts still cover them all, and the model fixes those and runs
   the tool again.
@@ -957,7 +966,7 @@ mapped.
 | `ok` | boolean | |
 | `entries_verified` | integer | The entries vouched for: all of them when `ok` (the library's `lastSeq + 1`); otherwise those before the break (`break.entry_index`). |
 | `break` | object or null | `{ entry_index, line, code, reason, writer_key_id? }`. `line` = `entry_index + 1`, or null when that line does not exist (an anchor that counts more entries). `reason` is sealed-audit-chain's wording, cut at 120 characters (a canonicalization error can quote a key name from the line). |
-| `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks before the last entry it covers (a note says so). |
+| `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so entries it vouched for are damaged or gone (a note says so). |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
 | `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. |
@@ -1063,15 +1072,18 @@ The tests are in `test/` (Vitest, about 470); each file starts with a comment sa
 - **Limits and time:** the 20,000-character budget with the longest names in a deep folder, with one
   migration 18 to 30 folders deep (its path cut in the middle) and with long records pointers (and
   every ledger result in the tests is held to it); a JSON number with long runs of zeros, read in
-  linear time; the size and row limits; a migration whose data outgrows the memory limit; a file or
-  folder nobody may read (POSIX), which is `FILE_UNREADABLE`, not a crash; an endless migration
-  stopped at the time limit; a stand-in database thread that goes silent (caught within 5 seconds),
+  linear time; the size and row limits; a migration whose data outgrows the memory limit, and memory
+  the server's own thread takes during a lint (not counted against it); a file or folder nobody may
+  read or open (POSIX), as a path argument, in a migrations folder, in `files` or behind a link there,
+  which is `FILE_UNREADABLE`, not a crash (and a project folder nobody may open, which `ROOT_INVALID`
+  says); an endless migration stopped at the time limit; a stand-in database thread that goes silent
+  (caught within 5 seconds), answers late while the server's thread is busy (not called silent),
   answers wrongly, runs forever (its heartbeat stops at the time limit and on a cancel), or cannot
   start (`INTERNAL_ERROR` without detail, its cause in the log).
 - **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
   `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; a cancel that arrives before the
   call ran (logged `CANCELLED`, no answer); the client going away mid-lint (`DISCONNECTED`, then the
-  process exits); the host closing the server's stderr (it keeps answering); stdout purity (a stand-in
+  process exits); the host closing the server's stderr, or never reading it (it keeps answering); stdout purity (a stand-in
   database thread that writes to stdout and stderr through Node's streams and console, as PGlite
   prints, is contained; a thread could still write to file descriptor 1 directly, which PGlite never
   does); advertised schemas that fit the Claude API (no root

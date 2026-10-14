@@ -4,7 +4,7 @@
 // The order of the checks matters: a path that is outside the project is refused BEFORE the file system
 // is touched, so the answer never reveals whether something outside the project exists.
 
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { clip, clipPath } from './echo.js';
@@ -152,11 +152,11 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   try {
     real = realpathSync.native(lexical);
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    const what = code === 'EACCES' || code === 'EPERM' ? 'cannot be opened (permission denied)' : 'does not exist';
+    // The path is inside the project (checked above), so saying it cannot be read reveals nothing outside.
+    if (deniedOrLocked(err)) throw unreadable(toPosix(lexRel), err);
     throw new ToolError(
       'PATH_NOT_FOUND',
-      `${shown(input)} ${what}. The nearest existing folder is "${clipPath(nearestExisting(root, lexical))}".`,
+      `${shown(input)} does not exist. The nearest existing folder is "${clipPath(nearestExisting(root, lexical))}".`,
       `Check the spelling. Paths are relative to the project folder (${root.name}).`,
     );
   }
@@ -171,7 +171,12 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   const realRel = path.relative(root.real, real);
   checkSensitive(input, realRel);
 
-  const stat = statSync(real);
+  let stat: Stats;
+  try {
+    stat = statSync(real);
+  } catch (err) {
+    throw unreadable(toPosix(lexRel), err);
+  }
   if (rule.kind === 'file' && !stat.isFile()) {
     throw new ToolError('NOT_A_FILE', `${shown(input)} is not a file.`, 'Pass the path of a file, not a folder.');
   }
@@ -212,6 +217,12 @@ export function unreadable(shownPath: string, err: unknown): ToolError {
           ? 'no longer exists'
           : `cannot be read (${typeof code === 'string' ? clip(code, 20) : 'an unknown error'})`;
   return new ToolError('FILE_UNREADABLE', `"${clipPath(shownPath)}" ${why}.`, 'Close the program that holds it, or fix its permissions, then call again.');
+}
+
+/** Whether a file-system error means the path is there but may not be read now: permissions, a lock. */
+export function deniedOrLocked(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EACCES' || code === 'EPERM' || code === 'EBUSY';
 }
 
 /** Read a file that resolveInRoot accepted; a read that fails is FILE_UNREADABLE, not a crash. */

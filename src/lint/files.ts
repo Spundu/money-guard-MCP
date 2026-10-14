@@ -7,7 +7,7 @@ import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { clip, clipPath } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { formatMib, formatSize, isInside, isSensitive, readChecked, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
+import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, readChecked, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
 
 export const MAX_FILES = 2000;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -146,7 +146,8 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       const shown = `"${clipPath(toPosix(path.relative(root.real, full)))}"`;
       try {
         real = realpathSync.native(full);
-      } catch {
+      } catch (err) {
+        if (deniedOrLocked(err)) throw unreadable(toPosix(path.relative(root.real, full)), err);
         throw new ToolError('PATH_NOT_FOUND', `${shown} is a link to something that does not exist.`, 'Remove the broken link, or pass files with the migrations to run.');
       }
       if (!isInside(root.real, real)) {
@@ -155,9 +156,13 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       if (isSensitive(path.relative(root.real, real))) {
         throw new ToolError('SENSITIVE_PATH', `${shown} is a link to a file that looks like a secret (an .env file, a private key or credentials).`, 'money-guard never reads secret files. Remove the link.');
       }
-      const stat = statSync(real);
-      isDir = stat.isDirectory();
-      isFile = stat.isFile();
+      try {
+        const stat = statSync(real);
+        isDir = stat.isDirectory();
+        isFile = stat.isFile();
+      } catch (err) {
+        throw unreadable(toPosix(path.relative(root.real, full)), err);
+      }
       if (isFile && entry.name.toLowerCase().endsWith('.sql') && !real.toLowerCase().endsWith('.sql')) {
         throw new ToolError('FILE_TYPE_NOT_ALLOWED', `${shown} is a link to a file that is not .sql.`, 'Remove the link, or pass files with the migrations to run.');
       }
@@ -256,8 +261,13 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     }
     found.sort(naturalCompare);
     chosen = found.map((rel) => {
-      const real = realpathSync.native(path.join(target.real, rel));
-      return { real, rel: toPosix(path.relative(root.real, path.join(target.real, rel))), size: statSync(real).size };
+      const shownRel = toPosix(path.relative(root.real, path.join(target.real, rel)));
+      try {
+        const real = realpathSync.native(path.join(target.real, rel));
+        return { real, rel: shownRel, size: statSync(real).size };
+      } catch (err) {
+        throw unreadable(shownRel, err); // listed by the walk a moment ago: it is there, but cannot be read
+      }
     });
   }
 

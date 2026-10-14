@@ -1,7 +1,7 @@
 // The lint's database thread (src/lint/database.ts, SPEC.md §3.4, §3.9): its output kept off the
 // protocol channel, error positions and hints, and the limits that stop a database that hangs, answers
 // wrongly, runs forever, cannot start or outgrows its memory.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -78,6 +78,50 @@ describe('runScripts with a database that misbehaves', () => {
       message: 'db/0001.sql: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
     });
     expect(performance.now() - started).toBeLessThan(8000);
+  });
+
+  it('waits for an answer that came while the server was busy, before calling the database silent', async () => {
+    // A ledger or audit call can keep the server's thread busy past the 5-second check while the
+    // database's answer waits in the queue. Here the thread is blocked right after the file ran, until
+    // the check's time has passed and the answer (sent 500 ms after the file ran) has come; the run
+    // ends a second later.
+    const sanityMs = 100;
+    const realSetTimeout = globalThis.setTimeout;
+    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, ms?: number) => {
+      if (ms === sanityMs) {
+        setImmediate(() => {
+          const until = performance.now() + 1000;
+          while (performance.now() < until) {
+            // busy, as a long ledger call is
+          }
+        });
+      }
+      return realSetTimeout(callback, ms);
+    }) as unknown as typeof setTimeout);
+    process.env.MONEY_GUARD_TEST_WORKER = 'late';
+    try {
+      await expect(runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, sanityMs })).resolves.toMatchObject({ postgres: 'PostgreSQL 0 (fake)' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('does not count memory that the server thread takes meanwhile (a ledger or audit call) against the lint', async () => {
+    const MIB = 1024 * 1024;
+    const started = path.join(tempDir(), 'started');
+    process.env.MONEY_GUARD_TEST_HEARTBEAT = started;
+    process.env.MONEY_GUARD_TEST_WORKER = 'slow';
+    const outcome = runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, memoryLimitBytes: 64 * MIB }).then(
+      (ok) => ({ ok }),
+      (error: unknown) => ({ error }),
+    );
+    await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000 });
+    await new Promise((r) => setTimeout(r, 100)); // the database has started: the memory baseline is taken
+    const held = Buffer.alloc(256 * MIB, 1); // as an audit call holds the file it reads
+    await new Promise((r) => setTimeout(r, 500)); // five memory checks
+    writeFileSync(`${started}.go`, '');
+    expect(await outcome).toMatchObject({ ok: { postgres: 'PostgreSQL 0 (fake)' } });
+    expect(held.byteLength).toBe(256 * MIB); // held until the lint ended
   });
 
   it('fails the file when the database answers wrongly after it', async () => {

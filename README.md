@@ -295,7 +295,8 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
   result, an error or a log line; an error about a malformed key setting names the bad pair by its
   position only. An agent with shell access can still read its host's environment: see
   [Settings](#settings). The log (stderr) has a startup line and one line per call: the tool, the time
-  it took and the outcome code.
+  it took and the outcome code. Writing it never holds the server up: a host that does not read it
+  loses log lines, not answers.
 - **One schema lint at a time.** A second one gets `BUSY` straight away. The other two tools answer
   one call after another. Cancelling a lint stops its database at once.
 

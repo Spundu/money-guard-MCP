@@ -49,6 +49,16 @@ export const MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024;
 /** How often the memory is checked. One statement can allocate more between two checks. */
 const MEMORY_CHECK_MS = 100;
 
+/**
+ * The memory the lint can be blamed for: the process's, less what the main thread's JavaScript holds.
+ * A ledger or audit call running beside the lint keeps its data there; the database thread's memory
+ * (PGlite's WebAssembly memory and in-memory files) is outside it.
+ */
+function lintMemory(): number {
+  const m = process.memoryUsage();
+  return m.rss - m.heapTotal - m.external;
+}
+
 const TOO_BIG = 'The file needs more than the lint database can give it (memory or a size limit). Leave the file out with files, or lint the migrations in smaller groups.';
 
 type Message =
@@ -149,7 +159,7 @@ const WORKER = new URL('./worker.js', import.meta.url);
 
 export function runScripts(
   scripts: readonly Script[],
-  options: { timeoutMs: number; preset: boolean; filesGiven?: boolean | undefined; signal?: AbortSignal | undefined; worker?: URL | undefined; memoryLimitBytes?: number | undefined },
+  options: { timeoutMs: number; preset: boolean; filesGiven?: boolean | undefined; signal?: AbortSignal | undefined; worker?: URL | undefined; memoryLimitBytes?: number | undefined; sanityMs?: number | undefined },
 ): Promise<DatabaseOutcome> {
   const firstMigration = scripts.findIndex((s) => s.phase === 'migration');
   return new Promise<DatabaseOutcome>((resolve, reject) => {
@@ -169,6 +179,7 @@ export function runScripts(
     let available: string[] = [];
     let reserved: string[] = [];
     let running = -1;
+    let answered = -1; // the last step whose check after the file came back
     let finished = false;
     let sanity: NodeJS.Timeout | undefined;
 
@@ -201,7 +212,7 @@ export function runScripts(
     const memoryLimit = options.memoryLimitBytes ?? MEMORY_LIMIT_BYTES;
     let baseline: number | undefined; // the process's memory once the database had started
     const memory = setInterval(() => {
-      if (baseline === undefined || process.memoryUsage.rss() - baseline <= memoryLimit) return;
+      if (baseline === undefined || lintMemory() - baseline <= memoryLimit) return;
       const script = scriptAt(Math.max(running, 0));
       const code = script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
       finish({ error: new ToolError(code, `${script.name}: the lint database grew by more than ${formatMib(memoryLimit)} of memory while running this file.`, TOO_BIG) });
@@ -221,18 +232,25 @@ export function runScripts(
           postgres = versionOf(m.version);
           available = m.available;
           reserved = m.reserved;
-          baseline = process.memoryUsage.rss();
+          baseline = lintMemory();
           break;
         case 'running':
           running = m.step;
           break;
         case 'executed':
           sanity = setTimeout(() => {
-            finish({ error: new ToolError('MIGRATION_FAILED', `${scriptAt(m.step).name}: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, 'Leave the file out with files.') });
-          }, SANITY_MS);
+            // The main thread may have been busy (a ledger or audit call) while the answer waited in the
+            // queue: give a waiting message one turn of the event loop before calling the database stuck.
+            setImmediate(() => {
+              if (answered < m.step) {
+                finish({ error: new ToolError('MIGRATION_FAILED', `${scriptAt(m.step).name}: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, 'Leave the file out with files.') });
+              }
+            });
+          }, options.sanityMs ?? SANITY_MS);
           break;
         case 'snapshot': {
           clearTimeout(sanity);
+          answered = m.step;
           const index = m.step - (firstMigration === -1 ? scripts.length : firstMigration);
           const seen = new Set<string>();
           for (const [col, ty] of m.rows) {
