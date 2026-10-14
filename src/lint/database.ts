@@ -98,9 +98,17 @@ export function failure(script: Script, err: DbError, context: { available: read
       `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, leave the file out with files. ` +
       'A whole-database dump (pg_dump, supabase db dump) also creates the extensions a platform provides: lint the migrations folder instead (supabase/migrations for Supabase).';
   } else if (err.code !== undefined && MISSING_OBJECT.has(err.code)) {
-    fix = context.preset
-      ? 'The Supabase preset does not create this. Pass setup: a .sql file that creates it (it runs after the preset).'
-      : 'This file needs objects your platform creates. For a Supabase project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE ROLE ..., CREATE SCHEMA ...).';
+    // A missing table or function is often one of the project's own, created by a file that sorts later
+    // (Flyway's R__ files sort before V1__): say that first.
+    const order =
+      err.code === '42P01' || err.code === '42883'
+        ? 'If one of your migrations creates it, the files ran out of order: money-guard runs them in natural order of their paths; pass files to give the order your tool uses. '
+        : '';
+    fix =
+      order +
+      (context.preset
+        ? 'The Supabase preset does not create this. Pass setup: a .sql file that creates it (it runs after the preset).'
+        : 'This file needs objects your platform creates. For a Supabase project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE ROLE ..., CREATE SCHEMA ...).');
   } else if (err.code === '42601' && at !== null && (lines[at.line - 1] ?? '').startsWith('\\')) {
     fix = 'That line is a psql meta-command, which only psql understands. Leave the file out with files, or lint a copy without that line.';
   } else if (err.code === '42601' && at !== null && lines.slice(0, at.line - 1).some((line) => /^COPY\s.+\sFROM\s+stdin;/i.test(line))) {

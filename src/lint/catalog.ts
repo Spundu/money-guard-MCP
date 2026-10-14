@@ -19,24 +19,37 @@ const USER_TABLES = `
 /**
  * Taken after every file: each column's identity (table oid + column number, which survive renames)
  * and its type (the type oid, without the modifier: widening numeric(10,2) to numeric(12,2) does not
- * introduce a problem the column already had). Cheap enough to run thousands of times.
+ * introduce a problem the column already had; real and double precision count as one float type, so a
+ * change of float precision does not either). Cheap enough to run thousands of times.
  */
 export const SNAPSHOT_SQL = `
   SELECT a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
-         a.atttypid::pg_catalog.text AS ty
+         CASE WHEN a.atttypid IN ('pg_catalog.float4'::pg_catalog.regtype, 'pg_catalog.float8'::pg_catalog.regtype)
+              THEN 'float' ELSE a.atttypid::pg_catalog.text END AS ty
   ${USER_TABLES}`;
 
 /**
  * Taken once, at the end: everything the findings need. Domains are followed to their base type at any
  * depth, and arrays to their element type. Partitions are left out (their parent is reported),
- * inherited columns too (reported where defined), and tables that belong to an extension.
+ * inherited columns too (reported where defined), and tables that belong to an extension. For fix_sql,
+ * what else holds amounts of the column: its default, and whether a CHECK constraint or an index with
+ * an expression or a WHERE clause uses it (such an index depends on the column in pg_depend).
  */
 export const DETAIL_SQL = `
   WITH RECURSIVE cols AS (
     SELECT a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
            n.nspname AS schema_name, c.relname AS table_name, a.attname AS column_name,
            pg_catalog.format_type(a.atttypid, a.atttypmod) AS declared, a.atttypid AS typid,
-           a.attgenerated::pg_catalog.text AS generated
+           a.attgenerated::pg_catalog.text AS generated,
+           (SELECT pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) FROM pg_catalog.pg_attrdef ad
+            WHERE ad.adrelid = a.attrelid AND ad.adnum = a.attnum) AS default_expr,
+           EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k
+                   WHERE k.conrelid = c.oid AND k.contype = 'c' AND a.attnum = ANY (k.conkey)) AS in_check,
+           EXISTS (SELECT 1 FROM pg_catalog.pg_index i
+                   JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
+                   WHERE i.indrelid = c.oid AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
+                     AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = c.oid
+                     AND p.refobjsubid = a.attnum) AS in_index_expr
     ${USER_TABLES}
       AND NOT c.relispartition AND a.attislocal
       AND NOT EXISTS (
@@ -57,14 +70,16 @@ export const DETAIL_SQL = `
   ),
   base AS (
     SELECT DISTINCT ON (ch.start) ch.start, ch.via_array, ch.domain_name,
-           t.typname::pg_catalog.text AS base_name, tn.nspname::pg_catalog.text AS base_schema
+           t.typname::pg_catalog.text AS base_name, tn.nspname::pg_catalog.text AS base_schema,
+           t.typtype::pg_catalog.text AS base_kind
     FROM chain ch
     JOIN pg_catalog.pg_type t ON t.oid = ch.cur
     JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
     ORDER BY ch.start, ch.depth DESC
   )
   SELECT cols.col, cols.schema_name, cols.table_name, cols.column_name, cols.declared, cols.generated,
-         base.via_array, base.domain_name, base.base_name, base.base_schema
+         cols.default_expr, cols.in_check, cols.in_index_expr,
+         base.via_array, base.domain_name, base.base_name, base.base_schema, base.base_kind
   FROM cols JOIN base ON base.start = cols.typid
   ORDER BY cols.schema_name, cols.table_name, cols.column_name`;
 
@@ -76,10 +91,16 @@ export interface DetailRow {
   declared: string;
   /** '' for an ordinary column, 's' or 'v' for a generated one. */
   generated: string;
+  /** The column's default as PostgreSQL writes it back ("0.00", "'0'::numeric"), or null. */
+  default_expr: string | null;
+  in_check: boolean;
+  in_index_expr: boolean;
   via_array: boolean;
   domain_name: string | null;
   base_name: string;
   base_schema: string;
+  /** pg_type.typtype of the base type: 'b' base, 'c' composite, 'e' enum, ... */
+  base_kind: string;
 }
 
 export type LintCode = 'FLOAT_MONEY' | 'MONEY_TYPE' | 'NUMERIC_MONEY' | 'SMALLINT_MONEY';
@@ -107,7 +128,7 @@ export const FIXES: Readonly<Record<LintCode, string>> = {
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), amounts finer than a penny (choose the unit first), or a name holding hidden characters (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), amounts finer than a penny (choose the unit first), a default, CHECK constraint or index condition that holds amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), or a name holding hidden characters (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -149,6 +170,19 @@ export function numericScale(declared: string): number | null {
 }
 
 /**
+ * Whether a column default, as PostgreSQL writes it back, is zero or NULL ("0", "0.00", "'0'::numeric",
+ * "(0)::numeric", "NULL::numeric"): converting the column to minor units leaves such a default right.
+ * Anything else, an expression included, counts as an amount.
+ */
+export function isZeroOrNullDefault(expr: string): boolean {
+  const value = expr
+    .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?$/, '')
+    .replace(/^\((.*)\)$/, '$1')
+    .replace(/^'(.*)'$/, '$1');
+  return value === 'NULL' || /^-?(?:0+(?:\.0*)?|\.0+)$/.test(value);
+}
+
+/**
  * A name as PostgreSQL's quote_ident writes it: bare when it would read back as the same name (lowercase
  * letters, digits and "_", and not a keyword in `reserved`), otherwise in double quotes with any double
  * quote doubled. Done here, not by quote_ident in the database: the migrations control that database,
@@ -164,7 +198,10 @@ export function quoteIdent(name: string, reserved: ReadonlySet<string>): string 
  * finer than a minor unit (choose the unit first), or a name holding a control or invisible character
  * (results show such names escaped, and SQL built from the escaped text would name a different column).
  * The conversion follows the name: amounts already in minor units (pence, cents, minor) are only
- * rounded; anything else is taken to be in pounds or dollars and multiplied by 100. `reserved` is
+ * rounded; anything else is taken to be in pounds or dollars and multiplied by 100. A conversion that
+ * multiplies is null too while the column's default, a CHECK constraint or an index condition holds an
+ * amount: ALTER COLUMN ... TYPE converts the stored rows with USING but leaves those in the old unit (a
+ * default of 2.50 pounds becomes 3 pence), and the next lint could not see it. `reserved` is
  * PostgreSQL's list of keywords that must be quoted, read before any migration ran.
  */
 export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>): string | null {
@@ -173,12 +210,14 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   const c = quoteIdent(row.column_name, reserved);
   const head = `ALTER TABLE ${quoteIdent(row.schema_name, reserved)}.${quoteIdent(row.table_name, reserved)} ALTER COLUMN ${c} TYPE bigint`;
   const minor = namesMinorUnits(row.column_name);
-  const convert = minor ? `${head} USING round(${c})::bigint;` : `${head} USING round(${c} * 100)::bigint;`;
+  const keepsOldUnit = row.in_check || row.in_index_expr || (row.default_expr !== null && !isZeroOrNullDefault(row.default_expr));
+  const times100 = (using: string) => (keepsOldUnit ? null : `${head} USING ${using};`);
+  const convert = minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
   switch (code) {
     case 'SMALLINT_MONEY':
       return `${head};`;
     case 'MONEY_TYPE':
-      return `${head} USING (${c}::numeric * 100)::bigint;`; // the money type holds major units with 2 decimals
+      return times100(`(${c}::numeric * 100)::bigint`); // the money type holds major units with 2 decimals
     case 'FLOAT_MONEY':
       return convert;
     case 'NUMERIC_MONEY': {

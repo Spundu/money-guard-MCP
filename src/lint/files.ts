@@ -102,10 +102,11 @@ function tooManyFiles(): ToolError {
 }
 
 /**
- * Every .sql file under `dir` (real path), as paths relative to `base`, skipping secrets and down steps
- * (counted in `seen.down`, so an empty result can say why).
+ * Every .sql file under `dir` (real path), as paths relative to `base`, skipping secrets, down steps
+ * (counted in `seen.down`, so an empty result can say why) and the setup file (`seen.setup`, its real
+ * path), which runs once, as setup.
  */
-function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number }): void {
+function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number; setup: string | undefined }): void {
   if (visited.has(dir)) return; // a link loop
   visited.add(dir);
   let entries: Dirent[];
@@ -150,6 +151,7 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
         seen.down += 1;
         continue;
       }
+      if (real === seen.setup) continue;
       out.push(toPosix(path.relative(base, full)));
       if (out.length > MAX_FILES) throw tooManyFiles();
     }
@@ -195,9 +197,11 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
   const budget = { total: 0 };
 
   let setup: SqlScript | null = null;
+  let setupReal: string | undefined;
   if (args.setup !== undefined) {
     const s = resolveInRoot(root, args.setup, { kind: 'file', extensions: ['.sql'] });
     setup = readScript(s.real, s.rel, s.size, budget, hash, 'SETUP_FAILED');
+    setupReal = s.real;
   }
 
   let chosen: Array<{ real: string; rel: string; size: number }>;
@@ -207,14 +211,15 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     }
     chosen = [target];
   } else if (args.files !== undefined) {
-    chosen = args.files.map((entry) => {
+    chosen = args.files.flatMap((entry) => {
       const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `"${clip(entry, 120)}" is not a file in "${folder}".`, `Every entry of files is a path relative to "${folder}". Check the spelling.`);
       const lexical = path.resolve(target.real, entry);
       if (!isInside(target.real, lexical)) throw notInFolder;
       try {
         const f = resolveInRoot(root, path.relative(root.real, lexical), { kind: 'file', extensions: ['.sql'] });
         if (!isInside(target.real, f.real)) throw notInFolder;
-        return f;
+        return f.real === setupReal ? [] : [f]; // the setup file runs once, as setup
+
       } catch (err) {
         if (err instanceof ToolError && (err.code === 'PATH_NOT_FOUND' || err.code === 'NOT_A_FILE')) throw notInFolder;
         throw err;
@@ -222,7 +227,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     });
   } else {
     const found: string[] = [];
-    const seen = { down: 0 };
+    const seen = { down: 0, setup: setupReal };
     walk(root, target.real, target.real, found, new Set(), seen);
     if (found.length === 0 && seen.down > 0) {
       const files = seen.down === 1 ? 'Its 1 .sql file is a down step' : `Its ${seen.down} .sql files are down steps`;

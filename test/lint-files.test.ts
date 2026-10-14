@@ -219,6 +219,22 @@ describe('money_lint_schema: failures', () => {
     expect(e.fix).toMatch(/^PGlite does not have that extension\. It has: .*citext.*pgcrypto.*uuid-ossp.*vector/);
   });
 
+  it('fits the hint to what real PostgreSQL reports', async () => {
+    const cases: Array<[files: Record<string, string>, state: string, hint: RegExp]> = [
+      [{ 'db/migrations/0001.sql': 'create table t (id int);\ncreate index concurrently t_id on t (id);\n' }, '25001', /CREATE INDEX CONCURRENTLY cannot run/],
+      // A value added to a type made in the same file may be used at once; to a type an earlier file made, not.
+      [{ 'db/migrations/0001.sql': "create type s as enum ('a');", 'db/migrations/0002.sql': "alter type s add value 'b';\nselect 'b'::s;\n" }, '55P04', /a new enum value cannot be used in the transaction that adds it/],
+      [{ 'db/migrations/0001.sql': 'CREATE TABLE public.t (a integer);\nCOPY public.t (a) FROM stdin;\n1\n\\.\n' }, '42601', /a pg_dump with data/],
+      [{ 'db/migrations/0001.sql': "select repeat('x', 2000000000);" }, '54000', /^The file needs more than the lint database can give it/],
+      [{ 'db/migrations/0001_view.sql': 'create view v as select * from orders;', 'db/migrations/0002_orders.sql': 'create table orders (id int);' }, '42P01', /^If one of your migrations creates it, the files ran out of order/],
+    ];
+    for (const [files, state, hint] of cases) {
+      const e = await failure(files);
+      expect(e.message, state).toContain(`(SQLSTATE ${state})`);
+      expect(e.fix, state).toMatch(hint);
+    }
+  });
+
   it('reports a broken setup file as SETUP_FAILED', async () => {
     expect(await codeOf({ 'db/migrations/0001.sql': 'select 1;', 'setup.sql': 'create rol x;' }, { setup: 'setup.sql' })).toBe('SETUP_FAILED');
   });
@@ -272,6 +288,19 @@ describe('money_lint_schema: platforms', () => {
       { setup: 'setup.sql' },
     );
     expect(r.findings.map((f) => f.table)).toEqual(['public.items']);
+  });
+
+  it('runs a setup file that lies in the migrations folder once, as setup', async () => {
+    const files = { 'db/migrations/0000_platform.sql': 'create role authenticated;', 'db/migrations/0001.sql': 'create table t (amount double precision); grant select on t to authenticated;' };
+    const walked = await lint(files, { setup: 'db/migrations/0000_platform.sql' });
+    expect([walked.files_applied.map((f) => f.split('/').at(-1)), walked.error_count]).toEqual([['0001.sql'], 1]);
+    const listed = await lint(files, { setup: 'db/migrations/0000_platform.sql', files: ['0000_platform.sql', '0001.sql'] });
+    expect([listed.files_applied_count, listed.error_count]).toEqual([1, 1]);
+  });
+
+  it('says that nothing was checked when every table comes from setup', async () => {
+    const r = await lint({ 'setup.sql': 'create table platform (fee double precision);', 'db/migrations/0001.sql': 'select 1;' }, { setup: 'setup.sql' });
+    expect(r.summary).toBe('No table was created or changed by the 1 migration file, so nothing was checked: the tables that exist come from setup or the preset.');
   });
 
   it('has pgvector', async () => {

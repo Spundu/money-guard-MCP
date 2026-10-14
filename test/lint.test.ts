@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
-import { NULL_FIX_NOTE } from '../src/lint/catalog.js';
+import { NULL_FIX_NOTE, isZeroOrNullDefault } from '../src/lint/catalog.js';
 import { SPEC_FILES, codeOf, failure, lastDir, lint } from './support/lint.js';
 
 describe('money_lint_schema: the SPEC.md §3.10 example', () => {
@@ -154,7 +154,7 @@ describe('money_lint_schema: judging columns', () => {
     const r = await lint({
       'db/migrations/0001.sql':
         'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, ' +
-        'fee numeric(10,2), total numeric, amount numeric(12,0), unit_price numeric(12,4), amount_pence numeric(10,2));',
+        'fee numeric(10,2), total numeric, amount numeric(12,0), unit_price numeric(12,4), amount_pence numeric(10,2), refund money, charge smallint);',
     });
     const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
     expect([fix.unit_price, fix.amount_pence]).toEqual([null, null]); // finer than a penny: choose the unit first
@@ -164,16 +164,42 @@ describe('money_lint_schema: judging columns', () => {
     const db = await PGlite.create();
     try {
       await db.exec(
-        'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, fee numeric(10,2), total numeric, amount numeric(12,0));' +
-          'insert into p values (19.99, 1999, 1999, 12.34, 0.1, 1500);',
+        'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, fee numeric(10,2), total numeric, amount numeric(12,0), refund money, charge smallint);' +
+          "insert into p values (19.99, 1999, 1999, 12.34, 0.1, 1500, '-5.50', 550);",
       );
-      const columns = ['price', 'amount_minor_units', 'price_cents_usd', 'fee', 'total', 'amount'];
+      const columns = ['price', 'amount_minor_units', 'price_cents_usd', 'fee', 'total', 'amount', 'refund', 'charge'];
       for (const column of columns) await db.exec(fix[column] ?? 'fix_sql missing');
       const row = (await db.query<Record<string, string>>(`select ${columns.map((c) => `${c}::text`).join(', ')} from p`)).rows[0];
-      expect(row).toEqual({ price: '1999', amount_minor_units: '1999', price_cents_usd: '1999', fee: '1234', total: '10', amount: '1500' });
+      expect(row).toEqual({ price: '1999', amount_minor_units: '1999', price_cents_usd: '1999', fee: '1234', total: '10', amount: '1500', refund: '-550', charge: '550' });
     } finally {
       await db.close();
     }
+  });
+
+  it('gives no fix_sql that would leave a default, a CHECK constraint or an index condition in pounds', async () => {
+    // ALTER COLUMN ... TYPE converts stored rows with USING, but a default of 2.50 would become 3 pence,
+    // and CHECK (amount_cap <= 1000.00) a cap of £10, with the next lint seeing nothing wrong.
+    const r = await lint({
+      'db/migrations/0001.sql':
+        'create table o (id int, delivery_fee numeric(10,2) not null default 2.50, amount_cap numeric(10,2) check (amount_cap <= 1000.00), ' +
+        "subtotal double precision, total double precision default 0, discount numeric(10,2) default null, refund money default 0, price money default '1.50', " +
+        'fee_pence double precision default 2.5);\n' +
+        'create index big_orders on o (id) where subtotal > 100;\n',
+    });
+    const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
+    expect([fix.delivery_fee, fix.amount_cap, fix.subtotal, fix.price]).toEqual([null, null, null, null]);
+    expect([fix.total, fix.discount, fix.refund, fix.fee_pence]).toEqual([
+      'ALTER TABLE public.o ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
+      'ALTER TABLE public.o ALTER COLUMN discount TYPE bigint USING round(discount * 100)::bigint;',
+      'ALTER TABLE public.o ALTER COLUMN refund TYPE bigint USING (refund::numeric * 100)::bigint;',
+      'ALTER TABLE public.o ALTER COLUMN fee_pence TYPE bigint USING round(fee_pence)::bigint;', // minor units already: the default keeps its meaning
+    ]);
+    for (const code of ['FLOAT_MONEY', 'NUMERIC_MONEY', 'MONEY_TYPE'] as const) expect(r.fixes[code]).toContain('a default, CHECK constraint or index condition that holds amounts in the old unit');
+  });
+
+  it('knows a zero or NULL default, however PostgreSQL writes it back, and nothing else', () => {
+    for (const zero of ['0', '0.00', '0.0', "'0'::numeric", '(0)::numeric', "'0'::double precision", 'NULL::numeric', '-0.00']) expect(isZeroOrNullDefault(zero), zero).toBe(true);
+    for (const other of ['2.50', "'1.50'::money", '(1 - 1)', '0.01', "'0x'::text", 'now()', "''"]) expect(isZeroOrNullDefault(other), other).toBe(false);
   });
 
   it('checks and counts a column of the money type whatever its name', async () => {
@@ -198,6 +224,21 @@ describe('money_lint_schema: judging columns', () => {
   it('dates a finding from when the column got its type, not from a later change of precision', async () => {
     const r = await lint({ 'db/migrations/0001.sql': 'create table t (fee numeric(10,2));', 'db/migrations/0002.sql': 'alter table t alter column fee type numeric(12,2);' });
     expect(r.findings.map((f) => f.introduced_in.split('/').at(-1))).toEqual(['0001.sql']);
+    // real to double precision is a change of float precision too: the float came in 0001.
+    const floats = await lint({ 'db/migrations/0001.sql': 'create table t (price real);', 'db/migrations/0002.sql': 'alter table t alter column price type double precision;' });
+    expect(floats.findings.map((f) => [f.type, f.introduced_in.split('/').at(-1)])).toEqual([['double precision', '0001.sql']]);
+  });
+
+  it('refuses a money_columns entry for a column setup creates, and says how to name an inherited column', async () => {
+    const setup = await failure({ 'setup.sql': 'create table platform (fee double precision);', 'db/migrations/0001.sql': 'create table t (total bigint);' }, { setup: 'setup.sql', money_columns: ['platform.fee'] });
+    expect(setup.toText()).toMatch(/^BAD_COLUMN_NAME: money_columns names "public\.platform\.fee", a column that setup or the preset creates: only columns the migrations create or change are checked\./);
+    const inherited = await failure({ 'db/migrations/0001.sql': 'create table fees (fee bigint); create table child_fees (note text) inherits (fees);' }, { money_columns: ['child_fees.fee'] });
+    expect(inherited.fix).toMatch(/Name an inherited column by the table that defines it/);
+  });
+
+  it('counts as "not checked" only money-named columns that can hold an amount: text, JSON, composites; not booleans or dates', async () => {
+    const r = await lint({ 'db/migrations/0001.sql': 'create table t (total bigint, tax_exempt boolean, price_valid_until timestamptz, refund_ids uuid[], balance_note_total text);' });
+    expect(r.summary).toBe('No problems: 1 money column in 1 table uses a safe type. 1 migration file applied. 1 money-named column of text, JSON or another type was not checked.');
   });
 
   it('caps the findings at 50 and the lists at 30, and counts them all', async () => {

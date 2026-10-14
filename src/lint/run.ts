@@ -6,7 +6,7 @@ import { closest } from '../closest.js';
 import { clip, clipPath, escapeUnsafe } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { Root } from '../paths.js';
-import { FIXES, NULL_FIX_NOTE, baseType, displayType, fixSql, isMoneyColumn, judge, type LintCode, type LintFinding } from './catalog.js';
+import { FIXES, NULL_FIX_NOTE, baseType, displayType, fixSql, isMoneyColumn, judge, type DetailRow, type LintCode, type LintFinding } from './catalog.js';
 import { runScripts, type Script } from './database.js';
 import { collectSources } from './files.js';
 import { SUPABASE_PRESET } from './supabase.js';
@@ -95,11 +95,14 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   });
 
   // An entry that names no column is a mistake to report, not a silent no-op: PostgreSQL folds unquoted
-  // names to lowercase, so "Orders.GrossValue" matches nothing.
-  const known = db.detail.map((r) => `${r.schema_name}.${r.table_name}.${r.column_name}`);
+  // names to lowercase, so "Orders.GrossValue" matches nothing. Only columns the migrations made or
+  // changed are checked, so an entry naming a column of setup or the preset is a mistake too.
+  const keyOf = (r: DetailRow) => `${r.schema_name}.${r.table_name}.${r.column_name}`;
+  const known = db.detail.filter((r) => (db.since.get(r.col) ?? -1) >= 0).map(keyOf);
   const knownSet = new Set(known);
+  const fromSetup = new Set(db.detail.map(keyOf));
   for (const [param, set] of [['money_columns', listed], ['ignore_columns', ignored]] as const) {
-    for (const entry of set) if (!knownSet.has(entry)) throw unknownColumn(param, entry, known);
+    for (const entry of set) if (!knownSet.has(entry)) throw unknownColumn(param, entry, known, fromSetup.has(entry));
   }
 
   const findings: LintFinding[] = [];
@@ -121,7 +124,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
       continue;
     }
     if (base !== null && (money || base === 'money')) moneyChecked += 1;
-    else if (money) moneyOther += 1; // text, JSON, a composite: not checked (SPEC.md §6)
+    else if (money && canHoldAmount(row)) moneyOther += 1; // text, JSON, a composite: not checked (SPEC.md §6)
     const code = judge(row, money, params.accept_numeric ?? false);
     if (code !== null) {
       // Names and paths come from the project, which may be hostile: escaped, and a path cut in the
@@ -155,7 +158,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const applied = sources.files.map((f) => clipPath(f.rel));
 
   const result: LintResult = {
-    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, money: moneyChecked, moneyOther, tables: tables.size, floats: otherFloats.length, files: applied.length }),
+    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, money: moneyChecked, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length }),
     migrations: clipPath(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -195,6 +198,8 @@ interface Counts {
   money: number;
   moneyOther: number;
   tables: number;
+  /** Whether tables exist that setup or the preset made (and no migration changed). */
+  setupTables: boolean;
   floats: number;
   files: number;
 }
@@ -206,6 +211,8 @@ function summarise(c: Counts): string {
   if (c.tables === 0) {
     // Nothing was checked: say so, as the ledger tool does for an empty file. A file that holds its own
     // down step in a format money-guard does not know would have dropped what it created.
+    const ran = c.files === 1 ? 'the 1 migration file' : `the ${c.files} migration files`;
+    if (c.setupTables) return `No table was created or changed by ${ran}, so nothing was checked: the tables that exist come from setup or the preset.`;
     return `No tables exist after ${c.files === 1 ? 'the 1 migration file' : `the ${c.files} migration files`}, so nothing was checked. If a file also holds its down step, that step dropped what the file created: pass files, or lint a copy without the down steps.`;
   }
   if (c.problems > 0) {
@@ -216,12 +223,25 @@ function summarise(c: Counts): string {
   return `No money columns found in ${plural(c.tables, 'table')}${floats}. ${applied}${ignoredNote}${otherNote}`;
 }
 
-function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string, known: readonly string[]): ToolError {
+/** Money-named columns of these types hold amounts the lint does not check: text, JSON, a composite, an extension's type (citext). Not booleans, dates or ids. */
+function canHoldAmount(row: DetailRow): boolean {
+  if (row.base_schema === 'pg_catalog') return ['text', 'varchar', 'bpchar', 'json', 'jsonb'].includes(row.base_name);
+  return row.base_kind === 'c' || row.base_kind === 'b';
+}
+
+function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string, known: readonly string[], madeBySetup: boolean): ToolError {
+  if (madeBySetup) {
+    return new ToolError(
+      'BAD_COLUMN_NAME',
+      `${param} names "${clip(entry, 120)}", a column that setup or the preset creates: only columns the migrations create or change are checked.`,
+      'Leave the entry out: setup and the preset stand for what your platform provides, and their columns are not checked.',
+    );
+  }
   const near = closest(entry, known);
   const hint = near === undefined ? '' : ` Did you mean "${clip(near, 120)}"?`;
   return new ToolError(
     'BAD_COLUMN_NAME',
     `${param} names "${clip(entry, 120)}", which is not a column of any table the migrations create.${hint}`,
-    'Write each entry as the name appears in the database (PostgreSQL folds unquoted names to lowercase): table.column, or schema.table.column outside the public schema.',
+    'Write each entry as the name appears in the database (PostgreSQL folds unquoted names to lowercase): table.column, or schema.table.column outside the public schema. Name an inherited column by the table that defines it, and a partition\'s column by its parent table.',
   );
 }

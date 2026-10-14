@@ -291,7 +291,7 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
 | `migrations` (required) | string, a path | | A folder of `.sql` migration files, or one `.sql` file (for example a `pg_dump --schema-only` file). |
 | `files` | array of 1-2,000 paths, relative to `migrations` | every `.sql` file under the folder, in natural order (§3.3) | Run exactly these files, in this order. Use it when your tool orders migrations differently (Flyway `V…`/`R…` names, sqitch plans). Every entry must exist inside the folder. |
 | `preset` | `"supabase"` | none | Built-in setup for Supabase projects (§3.4). |
-| `setup` | string, a `.sql` path | none | A file run before the migrations (after `preset`), to create what your platform provides: roles, schemas, functions. Columns it creates are not checked. |
+| `setup` | string, a `.sql` path relative to the project root | none | A file run before the migrations (after `preset`), to create what your platform provides: roles, schemas, functions. Columns it creates are not checked. If it lies in the migrations folder, it is not run again as a migration. |
 | `accept_numeric` | boolean | `false` | Treat `numeric`/`decimal` money columns as fine instead of warning about them. |
 | `money_columns` | array of ≤ 200 names (3-200 characters each) | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`. |
 | `ignore_columns` | array of ≤ 200 names (3-200 characters each) | none | Columns never to report (false positives), in the same format. They still count in `ignored_count`. |
@@ -335,8 +335,8 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
    Columns already present at that point are not checked, unless a migration changes their type.
 4. Run each migration file as **one script**. PostgreSQL runs a multi-statement script as one
    transaction, so a file behaves as `psql -1 -f` would (`psql -f` alone commits statement by
-   statement): a file that adds an enum value and then uses it fails (SQLSTATE 55P04, with a hint), as
-   does `CREATE INDEX CONCURRENTLY` (25001). After each file:
+   statement): a file that adds a value to an enum an earlier file created, then uses it, fails
+   (SQLSTATE 55P04, with a hint), as does `CREATE INDEX CONCURRENTLY` (25001). After each file:
    - run a **sanity query** (`SELECT 1`, with its own 5-second limit). A file that leaves the database
      unusable or silent (for example `COPY ... PROGRAM`, which PGlite cannot run) fails as
      `MIGRATION_FAILED` for that file.
@@ -351,8 +351,8 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
    - inherited columns (reported where they are defined)
    - tables created by extensions
 6. For each finding, `introduced_in` is the earliest file after which the column has had its current
-   type without a break. A change of precision or length (`numeric(10,2)` to `numeric(12,2)`) is not a
-   break. Examples:
+   type without a break. A change of precision or length (`numeric(10,2)` to `numeric(12,2)`, or `real`
+   to `double precision`) is not a break. Examples:
    - created as float in `0001`, still float → `0001`.
    - created as numeric in `0001`, altered to float in `0005` → `0005`.
 7. The worker is terminated at the time limit or on cancellation, and the database is discarded.
@@ -436,7 +436,8 @@ added with `money_columns` or left out with `ignore_columns`.
 
 `integer` and `bigint` money columns are fine. Money kept in text, JSON or a composite type is not
 checked in v1 (too many false positives); such money-named columns are not counted in
-`money_columns_checked`, and the summary says how many there are.
+`money_columns_checked`, and the summary says how many there are: columns of text, JSON, a composite
+or an extension's type (`citext`), not booleans, dates or other types that cannot hold an amount.
 
 Each finding carries a `fix_sql`: a starting point for the new migration. Its names are quoted as
 PostgreSQL's `quote_ident` quotes them (bare when that reads back as the same name, otherwise in
@@ -455,16 +456,21 @@ conversion follows the name and the declared scale; the test suite runs each kin
 - **`SMALLINT_MONEY`:** `... TYPE bigint;`
 - **`null`** also for domain, array and generated columns, where the fix belongs elsewhere, and for a
   table or column name that holds hidden characters: the result shows such a name escaped, and SQL
-  built from the escaped text would name a different column. When any finding of a code has a null
-  `fix_sql`, that code's text in `fixes` ends with a sentence that says why.
+  built from the escaped text would name a different column.
+- **`null`** too for a conversion that multiplies by 100 (pounds to pence, the money type) while the
+  column's default, a CHECK constraint or an index with an expression or a `WHERE` clause holds an
+  amount. `ALTER COLUMN ... TYPE` converts the stored rows with `USING`, but leaves those in the old
+  unit: a default of 2.50 becomes 3 pence, and `CHECK (amount <= 1000.00)` a cap of £10. The next lint
+  could not see that, so such a fix is not offered. A default of zero or `NULL` is fine.
 
-If a fix fails, for example because a view depends on the column, the next lint run shows it: the tool
-runs the new migration too.
+When any finding of a code has a null `fix_sql`, that code's text in `fixes` ends with a sentence
+that says why. If a fix fails, for example because a view depends on the column, the next lint run
+shows it: the tool runs the new migration too.
 
 ### 3.7 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..." |
+| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "No table was created or changed by the 1 migration file, so nothing was checked: ..." |
 | `migrations` | string | The path as given, normalised. |
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
@@ -499,11 +505,14 @@ runs the new migration too.
 | `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it found instead: other file types (".ts files: Knex/TypeORM migrations are code; generate SQL first (`drizzle-kit generate`, `prisma migrate diff --script`, `pg_dump --schema-only`)"), or only down steps, which are left out. |
 | `TOO_MANY_FILES` | More than 2,000. | |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing, or lies outside `migrations`. | |
-| `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column of the tables the files create. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase). |
+| `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
 | `TIMEOUT` | The time limit was hit. | Which file was running, and the limit. |
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
-- **42704** (an object does not exist) and **3F000** (no such schema): "use `preset` or `setup`".
+- **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
+  **42883** (no such function): "use `preset` or `setup`". For a table or a function it first says
+  that the files may have run out of order (pass `files`): such objects are often the project's own,
+  made by a file that sorts later (Flyway's `R__` files sort before `V1__`).
 - **Extension not available:** the list of available extensions, and that a whole-database dump
   (`pg_dump`, `supabase db dump`) should be linted as its migrations folder instead.
 - **42601** (syntax error) on a line starting with `\`: "psql meta-command"; after a
@@ -581,7 +590,9 @@ shortened):
 When a code has a finding whose `fix_sql` is null, its text ends with: "Where fix_sql is null, the
 change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element
 type), a generated column (change its expression), amounts finer than a penny (choose the unit first),
-or a name holding hidden characters (write it by hand)."
+a default, CHECK constraint or index condition that holds amounts in the old unit (convert those in
+the same migration: ALTER COLUMN ... TYPE does not), or a name holding hidden characters (write it by
+hand)."
 
 ---
 
@@ -953,8 +964,10 @@ The tests are in `test/` (Vitest, about 370); each file starts with a comment sa
 - **Lint cases:** the §3.10 example; every kind of column (domains, arrays, the money type, smallint,
   generated columns, quoting, partitions, inheritance, views); renames and type changes; natural order,
   Prisma folders, Flyway `files`, and the down markers of dbmate, goose, sql-migrate, node-pg-migrate
-  and tern; a pg_dump 18 file with `\restrict`; failures with exact line and column, and each hint;
-  the Supabase preset; pgvector; `fix_sql` run on stored rows.
+  and tern; a pg_dump 18 file with `\restrict`; failures with exact line and column, and each hint
+  as real PostgreSQL triggers it; the Supabase preset; a setup file inside the migrations folder;
+  pgvector; every kind of `fix_sql` run on stored rows, and none offered while a default, a CHECK
+  constraint or an index condition would keep amounts in pounds.
 - **Ledger cases:** the §4.9 example; every finding code; the three column shapes; decimal mode; CSV
   line numbers (quoted line breaks, CR LF, a lone CR, a BOM, blank lines); JSON Pointers; JSONL with a
   bad line; exact JSON numbers (ids a float would merge, fractions it would round away); pagination and

@@ -166,9 +166,11 @@ project:
 }
 ```
 
-`fix_sql` is a starting point. It converts pounds to pence, keeps amounts that are already in pence
-(or cents) as they are, and is `null` where the unit needs a decision, such as a column with four
-decimal places; the tests run each kind of conversion on stored rows. The agent adds it as a new
+`fix_sql` is a starting point. It converts pounds to pence and keeps amounts that are already in
+pence (or cents) as they are; the tests run each kind of conversion on stored rows. It is `null` where
+the unit needs a decision (a column with four decimal places), and where a default, a CHECK
+constraint or an index condition holds amounts in pounds: Postgres's type change would leave those
+unconverted, so the agent writes that migration by hand. The agent adds it as a new
 migration and runs the check again, and the check runs that migration too. [SPEC.md](SPEC.md) shows
 full results of the other two tools (§4.9, §5.8).
 
