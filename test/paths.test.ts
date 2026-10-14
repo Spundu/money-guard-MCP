@@ -206,7 +206,9 @@ describe('isSensitive', () => {
       'credentials.csv', 'exports/credentials.json', 'secrets.json', 'alice_accessKeys.csv', 'rootkey.csv', 'client_secret_123.apps.json', 'my-project-service-account.json']) {
       expect(isSensitive(p), p).toBe(true);
     }
-    for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv']) {
+    for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv',
+      // credential words in a migration or a folder name: not a credential download
+      'db/migrations/0002_create_access_keys.sql', 'db/migrations/0003_client_secrets.sql', 'db/migrations/20240202_add_service_accounts', 'credentials']) {
       expect(isSensitive(p), p).toBe(false);
     }
   });

@@ -124,7 +124,18 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
-    if (isSensitive(path.relative(root.real, full))) continue;
+    if (isSensitive(path.relative(root.real, full))) {
+      // Never read, and never dropped in silence: a .sql file left out would be a migration the lint
+      // did not run. Anything else (.git, an .env file) is not a migration anyway.
+      if (entry.name.toLowerCase().endsWith('.sql')) {
+        throw new ToolError(
+          'SENSITIVE_PATH',
+          `"${clipPath(toPosix(path.relative(root.real, full)))}" is named like a secret file (an .env file or a private key), so money-guard does not read it.`,
+          'Rename the migration, or pass files without it.',
+        );
+      }
+      continue;
+    }
     let real = full;
     let isDir = entry.isDirectory();
     let isFile = entry.isFile();
@@ -132,7 +143,7 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       // A link gets the same checks as a path argument (src/paths.ts): its real target must exist, lie
       // inside the project, not look like a secret and, for a file, be .sql. A hostile repository could
       // otherwise ship db/migrations/0002.sql pointing at ../../.env, and run the secrets as SQL.
-      const shown = `"${clip(toPosix(path.relative(root.real, full)), 120)}"`;
+      const shown = `"${clipPath(toPosix(path.relative(root.real, full)))}"`;
       try {
         real = realpathSync.native(full);
       } catch {
@@ -180,7 +191,7 @@ function describeOtherFiles(dir: string): string {
 /** Read a .sql file: the size limits, the hash, UTF-8, the format markers. */
 function readScript(real: string, rel: string, size: number, budget: { total: number }, hash: ReturnType<typeof createHash>, failure: 'MIGRATION_FAILED' | 'SETUP_FAILED'): SqlScript {
   if (size > MAX_FILE_BYTES) {
-    throw new ToolError('FILE_TOO_LARGE', `"${clip(rel, 120)}" is ${formatSize(size)}; a migration file may be at most ${formatMib(MAX_FILE_BYTES)}.`, 'Split the file, or leave it out with files.');
+    throw new ToolError('FILE_TOO_LARGE', `"${clipPath(rel)}" is ${formatSize(size)}; a migration file may be at most ${formatMib(MAX_FILE_BYTES)}.`, 'Split the file, or leave it out with files.');
   }
   budget.total += size;
   if (budget.total > MAX_TOTAL_BYTES) {
@@ -192,7 +203,7 @@ function readScript(real: string, rel: string, size: number, budget: { total: nu
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new ToolError(failure, `"${clip(rel, 120)}" is not valid UTF-8 text.`, 'Save the file as UTF-8.');
+    throw new ToolError(failure, `"${clipPath(rel)}" is not valid UTF-8 text.`, 'Save the file as UTF-8.');
   }
   return { rel, text: prepareSql(text) };
 }
@@ -219,11 +230,11 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     chosen = [target];
   } else if (args.files !== undefined) {
     chosen = args.files.flatMap((entry) => {
-      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `"${clip(entry, 120)}" is not a file in "${folder}".`, `Every entry of files is a path relative to "${folder}". Check the spelling.`);
+      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `"${clipPath(entry)}" is not a file in "${folder}".`, `Every entry of files is a path relative to "${folder}". Check the spelling.`);
       const lexical = path.resolve(target.real, entry);
       if (!isInside(target.real, lexical)) throw notInFolder;
       try {
-        const f = resolveInRoot(root, path.relative(root.real, lexical), { kind: 'file', extensions: ['.sql'] });
+        const f = resolveInRoot(root, toPosix(path.relative(root.real, lexical)), { kind: 'file', extensions: ['.sql'] });
         if (!isInside(target.real, f.real)) throw notInFolder;
         return f.real === setupReal ? [] : [f]; // the setup file runs once, as setup
 

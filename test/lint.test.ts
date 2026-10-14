@@ -183,12 +183,13 @@ describe('money_lint_schema: judging columns', () => {
     const r = await lint({
       'db/migrations/0001.sql':
         'create table o (id int, delivery_fee numeric(10,2) not null default 2.50, amount_cap numeric(10,2) check (amount_cap <= 1000.00), ' +
-        "subtotal double precision, total double precision default 0, discount numeric(10,2) default null, refund money default 0, price money default '1.50', " +
+        "subtotal double precision, total double precision default 0, discount numeric(10,2) default null, refund money default 0, price money default '1.50', refund_typed money default 0::money, " +
         'fee_pence double precision default 2.5);\n' +
         'create index big_orders on o (id) where subtotal > 100;\n',
     });
     const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
-    expect([fix.delivery_fee, fix.amount_cap, fix.subtotal, fix.price]).toEqual([null, null, null, null]);
+    // refund_typed: PostgreSQL cannot cast a money default to bigint, so that ALTER would fail.
+    expect([fix.delivery_fee, fix.amount_cap, fix.subtotal, fix.price, fix.refund_typed]).toEqual([null, null, null, null, null]);
     expect([fix.total, fix.discount, fix.refund, fix.fee_pence]).toEqual([
       'ALTER TABLE public.o ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
       'ALTER TABLE public.o ALTER COLUMN discount TYPE bigint USING round(discount * 100)::bigint;',

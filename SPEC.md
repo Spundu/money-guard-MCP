@@ -134,10 +134,11 @@ Every path argument:
    - `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.keystore`
    - `id_rsa*`, `id_ed25519*`
    - `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`
-   - cloud credentials that have a readable extension: names starting `credentials` or `secrets`
-     (`credentials.csv`, `secrets.json`), and names holding `accesskeys`, `access_keys`, `rootkey`,
-     `client_secret` or `service-account` (AWS access-key downloads, Google OAuth and service-account
-     keys)
+   - cloud credential downloads, which are `.csv` and `.json` files: names starting `credentials` or
+     `secrets` (`credentials.csv`, `secrets.json`), and names holding `accesskeys`, `access_keys`,
+     `rootkey`, `client_secret` or `service-account` (AWS access-key downloads, Google OAuth and
+     service-account keys). The same words in another name, such as the migration
+     `0002_create_access_keys.sql` or the folder `add_service_accounts`, are not a secret.
    - anything inside `.git/`
 
    This is defence in depth. The tools echo only tiny pieces of a file, but a read-only tool must
@@ -150,7 +151,9 @@ The same rules hold for every link `money_lint_schema` meets while it walks a mi
 real target must exist (`PATH_NOT_FOUND`), lie inside the root (`PATH_OUTSIDE_ROOT`) and not look like
 a secret (`SENSITIVE_PATH`), and a link named `*.sql` must lead to a `.sql` file
 (`FILE_TYPE_NOT_ALLOWED`). Otherwise a hostile repository could ship `db/migrations/0002.sql` linking
-to `../../.env` and have the secrets run as SQL.
+to `../../.env` and have the secrets run as SQL. A `.sql` file named like a secret (`.env.local.sql`)
+is refused the same way (`SENSITIVE_PATH`): a migration is never left out in silence. Other secret
+files in the folder, and `.git`, are skipped, as they are not migrations.
 
 **Out of scope:** a local attacker who can swap symlinks between the check and the read (they could
 already read the files).
@@ -482,6 +485,8 @@ conversion follows the name and the declared scale; the test suite runs each kin
   a float. A column finer than a minor unit (more than 2 decimal places, or any decimals on a
   minor-unit name) gets `null`: the unit needs a decision first.
 - **`MONEY_TYPE`:** `... USING (<c>::numeric * 100)::bigint;` (the money type holds major units).
+  `null` when the default is written as a money value (`0::money`): PostgreSQL cannot cast it to
+  bigint, so the ALTER would fail.
 - **`SMALLINT_MONEY`:** `... TYPE bigint;`
 - **`null`** also for domain, array and generated columns, where the fix belongs elsewhere, and for a
   table or column name that holds hidden characters: the result shows such a name escaped, and SQL

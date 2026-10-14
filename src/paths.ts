@@ -53,9 +53,10 @@ export function isInside(root: string, candidate: string): boolean {
 
 /**
  * Names the tools refuse at any depth: environment files, private keys and certificates, package-manager
- * and git credentials, cloud credential downloads that have a readable extension (AWS access-key CSVs,
- * Google client secrets and service-account keys, credentials and secrets files), and anything inside
- * .git (SPEC.md §2.3). Compared in lower case.
+ * and git credentials, cloud credential downloads (.csv and .json files: AWS access-key CSVs, Google
+ * client secrets and service-account keys, credentials and secrets files), and anything inside .git
+ * (SPEC.md §2.3). Compared in lower case. The credential words only count in .csv and .json names: a
+ * migration such as 0002_create_access_keys.sql, or a folder add_service_accounts, is not a secret.
  */
 export function isSensitive(rel: string): boolean {
   const segments = rel.split(/[\\/]/).map((s) => s.toLowerCase());
@@ -68,13 +69,13 @@ export function isSensitive(rel: string): boolean {
     base.startsWith('id_rsa') ||
     base.startsWith('id_ed25519') ||
     ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext)) ||
-    /^(?:credentials|secrets)(?:[._-]|$)/.test(base) ||
-    /accesskeys|access_keys|rootkey|client_secret|service[-_]account/.test(base)
+    (/\.(?:csv|json)$/.test(base) &&
+      (/^(?:credentials|secrets)[._-]/.test(base) || /accesskeys|access_keys|rootkey|client_secret|service[-_]account/.test(base)))
   );
 }
 
 function shown(input: string): string {
-  return `"${clip(input, 120)}"`;
+  return `"${clipPath(input)}"`;
 }
 
 function checkSyntax(input: string): void {

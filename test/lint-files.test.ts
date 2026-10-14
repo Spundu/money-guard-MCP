@@ -147,6 +147,38 @@ describe('money_lint_schema: which files run', () => {
     expect(r.files_applied_count).toBe(7);
   });
 
+  it('runs migrations whose names hold credential words: only .csv and .json downloads are secrets', async () => {
+    const r = await lint({
+      'db/migrations/0001_init.sql': 'create table customers (id bigint);',
+      'db/migrations/0002_create_access_keys.sql': 'create table access_keys (id bigint, monthly_cost double precision);',
+      'db/migrations/0003_client_secrets.sql': 'create table client_secrets (id bigint, fee double precision);',
+      'db/migrations/20240202120000_add_service_accounts/migration.sql': 'create table service_accounts (id bigint, price double precision);',
+    });
+    expect([r.files_applied_count, r.findings.map((f) => f.table)]).toEqual([4, ['public.access_keys', 'public.client_secrets', 'public.service_accounts']]);
+  });
+
+  it('refuses, out loud, a .sql file named like a secret instead of leaving it out in silence', async () => {
+    const e = await failure({ 'db/migrations/0001.sql': 'select 1;', 'db/migrations/.env.local.sql': 'select 1;' });
+    expect(e.toText()).toMatch(/^SENSITIVE_PATH: "p\d+\/db\/migrations\/\.env\.local\.sql" is named like a secret file/);
+  });
+
+  it('shows a long path in an error cut in the middle, keeping the file name', async () => {
+    const dir = newDir();
+    // Two folders of 150 characters (a folder name may hold at most 255) and a 109-character file name.
+    const rel = `db/migrations/${'a'.repeat(150)}/${'a'.repeat(150)}/${'b'.repeat(100)}_0002.sql`;
+    writeTree(path.join(projectRoot().real, dir), { [rel]: Buffer.from([0x73, 0xff]) });
+    const e = await lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` }).then(
+      () => undefined,
+      (err: unknown) => err as ToolError,
+    );
+    expect(e?.message).toMatch(new RegExp(`^"${dir}/db/migrations/[a/]+…[a/]+/b{100}_0002\\.sql" is not valid UTF-8 text\\.$`));
+  });
+
+  it('names a files entry with "/" separators, on Windows too', async () => {
+    const e = await failure({ 'db/migrations/0001.sql': 'select 1;', 'db/migrations/notes.txt': 'not sql' }, { files: ['notes.txt'] });
+    expect(e.toText()).toMatch(/^FILE_TYPE_NOT_ALLOWED: "p\d+\/db\/migrations\/notes\.txt" /);
+  });
+
   it('leaves out Diesel down.sql files, which sort before up.sql in each migration folder', async () => {
     const r = await lint({
       'db/migrations/2024-01-01-000000_create_orders/up.sql': 'create table orders (total double precision);',

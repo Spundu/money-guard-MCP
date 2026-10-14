@@ -217,7 +217,10 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
     case 'SMALLINT_MONEY':
       return `${head};`;
     case 'MONEY_TYPE':
-      return times100(`(${c}::numeric * 100)::bigint`); // the money type holds major units with 2 decimals
+      // The money type holds major units with 2 decimals. A default written as a money value (0::money)
+      // cannot be cast to bigint, so the ALTER would fail: that one needs writing by hand.
+      if (row.default_expr !== null && /::money$/.test(row.default_expr)) return null;
+      return times100(`(${c}::numeric * 100)::bigint`);
     case 'FLOAT_MONEY':
       return convert;
     case 'NUMERIC_MONEY': {
