@@ -37,6 +37,10 @@ const MONEY = [
   // Ledger and finance words (review round 2).
   'debit', 'credit', 'net', 'gross', 'commission', 'deposit', 'interest', 'principal', 'expense', 'income',
   'profit', 'earnings', 'budget', 'credit_limit', 'msrp', 'mrr', 'amount_pennies', 'amount_paise',
+  // Pay, commerce and insurance (review round 3): pay rates are money, other rates are not.
+  'hourly_rate', 'pay_rate', 'day_rate', 'bill_rate', 'bonus', 'allowance', 'stipend', 'per_diem', 'shipping', 'tip',
+  'rent', 'fare', 'ad_spend', 'premium', 'deductible', 'donation', 'penalty', 'pnl', 'cogs', 'totalpennies',
+  'amountinpaise', 'amount_sats', 'amount_kobo',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -52,6 +56,10 @@ const NOT_MONEY = [
   'version_minor', 'minor_patch', 'gross_margin', 'profit_margin', 'price_elasticity', 'total_miles', 'amount_ml',
   'cost_center', 'price_list', 'expense_category', 'payment_terms', 'budget_period', 'interest_rate',
   'commission_rate', 'credit_score', 'net_weight', 'principal_id', 'totaltime', 'pricetier',
+  // Review round 3: measures, ratios after "per", version parts, Stripe ids and labels.
+  'total_calories', 'total_energy', 'gross_weight_lbs', 'net_weight_lbs', 'total_rating', 'net_tonnage',
+  'fee_per_txn_bps', 'commission_per_sale_pct', 'os_minor', 'app_minor', 'exchange_rate', 'shipping_address',
+  'payment_intent', 'balance_transaction', 'fare_class',
 ];
 
 describe('looksLikeMoney', () => {
@@ -63,14 +71,15 @@ describe('looksLikeMoney', () => {
     expect(looksLikeMoney(name)).toBe(false);
   });
 
-  it('has the table of about 160 real names that SPEC.md §3.5 promises', () => {
-    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(160);
+  it('has the table of about 200 names that SPEC.md §3.5 promises', () => {
+    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(200);
   });
 });
 
 describe('namesMinorUnits', () => {
   it('spots names that already hold minor units', () => {
-    const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence', 'pricecents', 'amount_pennies', 'amount_paise'];
+    const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence', 'pricecents', 'amount_pennies', 'amount_paise',
+      'amount_kobo', 'amount_paisa', 'amount_sats', 'amount_satoshis', 'amount_centavos', 'amount_kopecks', 'amount_wei', 'totalpennies', 'amountinpaise', 'amount_in_smallest_unit'];
     expect(yes.map(namesMinorUnits)).toEqual(yes.map(() => true));
     const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent'];
     expect(no.map(namesMinorUnits)).toEqual(no.map(() => false));

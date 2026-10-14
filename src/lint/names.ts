@@ -1,7 +1,8 @@
 // Which column names look like money (SPEC.md §3.5). A name looks like money when ANY of its words is a
 // money word and its LAST word is not a word that turns it into something else (an id, a date, a
 // count, a rate): "amount_due" is money, "amount_currency" and "price_id" are not. Words after "per"
-// only say what the amount is for ("price_per_month" is money), and a one-word name that PostgreSQL
+// only say what the amount is for ("price_per_month" is money), unless the name ends in a ratio
+// ("fee_per_txn_bps"); a pay rate is money ("hourly_rate"); and a one-word name that PostgreSQL
 // folded to lowercase ("TotalAmount" became "totalamount", "AmountDue" "amountdue") is money when it
 // ends in a long money word, or starts with one and does not end in a long non-money word.
 
@@ -15,13 +16,20 @@ const MONEY_WORDS: ReadonlySet<string> = new Set([
   'debit', 'debits', 'credit', 'credits', 'net', 'gross', 'commission', 'commissions', 'deposit',
   'deposits', 'interest', 'principal', 'expense', 'expenses', 'income', 'profit', 'profits', 'earnings',
   'budget', 'budgets', 'msrp', 'mrr', 'arr',
+  // pay, commerce and insurance
+  'bonus', 'bonuses', 'allowance', 'allowances', 'stipend', 'stipends', 'diem', 'rent', 'rents', 'fare',
+  'fares', 'spend', 'premium', 'premiums', 'deductible', 'deductibles', 'donation', 'donations', 'penalty',
+  'penalties', 'pnl', 'cogs', 'shipping', 'tip', 'tips',
+  // minor units of other currencies
+  'paisa', 'kobo', 'sats', 'satoshi', 'satoshis', 'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck',
+  'kopecks', 'wei', 'lamport', 'lamports',
 ]);
 
 const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   // identifiers and labels
   'id', 'ids', 'uuid', 'key', 'ref', 'code', 'currency', 'ccy', 'type', 'kind', 'status', 'state', 'method',
   'mode', 'reason', 'note', 'notes', 'description', 'desc', 'label', 'name', 'title', 'text', 'url', 'hash',
-  'flag', 'enabled', 'version',
+  'flag', 'enabled', 'version', 'address', 'carrier', 'class', 'intent', 'transaction', 'transactions',
   // dates and times
   'date', 'at', 'on', 'time', 'ts', 'timestamp', 'year', 'month', 'week', 'day', 'days', 'hour', 'hours',
   'minutes', 'seconds', 'ms',
@@ -31,16 +39,22 @@ const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   // rates and measures
   'percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'weight', 'score',
   'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
-  'elasticity',
+  'elasticity', 'calories', 'kcal', 'energy', 'lb', 'lbs', 'rating', 'ratings', 'tonnage',
   // groupings and terms
   'category', 'categories', 'list', 'lists', 'center', 'centre', 'terms', 'period',
 ]);
 
 /** Words that say the column already holds minor units, so a fix must not multiply by 100. */
-const MINOR_UNIT_WORDS: ReadonlySet<string> = new Set(['pence', 'penny', 'pennies', 'cent', 'cents', 'paise', 'minor']);
+const MINOR_UNIT_WORDS: ReadonlySet<string> = new Set([
+  'pence', 'penny', 'pennies', 'cent', 'cents', 'paise', 'paisa', 'kobo', 'sat', 'sats', 'satoshi', 'satoshis',
+  'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck', 'kopecks', 'wei', 'lamport', 'lamports', 'minor',
+]);
 
-/** Words of a version number: with them, "minor" is a version part ("version_minor"), not a unit. */
-const VERSION_WORDS: ReadonlySet<string> = new Set(['version', 'major', 'patch']);
+/** Last words that make a name a ratio even after "per": "fee_per_txn_bps", "commission_per_sale_pct". */
+const RATIO_WORDS: ReadonlySet<string> = new Set(['percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'score']);
+
+/** Words before "rate" that make it a pay rate, which is money: "hourly_rate", "day_rate". */
+const PAY_RATE_WORDS: ReadonlySet<string> = new Set(['hourly', 'daily', 'nightly', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour']);
 
 /**
  * Money words long enough to find at the end of a folded one-word name. The short ones (fee, tax, vat,
@@ -48,8 +62,11 @@ const VERSION_WORDS: ReadonlySet<string> = new Set(['version', 'major', 'patch']
  */
 const FOLDED_MONEY_ENDINGS = ['amount', 'balance', 'cost', 'payment', 'payout', 'price', 'refund', 'revenue', 'salary', 'subtotal', 'surcharge', 'total'];
 
-/** Unit words that can follow the money word in a folded name: "amountminor", "totalpence". */
-const FOLDED_UNIT_ENDINGS = ['minor', 'pence', 'cents'];
+/**
+ * Unit words that can follow the money word in a folded name ("amountminor", "totalpennies"), longest
+ * first. The short ones (cent, sat, wei) are left out: they also end percent and other words.
+ */
+const FOLDED_UNIT_ENDINGS = [...MINOR_UNIT_WORDS].filter((w) => !['cent', 'sat', 'wei'].includes(w)).sort((a, b) => b.length - a.length);
 
 /** Non-money last words long enough to find at the end of a folded name ("totalcount", "pricelist"). */
 const FOLDED_NOT_MONEY_ENDINGS = [...NOT_MONEY_LAST_WORDS].filter((w) => w.length >= 4);
@@ -76,15 +93,19 @@ export function words(name: string): string[] {
 }
 
 export function looksLikeMoney(name: string): boolean {
-  let ws = words(name);
-  const per = ws.indexOf('per');
-  if (per > 0) ws = ws.slice(0, per); // "price_per_month": the price is the column, the month what it is for
+  const all = words(name);
+  if (RATIO_WORDS.has(all.at(-1) ?? '') && all.includes('per')) return false; // "fee_per_txn_bps": a ratio
+  if (all.at(-1) === 'rate' && PAY_RATE_WORDS.has(all.at(-2) ?? '')) return true; // "hourly_rate": a price of time
+  const per = all.indexOf('per');
+  const ws = per > 0 ? all.slice(0, per) : all; // "price_per_month": the price is the column, the month what it is for
   const last = ws.at(-1);
   if (last === undefined || NOT_MONEY_LAST_WORDS.has(last)) return false;
-  if (ws.length === 1 && last === 'minor') return false; // a version number (major, minor, patch)
-  const version = ws.some((w) => VERSION_WORDS.has(w)); // "version_minor": a version part, not a unit
-  if (ws.some((w) => MONEY_WORDS.has(w) && !(version && w === 'minor'))) return true;
-  if (ws.length !== 1) return false;
+  // "minor" says the unit of an amount ("amount_minor", "minor_units"); without one it is a version part
+  // ("version_minor", "os_minor"), and alone a version number.
+  const moneyWords = ws.filter((w) => MONEY_WORDS.has(w));
+  const onlyMinor = moneyWords.every((w) => w === 'minor') && !ws.includes('unit') && !ws.includes('units');
+  if (moneyWords.length > 0 && !onlyMinor) return true;
+  if (ws.length !== 1 || last === 'minor') return false;
   const word = withoutUnit(last);
   if (FOLDED_MONEY_ENDINGS.some((ending) => word.endsWith(ending))) return true;
   return FOLDED_MONEY_ENDINGS.some((start) => word.startsWith(start)) && !FOLDED_NOT_MONEY_ENDINGS.some((ending) => word.endsWith(ending));
@@ -98,6 +119,7 @@ export function looksLikeMoney(name: string): boolean {
 export function namesMinorUnits(name: string): boolean {
   const ws = words(name);
   if (ws.some((w) => MINOR_UNIT_WORDS.has(w))) return true;
+  if (ws.includes('smallest') && (ws.includes('unit') || ws.includes('units'))) return true; // "amount_in_smallest_unit"
   const only = ws.length === 1 ? ws[0] : undefined;
   return only !== undefined && withoutUnit(only) !== only;
 }

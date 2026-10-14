@@ -416,47 +416,64 @@ Columns in `ignore_columns` are never reported.
 - between letters and digits.
 
 The name looks like money when **any word is a money word** and **the last word is not a non-money
-word**, with three refinements:
+word**, with these refinements:
 - **"per":** only the words before "per" count, because the rest says what the amount is for:
-  `price_per_month` and `cost_per_hour` are money; `tax_rate_per_year` is not.
+  `price_per_month` and `cost_per_hour` are money; `tax_rate_per_year` is not. A name that still
+  ends in a ratio word (percent, percentage, pct, rate, ratio, bps, factor, multiplier, score) is not
+  money: `fee_per_txn_bps`, `commission_per_sale_pct`.
+- **Pay rates:** "rate" after hourly, daily, nightly, weekly, pay, day, bill, billing, labor or labour
+  is a price of time, so money: `hourly_rate`, `day_rate`. Other rates (`tax_rate`,
+  `exchange_rate`) are not.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
   `totalamount`. A one-word name also counts when it ends in a long money word (amount, balance, cost,
-  payment, payout, price, refund, revenue, salary, subtotal, surcharge, total), maybe followed by
-  minor, pence or cents: `totalamount`, `unitprice`, `amountminor`. It counts too when it starts with
-  one of those words and does not end in a non-money word of four letters or more: `amountdue`,
-  `totaltax`, `balanceafter`, but not `totalcount` or `pricelist`. The short words (fee, tax, vat,
-  cent, charge) are left out, because they also end coffee, syntax, percent and discharge.
-- **"minor"** is a version part, not money, alone or beside version, major or patch (`version_minor`);
-  with another money word (`amount_minor`) or alone with another word (`minor_units`) it is money.
+  payment, payout, price, refund, revenue, salary, subtotal, surcharge, total), maybe followed by a
+  minor-unit word (below, except the short cent, sat and wei): `totalamount`, `unitprice`,
+  `amountminor`, `totalpennies`. It counts too when it starts with one of those words and does not
+  end in a non-money word of four letters or more: `amountdue`, `totaltax`, `balanceafter`, but not
+  `totalcount` or `pricelist`. The short money words (fee, tax, vat, cent, charge) are left out,
+  because they also end coffee, syntax, percent and discharge.
+- **"minor"** says the unit of an amount: it counts beside another money word (`amount_minor`) or
+  beside unit or units (`minor_units`). Without one it is a version part (`version_minor`,
+  `os_minor`), and alone a version number.
 
 - **Money words:** amount, amounts, amt, balance, balances, charge, charges, cost, costs, discount,
   discounts, fee, fees, money, payment, payments, payout, payouts, pence, penny, pennies, cent, cents,
   paise, minor, price, prices, refund, refunds, revenue, salary, salaries, subtotal, surcharge, tax,
-  taxes, total, totals, vat, wage, wages, gbp, usd, eur; and the ledger and finance words debit,
-  debits, credit, credits, net, gross, commission, commissions, deposit, deposits, interest, principal,
-  expense, expenses, income, profit, profits, earnings, budget, budgets, msrp, mrr, arr.
+  taxes, total, totals, vat, wage, wages, gbp, usd, eur; the ledger and finance words debit, debits,
+  credit, credits, net, gross, commission, commissions, deposit, deposits, interest, principal,
+  expense, expenses, income, profit, profits, earnings, budget, budgets, msrp, mrr, arr; the pay,
+  commerce and insurance words bonus, bonuses, allowance, allowances, stipend, stipends, diem, rent,
+  rents, fare, fares, spend, premium, premiums, deductible, deductibles, donation, donations, penalty,
+  penalties, pnl, cogs, shipping, tip, tips; and the minor units of other currencies paisa, kobo, sats,
+  satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport, lamports.
 - **Non-money last words:**
   - identifiers and labels: id, ids, uuid, key, ref, code, currency, ccy, type, kind, status, state,
     method, mode, reason, note, notes, description, desc, label, name, title, text, url, hash, flag,
-    enabled, version
+    enabled, version, address, carrier, class, intent, transaction, transactions
   - dates and times: date, at, on, time, ts, timestamp, year, month, week, day, days, hour, hours,
     minutes, seconds, ms
   - counts and order: count, number, num, no, qty, quantity, items, attempts, retries, rank, tier, level,
     band, position, priority, index, seq, sequence, step, stage
   - rates and measures: percent, percentage, pct, rate, ratio, bps, factor, multiplier, weight, score,
-    distance, duration, km, kg, kwh, volume, points, votes, miles, ml, margin, elasticity
+    distance, duration, km, kg, kwh, volume, points, votes, miles, ml, margin, elasticity, calories,
+    kcal, energy, lb, lbs, rating, ratings, tonnage
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
-- **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, minor.
+- **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, paisa, kobo,
+  sat, sats, satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport,
+  lamports, minor; and "smallest" beside unit or units (`amount_in_smallest_unit`).
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
   `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`,
-  `amountdue`, `debit`, `credit_limit`, `net`.
+  `amountdue`, `debit`, `credit_limit`, `net`, `hourly_rate`, `shipping`.
 - **Examples that are not:** `stripe_price_id`, `amount_currency`, `price_updated_at`, `total_count`,
   `tax_rate`, `fee_bps`, `total_items`, `payment_method`, `minor`, `version_minor`, `total_kwh`,
-  `costcenter`, `gross_margin`, `credit_score`.
+  `costcenter`, `gross_margin`, `credit_score`, `fee_per_txn_bps`, `payment_intent`.
 
-The lists are tested against a table of about 160 real column names (Stripe, Shopify, Supabase
-templates, ledgers and the author's own apps), in `test/names.test.ts`. Names the rule still gets wrong can be
-added with `money_columns` or left out with `ignore_columns`.
+The lists are tested against a table of about 200 column names, most of them real (Stripe, Shopify,
+Supabase templates, ledgers, payroll and the author's own apps), with look-alikes the rule must not
+take for money (coffee, syntax, discharge), in `test/names.test.ts`. A name rule cannot know every
+schema: a real money column it misses that is a float still shows in `other_float_columns`, which every
+summary mentions. Names it gets wrong can be added with `money_columns` or left out with
+`ignore_columns`.
 
 ### 3.6 Findings
 | Code | Severity | Rule |
@@ -1029,8 +1046,8 @@ The tests are in `test/` (Vitest, about 470); each file starts with a comment sa
   deleted, a cut tail, a torn line, a wrong key, a forged seal, a rewritten line, CR LF line ends);
   anchors from an earlier run (grown, emptied, replaced); and a scan of the library's code that fails
   if it can return a reason this server does not map.
-- **Every error code** and every finding code is produced by a test. **Names:** about 160 real column
-  names with the expected answer.
+- **Every error code** and every finding code is produced by a test. **Names:** about 200 column names,
+  most of them real, with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (the file-link cases skip
   on Windows without Developer Mode, and the test run says so); secret files, also behind a link in a
   migrations folder; a hostile project whose file, table and column names hold hidden characters,
