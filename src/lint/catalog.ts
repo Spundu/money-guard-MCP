@@ -18,11 +18,12 @@ const USER_TABLES = `
 
 /**
  * Taken after every file: each column's identity (table oid + column number, which survive renames)
- * and its exact type (type oid + modifier). Cheap enough to run thousands of times.
+ * and its type (the type oid, without the modifier: widening numeric(10,2) to numeric(12,2) does not
+ * introduce a problem the column already had). Cheap enough to run thousands of times.
  */
 export const SNAPSHOT_SQL = `
   SELECT a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
-         a.atttypid::pg_catalog.text || ':' || a.atttypmod::pg_catalog.text AS ty
+         a.atttypid::pg_catalog.text AS ty
   ${USER_TABLES}`;
 
 /**
@@ -100,13 +101,17 @@ export interface LintFinding {
 /** One plain explanation per code (SPEC.md §3.10), returned once for each code present. */
 export const FIXES: Readonly<Record<LintCode, string>> = {
   FLOAT_MONEY:
-    'real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql (it multiplies by 100, assuming the column holds pounds or dollars with 2 decimals) and update the code that reads and writes the column. Renaming it to <column>_pence makes the unit clear.',
+    'real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear.',
   MONEY_TYPE:
-    "Postgres's money type depends on the lc_monetary setting, has a fixed number of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the currency in its own column.",
+    "Postgres's money type depends on the lc_monetary setting, has a fixed number of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the currency in its own column. Constraints and defaults that use the money type must change in the same migration.",
   NUMERIC_MONEY:
-    'numeric is exact, so this is not a rounding bug, but the amounts are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice.',
+    'numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead.',
   SMALLINT_MONEY: 'smallint holds at most 32,767 minor units (£327.67); a larger amount fails with an out-of-range error. Widen it to bigint; no data conversion is needed.',
 };
+
+/** Added to the explanation of every code that has a finding with fix_sql null in the result. */
+export const NULL_FIX_NOTE =
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), amounts finer than a penny (choose the unit first), or a name holding hidden characters (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -141,25 +146,40 @@ export function judge(row: DetailRow, isMoney: boolean, acceptNumeric: boolean):
   return null;
 }
 
+/** The declared scale of a numeric column ("numeric(12,4)" gives 4), or null when none is declared. */
+export function numericScale(declared: string): number | null {
+  const match = /^numeric\(\d+,(-?\d+)\)$/.exec(declared);
+  return match === null ? null : Number(match[1]);
+}
+
 /**
- * A starting point for the fix, or null where the change belongs elsewhere: a domain (change the
- * domain), an array, or a generated column (change its expression). Also null when a name holds a
- * control or invisible character: results show such names escaped, and SQL built from the escaped
- * text would name a different column.
+ * A starting point for the fix, or null where the change belongs elsewhere or needs a decision: a
+ * domain (change the domain), an array, a generated column (change its expression), a numeric column
+ * finer than a minor unit (choose the unit first), or a name holding a control or invisible character
+ * (results show such names escaped, and SQL built from the escaped text would name a different column).
+ * The conversion follows the name: amounts already in minor units (pence, cents, minor) are only
+ * rounded; anything else is taken to be in pounds or dollars and multiplied by 100.
  */
 export function fixSql(row: DetailRow, code: LintCode): string | null {
   if (row.domain_name !== null || row.via_array || row.generated !== '') return null;
   if (hasUnsafe(row.quoted_table) || hasUnsafe(row.quoted_column)) return null;
   const head = `ALTER TABLE ${row.quoted_table} ALTER COLUMN ${row.quoted_column} TYPE bigint`;
   const c = row.quoted_column;
+  const minor = namesMinorUnits(row.column_name);
+  const convert = minor ? `${head} USING round(${c})::bigint;` : `${head} USING round(${c} * 100)::bigint;`;
   switch (code) {
     case 'SMALLINT_MONEY':
       return `${head};`;
     case 'MONEY_TYPE':
-      return `${head} USING (${c}::numeric * 100)::bigint;`;
+      return `${head} USING (${c}::numeric * 100)::bigint;`; // the money type holds major units with 2 decimals
     case 'FLOAT_MONEY':
-    case 'NUMERIC_MONEY':
-      return namesMinorUnits(row.column_name) ? `${head} USING round(${c})::bigint;` : `${head} USING round(${c} * 100)::bigint;`;
+      return convert;
+    case 'NUMERIC_MONEY': {
+      const scale = numericScale(row.declared);
+      if (scale === null) return convert; // no declared scale: like a float, it may hold any decimals
+      if (scale <= 0) return `${head};`; // whole numbers already: keep them as they are
+      return scale > (minor ? 0 : 2) ? null : convert; // finer than a minor unit: choose the unit first
+    }
   }
 }
 

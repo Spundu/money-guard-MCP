@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
 import { hasUnsafe } from '../src/echo.js';
 import { ToolError, type ErrorCode } from '../src/errors.js';
+import { NULL_FIX_NOTE } from '../src/lint/catalog.js';
 import { collectSources } from '../src/lint/files.js';
 import { lintSchema, type LintParams } from '../src/lint/run.js';
 import type { Root } from '../src/paths.js';
@@ -187,6 +189,51 @@ describe('money_lint_schema: judging columns', () => {
     expect(await codeOf(SPEC_FILES, { ignore_columns: ['a.b.c.d'] })).toBe('BAD_COLUMN_NAME');
   });
 
+  it('gives a fix_sql that converts the stored amounts correctly, and none where the unit needs a decision', async () => {
+    const r = await lint({
+      'db/migrations/0001.sql':
+        'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, ' +
+        'fee numeric(10,2), total numeric, amount numeric(12,0), unit_price numeric(12,4), amount_pence numeric(10,2));',
+    });
+    const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
+    expect([fix.unit_price, fix.amount_pence]).toEqual([null, null]); // finer than a penny: choose the unit first
+    expect(r.fixes.NUMERIC_MONEY).toContain(NULL_FIX_NOTE.trim());
+    expect(r.fixes.FLOAT_MONEY).not.toContain('Where fix_sql is null');
+    // Run each fix on real rows: pounds become pence, minor units and whole numbers stay as they are.
+    const db = await PGlite.create();
+    try {
+      await db.exec(
+        'create table p (price double precision, amount_minor_units double precision, price_cents_usd double precision, fee numeric(10,2), total numeric, amount numeric(12,0));' +
+          'insert into p values (19.99, 1999, 1999, 12.34, 0.1, 1500);',
+      );
+      const columns = ['price', 'amount_minor_units', 'price_cents_usd', 'fee', 'total', 'amount'];
+      for (const column of columns) await db.exec(fix[column] ?? 'fix_sql missing');
+      const row = (await db.query<Record<string, string>>(`select ${columns.map((c) => `${c}::text`).join(', ')} from p`)).rows[0];
+      expect(row).toEqual({ price: '1999', amount_minor_units: '1999', price_cents_usd: '1999', fee: '1234', total: '10', amount: '1500' });
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('counts as checked only money columns of a number type, and says how many it could not check', async () => {
+    const r = await lint({ 'db/migrations/0001.sql': 'create type monetary as (amount double precision); create table t (price bigint, total jsonb, balance text, fee monetary);' });
+    expect(r.money_columns_checked).toBe(1);
+    expect(r.summary).toBe('No problems: 1 money column in 1 table uses a safe type. 1 migration file applied. 3 money-named columns of text, JSON or another type were not checked.');
+  });
+
+  it('refuses a money_columns or ignore_columns entry that names no column, and suggests the real one', async () => {
+    const files = { 'db/migrations/0001.sql': 'create table orders (grossvalue numeric(10,2), amount numeric(10,2));' };
+    expect((await failure(files, { money_columns: ['Orders.GrossValue'] })).toText()).toMatch(
+      /^BAD_COLUMN_NAME: money_columns names "public\.Orders\.GrossValue", which is not a column of any table the migrations create\. Did you mean "public\.orders\.grossvalue"\?/,
+    );
+    expect(await codeOf(files, { ignore_columns: ['orders.amount', 'orders.nothing_like_it'] })).toBe('BAD_COLUMN_NAME');
+  });
+
+  it('dates a finding from when the column got its type, not from a later change of precision', async () => {
+    const r = await lint({ 'db/migrations/0001.sql': 'create table t (fee numeric(10,2));', 'db/migrations/0002.sql': 'alter table t alter column fee type numeric(12,2);' });
+    expect(r.findings.map((f) => f.introduced_in.split('/').at(-1))).toEqual(['0001.sql']);
+  });
+
   it('caps the findings at 50 and the lists at 30, and counts them all', async () => {
     const columns = Array.from({ length: 60 }, (_, i) => `price_${i} double precision`).join(', ');
     const files: Record<string, string> = { 'db/migrations/0000.sql': `create table big (${columns});` };
@@ -291,6 +338,36 @@ describe('money_lint_schema: which files run', () => {
     expect(r.files_applied_count).toBe(4);
   });
 
+  it('runs only the up part of files that hold both directions, and leaves out undo and rollback files', async () => {
+    // goose, sql-migrate, node-pg-migrate, tern and dbmate (with options) write these markers; a comment
+    // that only starts like dbmate's marker is not one.
+    const r = await lint({
+      'db/migrations/0001_goose.sql': '-- +goose Up\ncreate table a (price double precision);\n-- +goose StatementBegin\nselect 1;\n-- +goose StatementEnd\n\n-- +goose Down\ndrop table a;\n',
+      'db/migrations/0002_sql_migrate.sql': '-- +migrate Up\ncreate table b (fee double precision);\n-- +migrate Down\ndrop table b;\n',
+      'db/migrations/0003_node_pg_migrate.sql': '-- Up Migration\ncreate table c (total double precision);\n-- Down Migration\ndrop table c;\n',
+      'db/migrations/0004_tern.sql': 'create table d (cost double precision);\n---- create above / drop below ----\ndrop table d;\n',
+      'db/migrations/0005_dbmate.sql': '-- migrate:up transaction:false\r\ncreate table e (amount double precision);\r\n-- migrate:down transaction:false\r\ndrop table e;\r\n',
+      'db/migrations/0006_comment.sql': '-- migrate:downgrade is just a comment here\ncreate table f (balance double precision);\n',
+      'db/migrations/0007_a.undo.sql': 'drop table a;',
+      'db/migrations/0008_b.rollback.sql': 'drop table b;',
+    });
+    expect(r.findings.map((f) => f.table)).toEqual(['public.a', 'public.b', 'public.c', 'public.d', 'public.e', 'public.f']);
+    expect(r.files_applied_count).toBe(6);
+  });
+
+  it('says plainly when no table is left to check, instead of reporting a clean schema', async () => {
+    const r = await lint({ 'db/migrations/0001.sql': '-- a format that keeps both directions\ncreate table t (price double precision);\ndrop table t;\n' });
+    expect(r.summary).toBe(
+      'No tables exist after the 1 migration file, so nothing was checked. If a file also holds its down step, that step dropped what the file created: pass files, or lint a copy without the down steps.',
+    );
+  });
+
+  it('explains a folder that only holds down steps', async () => {
+    expect((await failure({ 'db/migrations/0001.down.sql': 'drop table t;' })).toText()).toMatch(
+      /^NO_SQL_FILES: "p\d+\/db\/migrations" holds no migrations to run\. Its 1 \.sql file is a down step /,
+    );
+  });
+
   it('runs exactly the files given, in the order given', async () => {
     const r = await lint(
       {
@@ -376,10 +453,11 @@ describe('money_lint_schema: failures', () => {
     expect(await codeOf({ 'db/migrations/0001.sql': 'select 1;', 'setup.sql': 'create rol x;' }, { setup: 'setup.sql' })).toBe('SETUP_FAILED');
   });
 
-  it('refuses a migration that is not UTF-8', async () => {
+  it('refuses a migration that is not UTF-8, and a setup file that is not as SETUP_FAILED', async () => {
     const dir = `p${(n += 1)}`;
-    writeTree(path.join(root.real, dir), { 'db/migrations/0001.sql': Buffer.from([0x73, 0x65, 0x6c, 0xff]) });
+    writeTree(path.join(root.real, dir), { 'db/migrations/0001.sql': Buffer.from([0x73, 0x65, 0x6c, 0xff]), 'ok/0001.sql': 'select 1;', 'setup.sql': Buffer.from([0xff]) });
     await expect(lintSchema(root, { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'MIGRATION_FAILED' });
+    await expect(lintSchema(root, { migrations: `${dir}/ok`, setup: `${dir}/setup.sql` })).rejects.toMatchObject({ code: 'SETUP_FAILED' });
   });
 });
 

@@ -60,21 +60,38 @@ export function naturalCompare(a: string, b: string): number {
   return sa.length - sb.length;
 }
 
-/** golang-migrate and Diesel "down" steps, which would undo the schema if they ran. */
+/**
+ * Files that only undo migrations, which would drop the schema if they ran: golang-migrate and Diesel
+ * (down.sql, *.down.sql), Postgrator (*.undo.sql) and yoyo (*.rollback.sql).
+ */
 function isDownFile(name: string): boolean {
   const lower = name.toLowerCase();
-  return lower === 'down.sql' || lower.endsWith('.down.sql');
+  return lower === 'down.sql' || ['.down.sql', '.undo.sql', '.rollback.sql'].some((suffix) => lower.endsWith(suffix));
 }
 
 /**
- * The SQL as it runs. A line starting "-- migrate:down" ends a dbmate file's up part. Lines starting
- * \restrict or \unrestrict (psql directives written by pg_dump 17.6 and later) become spaces of the same
- * length, so the positions Postgres reports still point at the right line and column.
+ * The lines that start the "down" part of a file that holds both directions: dbmate ("-- migrate:down",
+ * maybe followed by options), goose ("-- +goose Down"), sql-migrate ("-- +migrate Down"), node-pg-migrate
+ * ("-- Down Migration") and tern ("---- create above / drop below ----"). They are markers the tools
+ * write, matched by line, not SQL: the up part is everything before the first one.
+ */
+const DOWN_MARKERS: readonly RegExp[] = [
+  /^--\s*migrate:down(?:\s|$)/,
+  /^--\s*\+goose\s+down(?:\s|$)/i,
+  /^--\s*\+migrate\s+down(?:\s|$)/i,
+  /^--\s*down\s+migration(?:\s|$)/i,
+  /^-{4}\s*create above\s*\/\s*drop below\s*-{4}/i,
+];
+
+/**
+ * The SQL as it runs: the up part only (before the first down marker). Lines starting \restrict or
+ * \unrestrict (psql directives written by pg_dump 17.6 and later) become spaces of the same length, so
+ * the positions Postgres reports still point at the right line and column.
  */
 export function prepareSql(text: string): string {
   const out: string[] = [];
   for (const line of text.split('\n')) {
-    if (/^--\s*migrate:down/.test(line)) break;
+    if (DOWN_MARKERS.some((marker) => marker.test(line))) break;
     out.push(/^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) ? ' '.repeat(line.length) : line);
   }
   return out.join('\n');
@@ -84,8 +101,11 @@ function tooManyFiles(): ToolError {
   return new ToolError('TOO_MANY_FILES', `The folder holds more than ${MAX_FILES} .sql files.`, 'Point migrations at the folder of migrations only, or pass files with the ones to run.');
 }
 
-/** Every .sql file under `dir` (real path), as paths relative to `base`, skipping secrets and down steps. */
-function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>): void {
+/**
+ * Every .sql file under `dir` (real path), as paths relative to `base`, skipping secrets and down steps
+ * (counted in `seen.down`, so an empty result can say why).
+ */
+function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number }): void {
   if (visited.has(dir)) return; // a link loop
   visited.add(dir);
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -118,8 +138,12 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       }
     }
     if (isDir) {
-      walk(root, real, base, out, visited);
-    } else if (isFile && entry.name.toLowerCase().endsWith('.sql') && !isDownFile(entry.name)) {
+      walk(root, real, base, out, visited, seen);
+    } else if (isFile && entry.name.toLowerCase().endsWith('.sql')) {
+      if (isDownFile(entry.name)) {
+        seen.down += 1;
+        continue;
+      }
       out.push(toPosix(path.relative(base, full)));
       if (out.length > MAX_FILES) throw tooManyFiles();
     }
@@ -138,7 +162,7 @@ function describeOtherFiles(dir: string): string {
 }
 
 /** Read a .sql file: the size limits, the hash, UTF-8, the format markers. */
-function readScript(real: string, rel: string, size: number, budget: { total: number }, hash: ReturnType<typeof createHash>): SqlScript {
+function readScript(real: string, rel: string, size: number, budget: { total: number }, hash: ReturnType<typeof createHash>, failure: 'MIGRATION_FAILED' | 'SETUP_FAILED'): SqlScript {
   if (size > MAX_FILE_BYTES) {
     throw new ToolError('FILE_TOO_LARGE', `"${clip(rel, 120)}" is ${formatMib(size)}; a migration file may be at most ${formatMib(MAX_FILE_BYTES)}.`, 'Split the file, or leave it out with files.');
   }
@@ -152,7 +176,7 @@ function readScript(real: string, rel: string, size: number, budget: { total: nu
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new ToolError('MIGRATION_FAILED', `"${clip(rel, 120)}" is not valid UTF-8 text.`, 'Save the file as UTF-8.');
+    throw new ToolError(failure, `"${clip(rel, 120)}" is not valid UTF-8 text.`, 'Save the file as UTF-8.');
   }
   return { rel, text: prepareSql(text) };
 }
@@ -165,7 +189,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
   let setup: SqlScript | null = null;
   if (args.setup !== undefined) {
     const s = resolveInRoot(root, args.setup, { kind: 'file', extensions: ['.sql'] });
-    setup = readScript(s.real, s.rel, s.size, budget, hash);
+    setup = readScript(s.real, s.rel, s.size, budget, hash, 'SETUP_FAILED');
   }
 
   let chosen: Array<{ real: string; rel: string; size: number }>;
@@ -190,7 +214,12 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     });
   } else {
     const found: string[] = [];
-    walk(root, target.real, target.real, found, new Set());
+    const seen = { down: 0 };
+    walk(root, target.real, target.real, found, new Set(), seen);
+    if (found.length === 0 && seen.down > 0) {
+      const files = seen.down === 1 ? 'Its 1 .sql file is a down step' : `Its ${seen.down} .sql files are down steps`;
+      throw new ToolError('NO_SQL_FILES', `"${target.rel}" holds no migrations to run. ${files} (down.sql, *.down.sql, *.undo.sql, *.rollback.sql), which money-guard leaves out.`, 'Point migrations at the folder of up migrations, or pass files with the ones to run.');
+    }
     if (found.length === 0) {
       throw new ToolError('NO_SQL_FILES', `"${target.rel}" holds no .sql files. ${describeOtherFiles(target.real)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
     }
@@ -201,6 +230,6 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     });
   }
 
-  const files = chosen.map((f) => readScript(f.real, f.rel, f.size, budget, hash));
+  const files = chosen.map((f) => readScript(f.real, f.rel, f.size, budget, hash, 'MIGRATION_FAILED'));
   return { migrations: target.rel, setup, files, sha256: hash.digest('hex') };
 }

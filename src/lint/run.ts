@@ -2,10 +2,11 @@
 // PostgreSQL, judge every column, and report. One lint runs at a time: each starts a database.
 
 import { overBudget } from '../budget.js';
+import { closest } from '../closest.js';
 import { clip, escapeUnsafe } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { Root } from '../paths.js';
-import { FIXES, baseType, displayType, fixSql, isMoneyColumn, judge, type LintCode, type LintFinding } from './catalog.js';
+import { FIXES, NULL_FIX_NOTE, baseType, displayType, fixSql, isMoneyColumn, judge, type LintCode, type LintFinding } from './catalog.js';
 import { runScripts, type Script } from './database.js';
 import { collectSources } from './files.js';
 import { SUPABASE_PRESET } from './supabase.js';
@@ -92,10 +93,19 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     signal,
   });
 
+  // An entry that names no column is a mistake to report, not a silent no-op: PostgreSQL folds unquoted
+  // names to lowercase, so "Orders.GrossValue" matches nothing.
+  const known = db.detail.map((r) => `${r.schema_name}.${r.table_name}.${r.column_name}`);
+  const knownSet = new Set(known);
+  for (const [param, set] of [['money_columns', listed], ['ignore_columns', ignored]] as const) {
+    for (const entry of set) if (!knownSet.has(entry)) throw unknownColumn(param, entry, known);
+  }
+
   const findings: LintFinding[] = [];
   const tables = new Set<string>();
   const otherFloats: string[] = [];
   let moneyChecked = 0;
+  let moneyOther = 0;
   let ignoredCount = 0;
   for (const row of db.detail) {
     const since = db.since.get(row.col);
@@ -109,7 +119,8 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
       if (judge(row, money, params.accept_numeric ?? false) !== null) ignoredCount += 1;
       continue;
     }
-    if (money || base === 'money') moneyChecked += 1;
+    if (base !== null && (money || base === 'money')) moneyChecked += 1;
+    else if (money) moneyOther += 1; // text, JSON, a composite: not checked (SPEC.md §6)
     const code = judge(row, money, params.accept_numeric ?? false);
     if (code !== null) {
       // Names and paths come from the project, which may be hostile: whole, but escaped (SPEC.md §2.4).
@@ -136,12 +147,13 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const errors = findings.filter((f) => f.severity === 'error').length;
   const warnings = findings.length - errors;
   const fixes: Partial<Record<LintCode, string>> = {};
-  for (const f of findings) fixes[f.code] = FIXES[f.code];
+  const withoutFix = new Set(findings.filter((f) => f.fix_sql === null).map((f) => f.code));
+  for (const f of findings) fixes[f.code] = FIXES[f.code] + (withoutFix.has(f.code) ? NULL_FIX_NOTE : '');
   otherFloats.sort();
   const applied = sources.files.map((f) => escapeUnsafe(f.rel));
 
   const result: LintResult = {
-    summary: summarise(findings.length, errors, warnings, ignoredCount, moneyChecked, tables.size, otherFloats.length, applied.length),
+    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, money: moneyChecked, moneyOther, tables: tables.size, floats: otherFloats.length, files: applied.length }),
     migrations: escapeUnsafe(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -173,13 +185,41 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   return result;
 }
 
-function summarise(problems: number, errors: number, warnings: number, ignored: number, money: number, tables: number, floats: number, files: number): string {
-  const applied = `${plural(files, 'migration file')} applied.`;
-  const ignoredNote = ignored > 0 ? ` ${ignored} ignored.` : '';
-  if (problems > 0) {
-    return `${plural(problems, 'problem')} in ${plural(problems, 'money column')} (${plural(errors, 'error')}, ${plural(warnings, 'warning')}). ${applied}${ignoredNote}`;
+interface Counts {
+  problems: number;
+  errors: number;
+  warnings: number;
+  ignored: number;
+  money: number;
+  moneyOther: number;
+  tables: number;
+  floats: number;
+  files: number;
+}
+
+function summarise(c: Counts): string {
+  const applied = `${plural(c.files, 'migration file')} applied.`;
+  const ignoredNote = c.ignored > 0 ? ` ${c.ignored} ignored.` : '';
+  const otherNote = c.moneyOther > 0 ? ` ${plural(c.moneyOther, 'money-named column')} of text, JSON or another type ${c.moneyOther === 1 ? 'was' : 'were'} not checked.` : '';
+  if (c.tables === 0) {
+    // Nothing was checked: say so, as the ledger tool does for an empty file. A file that holds its own
+    // down step in a format money-guard does not know would have dropped what it created.
+    return `No tables exist after ${c.files === 1 ? 'the 1 migration file' : `the ${c.files} migration files`}, so nothing was checked. If a file also holds its down step, that step dropped what the file created: pass files, or lint a copy without the down steps.`;
   }
-  if (money > 0) return `No problems: ${plural(money, 'money column')} in ${plural(tables, 'table')} use safe types. ${applied}${ignoredNote}`;
-  const floats_ = floats > 0 ? `; ${plural(floats, 'float column')} in other_float_columns, in case one holds money` : '';
-  return `No money columns found in ${plural(tables, 'table')}${floats_}. ${applied}${ignoredNote}`;
+  if (c.problems > 0) {
+    return `${plural(c.problems, 'problem')} in ${plural(c.problems, 'money column')} (${plural(c.errors, 'error')}, ${plural(c.warnings, 'warning')}). ${applied}${ignoredNote}${otherNote}`;
+  }
+  if (c.money > 0) return `No problems: ${plural(c.money, 'money column')} in ${plural(c.tables, 'table')} ${c.money === 1 ? 'uses a safe type' : 'use safe types'}. ${applied}${ignoredNote}${otherNote}`;
+  const floats = c.floats > 0 ? `; ${plural(c.floats, 'float column')} in other_float_columns, in case one holds money` : '';
+  return `No money columns found in ${plural(c.tables, 'table')}${floats}. ${applied}${ignoredNote}${otherNote}`;
+}
+
+function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string, known: readonly string[]): ToolError {
+  const near = closest(entry, known);
+  const hint = near === undefined ? '' : ` Did you mean "${clip(near, 120)}"?`;
+  return new ToolError(
+    'BAD_COLUMN_NAME',
+    `${param} names "${clip(entry, 120)}", which is not a column of any table the migrations create.${hint}`,
+    'Write each entry as the name appears in the database (PostgreSQL folds unquoted names to lowercase): table.column, or schema.table.column outside the public schema.',
+  );
 }

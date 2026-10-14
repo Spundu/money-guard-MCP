@@ -275,20 +275,27 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
 | `timeout_seconds` | integer 5-300 | 60 | Stop after this long. |
 
 ### 3.3 Which files run, in which order
-- **Default:** every `*.sql` file under `migrations`, at any depth, except files named `down.sql` or
-  ending in `.down.sql` (golang-migrate and Diesel "down" steps).
+- **Default:** every `*.sql` file under `migrations`, at any depth, except files that only undo
+  migrations: `down.sql` and `*.down.sql` (golang-migrate, Diesel), `*.undo.sql` (Postgrator) and
+  `*.rollback.sql` (yoyo).
 - **Natural order** of the relative paths. Paths are compared folder by folder. Runs of digits compare
   by numeric value; everything else compares by character code. So `V2__x` comes before `V10__x`,
   `0001_a` before `0002_b`, and `20240101_x/migration.sql` before `20240202_y/migration.sql`. That
-  ordering fits Drizzle, Prisma, Supabase, golang-migrate, node-pg-migrate SQL, Atlas and Diesel.
+  ordering fits Drizzle, Prisma, Supabase, golang-migrate, goose, sql-migrate, node-pg-migrate SQL,
+  dbmate, Atlas and Diesel.
   Anything else passes `files`. The result lists the files it applied, so the order can be checked.
-- **Two file-format conventions are honoured.** They are markers written by tools, not SQL syntax, so
-  the "never parse SQL" rule still holds:
-  - **dbmate:** a line exactly `-- migrate:down` ends the part that runs.
+- **File-format markers are honoured.** They are lines written by tools, matched by line, not SQL
+  syntax, so the "never parse SQL" rule still holds:
+  - **Up and down in one file:** the part that runs ends at the first line that starts the down part:
+    dbmate `-- migrate:down` (alone, or followed by options), goose `-- +goose Down`, sql-migrate
+    `-- +migrate Down`, node-pg-migrate `-- Down Migration` and tern `---- create above / drop below
+    ----`. Without this, the down part would drop what the up part created, and the lint would see
+    nothing to check.
   - **pg_dump 17.6+/18:** lines starting `\restrict ` or `\unrestrict ` are blanked, keeping the same
     length, so line numbers stay exact.
 
-  Any other psql meta-command (a line starting `\`) fails with a hint.
+  Any other psql meta-command (a line starting `\`) fails with a hint. If no table exists after the
+  files ran (a format with an unknown down marker, say), the summary says that nothing was checked.
 
 ### 3.4 How it works
 1. Check the paths, list the files and check the limits (§3.9).
@@ -302,8 +309,11 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
    or write the computer's files or run programs (§1, fact 6). The worker's output (a NOTICE a
    migration raises, say) is captured and dropped, so it never reaches the protocol channel or the log.
 3. Run `preset` (if given), then `setup` (if given). Then take a **baseline snapshot** of the catalog.
-   Columns already present at that point are never checked.
-4. Run each migration file as **one script**, the same way `psql -f` would. After each file:
+   Columns already present at that point are not checked, unless a migration changes their type.
+4. Run each migration file as **one script**. PostgreSQL runs a multi-statement script as one
+   transaction, so a file behaves as `psql -1 -f` would (`psql -f` alone commits statement by
+   statement): a file that adds an enum value and then uses it fails (SQLSTATE 55P04, with a hint), as
+   does `CREATE INDEX CONCURRENTLY` (25001). After each file:
    - run a **sanity query** (`SELECT 1`, with its own 5-second limit). A file that leaves the database
      unusable or silent (for example `COPY ... PROGRAM`, which PGlite cannot run) fails as
      `MIGRATION_FAILED` for that file.
@@ -318,7 +328,8 @@ whose regex SQL provers "never converged". Interview line: *verify by executing,
    - inherited columns (reported where they are defined)
    - tables created by extensions
 6. For each finding, `introduced_in` is the earliest file after which the column has had its current
-   type without a break. Examples:
+   type without a break. A change of precision or length (`numeric(10,2)` to `numeric(12,2)`) is not a
+   break. Examples:
    - created as float in `0001`, still float → `0001`.
    - created as numeric in `0001`, altered to float in `0005` → `0005`.
 7. The worker is terminated at the time limit or on cancellation, and the database is discarded.
@@ -358,7 +369,16 @@ Columns in `ignore_columns` are never reported.
 - between letters and digits.
 
 The name looks like money when **any word is a money word** and **the last word is not a non-money
-word**.
+word**, with three refinements:
+- **"per":** only the words before "per" count, because the rest says what the amount is for:
+  `price_per_month` and `cost_per_hour` are money; `tax_rate_per_year` is not.
+- **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
+  `totalamount`. A one-word name also counts when it ends in a long money word (amount, balance, cost,
+  payment, payout, price, refund, revenue, salary, subtotal, surcharge, total), maybe followed by
+  minor, pence or cents: `totalamount`, `unitprice`, `amountminor`. The short words (fee, tax, vat,
+  cent, charge) are left out, because they also end coffee, syntax, percent and discharge.
+- **"minor" alone** is a version number (major, minor, patch), not money; with another word
+  (`amount_minor`, `minor_units`) it is.
 
 - **Money words:** amount, amounts, amt, balance, balances, charge, charges, cost, costs, discount,
   discounts, fee, fees, money, payment, payments, payout, payouts, pence, penny, cent, cents, minor,
@@ -373,14 +393,15 @@ word**.
   - counts and order: count, number, num, no, qty, quantity, items, attempts, retries, rank, tier, level,
     band, position, priority, index, seq, sequence, step, stage
   - rates and measures: percent, percentage, pct, rate, ratio, bps, factor, multiplier, weight, score,
-    distance, duration, km, kg
+    distance, duration, km, kg, kwh, volume, points, votes
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
-  `platform_fee`, `balance_after`, `price_per_unit`, `total_gbp`.
+  `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`.
 - **Examples that are not:** `stripe_price_id`, `amount_currency`, `price_updated_at`, `total_count`,
-  `tax_rate`, `fee_bps`, `total_items`, `payment_method`.
+  `tax_rate`, `fee_bps`, `total_items`, `payment_method`, `minor`, `total_kwh`, `costcenter`.
 
-The lists are tested against a table of about 80 real column names (Stripe, Shopify, Supabase
-templates and the author's own apps); the README lists them.
+The lists are tested against a table of about 120 real column names (Stripe, Shopify, Supabase
+templates and the author's own apps), in `test/names.test.ts`. Names the rule still gets wrong can be
+added with `money_columns` or left out with `ignore_columns`.
 
 ### 3.6 Findings
 | Code | Severity | Rule |
@@ -390,18 +411,26 @@ templates and the author's own apps); the README lists them.
 | `NUMERIC_MONEY` | warning | A money column whose base type is `numeric`/`decimal`. Silenced by `accept_numeric`. |
 | `SMALLINT_MONEY` | warning | A money column whose base type is `smallint`, which holds at most 32,767 minor units (£327.67). |
 
-`integer` and `bigint` money columns are fine. Money kept in text or JSON is not checked in v1 (too
-many false positives).
+`integer` and `bigint` money columns are fine. Money kept in text, JSON or a composite type is not
+checked in v1 (too many false positives); such money-named columns are not counted in
+`money_columns_checked`, and the summary says how many there are.
 
 Each finding carries a `fix_sql`: a starting point for the new migration, with identifiers quoted by
-Postgres's own `quote_ident`.
-- **`FLOAT_MONEY`, `NUMERIC_MONEY`:** `ALTER TABLE <t> ALTER COLUMN <c> TYPE bigint USING round(<c> * 100)::bigint;`
-  It drops the `* 100` when the name already ends in pence/penny/cent/cents/minor.
-- **`MONEY_TYPE`:** `... USING (<c>::numeric * 100)::bigint;`
+Postgres's own `quote_ident`. Its conversion follows the name and the declared scale; the test suite
+runs each kind on stored rows.
+- **`FLOAT_MONEY`:** `ALTER TABLE <t> ALTER COLUMN <c> TYPE bigint USING round(<c> * 100)::bigint;`,
+  taking the column to hold pounds or dollars. When the name says minor units (pence, penny, cent,
+  cents or minor anywhere in it), it only rounds: `USING round(<c>)::bigint`.
+- **`NUMERIC_MONEY`:** the same, by declared scale: 1 or 2 decimal places multiply by 100; scale 0 (or
+  less) holds whole numbers, which stay as they are (`... TYPE bigint;`); no declared scale rounds like
+  a float. A column finer than a minor unit (more than 2 decimal places, or any decimals on a
+  minor-unit name) gets `null`: the unit needs a decision first.
+- **`MONEY_TYPE`:** `... USING (<c>::numeric * 100)::bigint;` (the money type holds major units).
 - **`SMALLINT_MONEY`:** `... TYPE bigint;`
-- **`null`** for domain, array and generated columns, where the fix belongs elsewhere (explained in
-  `fixes`), and for a table or column name that holds hidden characters: the result shows such a name
-  escaped, and SQL built from the escaped text would name a different column.
+- **`null`** also for domain, array and generated columns, where the fix belongs elsewhere, and for a
+  table or column name that holds hidden characters: the result shows such a name escaped, and SQL
+  built from the escaped text would name a different column. When any finding of a code has a null
+  `fix_sql`, that code's text in `fixes` ends with a sentence that says why.
 
 If a fix fails, for example because a view depends on the column, the next lint run shows it: the tool
 runs the new migration too.
@@ -409,7 +438,7 @@ runs the new migration too.
 ### 3.7 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." |
+| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..." |
 | `migrations` | string | The path as given, normalised. |
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
@@ -417,13 +446,13 @@ runs the new migration too.
 | `files_applied` | string[] | The first 30 (fewer if the result would pass its budget, §2.4), in run order, relative to the root. |
 | `files_applied_truncated` | boolean | |
 | `tables_checked` | integer | |
-| `money_columns_checked` | integer | |
+| `money_columns_checked` | integer | Money columns whose type was judged: a number type or `money`. Money-named columns of text, JSON or other types are not counted (§3.6). |
 | `error_count`, `warning_count`, `ignored_count` | integer | Totals, including findings cut by the cap. |
 | `findings` | Finding[] | Errors first, then warnings, then by table and column; **at most 50** (fewer if the result would pass its budget, §2.4). |
 | `findings_truncated` | boolean | |
 | `other_float_columns` | string[] | Float columns whose names do **not** look like money (`schema.table.column`, the first 30, or fewer if the result would pass its budget), so the model can check none of them hold money. |
 | `other_float_columns_count` | integer | |
-| `fixes` | object | One plain explanation per code present (text in §3.10). |
+| `fixes` | object | One plain explanation per code present (text in §3.10), ending with why `fix_sql` is null where it is. |
 
 **Finding:**
 | Field | Type | Meaning |
@@ -439,24 +468,30 @@ runs the new migration too.
 ### 3.8 Errors (besides §2.5)
 | Code | When | Message contents |
 |---|---|---|
-| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file, line and column (from Postgres's `position`, counted in characters), SQLSTATE and the Postgres message (≤ 300 characters). It adds a targeted hint by SQLSTATE. |
-| `SETUP_FAILED` | The preset or the `setup` file fails. | The same details. |
-| `NO_SQL_FILES` | The folder has no `.sql` files. | What it found instead. For example: ".ts files: Knex/TypeORM migrations are code; generate SQL first (`drizzle-kit generate`, `prisma migrate diff --script`, `pg_dump --schema-only`)." |
+| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file, line and column (from Postgres's `position`, counted in characters), SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
+| `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details. |
+| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it found instead: other file types (".ts files: Knex/TypeORM migrations are code; generate SQL first (`drizzle-kit generate`, `prisma migrate diff --script`, `pg_dump --schema-only`)"), or only down steps, which are left out. |
 | `TOO_MANY_FILES` | More than 2,000. | |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing, or lies outside `migrations`. | |
-| `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`. | |
+| `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column of the tables the files create. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase). |
 | `TIMEOUT` | The time limit was hit. | Which file was running, and the limit. |
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist) and **3F000** (no such schema): "use `preset` or `setup`".
-- **Extension not available:** the list of available extensions.
-- **42601** (syntax error) on a line starting with `\`: "psql meta-command".
+- **Extension not available:** the list of available extensions, and that a whole-database dump
+  (`pg_dump`, `supabase db dump`) should be linted as its migrations folder instead.
+- **42601** (syntax error) on a line starting with `\`: "psql meta-command"; after a
+  `COPY ... FROM stdin;` line: "a pg_dump with data; lint a schema-only dump".
 - **25001** (`CREATE INDEX CONCURRENTLY` inside a script): "leave this file out with `files` if it only
   creates indexes".
+- **55P04** (a new enum value used in the transaction that adds it): "split the file in two".
+- **Classes 53 and 54** (out of memory, a program limit): "the file needs more than the lint database
+  can give it".
 
 **Example:** `MIGRATION_FAILED: db/migrations/0004_rls.sql line 3, column 34: role "authenticated"
-does not exist (SQLSTATE 42704). Fix: this file needs objects your platform creates. For a Supabase
-project call again with preset "supabase"; otherwise pass setup, a .sql file that creates them.`
+does not exist (SQLSTATE 42704). Fix: This file needs objects your platform creates. For a Supabase
+project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE
+ROLE ..., CREATE SCHEMA ...).`
 
 ### 3.9 Limits
 - At most 2,000 files.
@@ -501,17 +536,20 @@ shortened):
   "other_float_columns": [],
   "other_float_columns_count": 0,
   "fixes": {
-    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql (it multiplies by 100, assuming the column holds pounds or dollars with 2 decimals) and update the code that reads and writes the column. Renaming it to <column>_pence makes the unit clear.",
-    "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but the amounts are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice."
+    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear.",
+    "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead."
   }
 }
 ```
 `fixes` text for the other two codes:
-- **`MONEY_TYPE`:** "Postgres's money type depends on the lc_monetary setting, has a fixed number
-  of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the
-  currency in its own column."
+- **`MONEY_TYPE`:** "Postgres's money type depends on the lc_monetary setting, has a fixed number of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the currency in its own column. Constraints and defaults that use the money type must change in the same migration."
 - **`SMALLINT_MONEY`:** "smallint holds at most 32,767 minor units (£327.67); a larger amount fails
   with an out-of-range error. Widen it to bigint; no data conversion is needed."
+
+When a code has a finding whose `fix_sql` is null, its text ends with: "Where fix_sql is null, the
+change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element
+type), a generated column (change its expression), amounts finer than a penny (choose the unit first),
+or a name holding hidden characters (write it by hand)."
 
 ---
 

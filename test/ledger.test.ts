@@ -265,6 +265,16 @@ describe('money_check_double_entry: reading CSV', () => {
     );
   });
 
+  it('finds the closest column quickly even in a huge hostile header', () => {
+    // 2,000 columns of 1,000 characters, and a 200-character mapped name: the distances were computed
+    // over whole names, many times each during a sort (seconds); now once per column, over the first 64
+    // characters.
+    const header = Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')}${'c'.repeat(996)}`).join(',');
+    const started = performance.now();
+    expect(errorText(() => check('.csv', `${header}\n`, { columns: { transaction_id: 'x'.repeat(200), amount: 'a' } }))).toMatch(/^COLUMN_NOT_FOUND: /);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
   it('refuses a mapped name that appears twice', () => {
     expect(codeOf(() => check('.csv', 't,a,a\nA,1,2\n', { columns }))).toBe('COLUMN_AMBIGUOUS');
   });

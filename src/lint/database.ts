@@ -74,17 +74,27 @@ export function failure(script: Script, err: DbError, context: { available: read
   const state = err.code ? ` (SQLSTATE ${err.code})` : '';
   const message = `${where}: ${clip(err.message, 300)}${detail}${state}.`;
 
+  const lines = script.text.split('\n');
   let fix: string;
   if (/^extension ".*" is not available$/.test(err.message)) {
-    fix = `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, leave the file out with files.`;
+    fix =
+      `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, leave the file out with files. ` +
+      'A whole-database dump (pg_dump, supabase db dump) also creates the extensions a platform provides: lint the migrations folder instead (supabase/migrations for Supabase).';
   } else if (err.code !== undefined && MISSING_OBJECT.has(err.code)) {
     fix = context.preset
       ? 'The Supabase preset does not create this. Pass setup: a .sql file that creates it (it runs after the preset).'
       : 'This file needs objects your platform creates. For a Supabase project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE ROLE ..., CREATE SCHEMA ...).';
-  } else if (err.code === '42601' && at !== null && (script.text.split('\n')[at.line - 1] ?? '').startsWith('\\')) {
+  } else if (err.code === '42601' && at !== null && (lines[at.line - 1] ?? '').startsWith('\\')) {
     fix = 'That line is a psql meta-command, which only psql understands. Leave the file out with files, or lint a copy without that line.';
+  } else if (err.code === '42601' && at !== null && lines.slice(0, at.line - 1).some((line) => /^COPY\s.+\sFROM\s+stdin;/i.test(line))) {
+    // pg_dump writes table rows after "COPY ... FROM stdin;" lines; only psql can feed them in.
+    fix = 'The file holds table data after COPY ... FROM stdin (a pg_dump with data), which only psql can load. Lint a schema-only dump (pg_dump --schema-only) or the migrations folder instead.';
   } else if (err.code === '25001') {
     fix = 'money-guard runs each file as one script, where CREATE INDEX CONCURRENTLY cannot run. If the file only creates indexes, leave it out with files.';
+  } else if (err.code === '55P04') {
+    fix = 'money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). Split the file in two, or leave it out with files.';
+  } else if (err.code !== undefined && /^5[34]/.test(err.code)) {
+    fix = 'The file needs more than the lint database can give it (memory or a size limit). Leave the file out with files, or lint the migrations in smaller groups.';
   } else {
     fix = 'If this file runs on your real database, it probably needs objects your platform creates: pass setup or preset. Otherwise fix the SQL at that place.';
   }

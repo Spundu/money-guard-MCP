@@ -156,15 +156,17 @@ project:
   "other_float_columns": [],
   "other_float_columns_count": 0,
   "fixes": {
-    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql (it multiplies by 100, assuming the column holds pounds or dollars with 2 decimals) and update the code that reads and writes the column. Renaming it to <column>_pence makes the unit clear.",
-    "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but the amounts are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice."
+    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear.",
+    "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead."
   }
 }
 ```
 
-`fix_sql` is a starting point. The agent adds it as a new migration and runs the check again, and the
-check runs that migration too. [SPEC.md](SPEC.md) shows full results of the other two tools (§4.9,
-§5.8).
+`fix_sql` is a starting point. It converts pounds to pence, keeps amounts that are already in pence
+(or cents) as they are, and is `null` where the unit needs a decision, such as a column with four
+decimal places; the tests run each kind of conversion on stored rows. The agent adds it as a new
+migration and runs the check again, and the check runs that migration too. [SPEC.md](SPEC.md) shows
+full results of the other two tools (§4.9, §5.8).
 
 ## Settings
 
@@ -208,15 +210,17 @@ starts it the way its manifest says, but it has not yet been tried in Claude Des
 **`money_lint_schema`**
 - `migrations` (required): a folder of `.sql` files, or one `.sql` file such as a
   `pg_dump --schema-only` dump.
-- The files run in natural order (`2_x` before `10_x`), at any depth. "Down" files (`down.sql`,
-  `*.down.sql`) are left out, and dbmate's `-- migrate:down` marker is honoured. `files` sets the
-  order by hand (Flyway, sqitch).
+- The files run in natural order (`2_x` before `10_x`), at any depth. Files that only undo migrations
+  (`down.sql`, `*.down.sql`, `*.undo.sql`, `*.rollback.sql`) are left out. In a file that holds both
+  directions (dbmate, goose, sql-migrate, node-pg-migrate, tern), only the up part runs. `files` sets
+  the order by hand (Flyway, sqitch).
 - `preset: "supabase"` creates what Supabase provides (the `authenticated` role, `auth.users`,
   `auth.uid()`, the storage tables and more), so Supabase migrations run. `setup` runs your own SQL
   first.
-- A column counts as money by its name (`price`, `amount_pence`, `totalMinor`, `platform_fee`, but
-  not `price_id`, `tax_rate` or `total_count`), by the `money` type, or because you list it in
-  `money_columns`. The rule and its word lists are in SPEC.md §3.5.
+- A column counts as money by its name (`price`, `amount_pence`, `totalMinor`, `platform_fee`,
+  `price_per_month`, but not `price_id`, `tax_rate` or `total_count`), by the `money` type, or because
+  you list it in `money_columns`. The rule and its word lists are in SPEC.md §3.5. Money kept in
+  text or JSON columns is not checked, and the summary says how many such columns there are.
 - Codes: `FLOAT_MONEY` and `MONEY_TYPE` are errors. `NUMERIC_MONEY` is a warning, which
   `accept_numeric: true` turns off. `SMALLINT_MONEY` is a warning (`smallint` holds at most £327.67 in
   pence).

@@ -4,6 +4,7 @@
 
 import { CsvError, parse } from 'csv-parse/sync';
 import { JsonSyntaxError, parseJson } from 'sealed-audit-chain';
+import { closest } from '../closest.js';
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
 
@@ -65,21 +66,6 @@ function tooManyRows(): ToolError {
 
 // ---------------------------------------------------------------------------------------------- CSV
 
-/** Levenshtein distance, for "did you mean" on a column name. Short strings only. */
-function distance(a: string, b: string): number {
-  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i += 1) {
-    let prev = row[0] ?? 0;
-    row[0] = i;
-    for (let j = 1; j <= b.length; j += 1) {
-      const cur = row[j] ?? 0;
-      row[j] = Math.min(cur + 1, (row[j - 1] ?? 0) + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
-      prev = cur;
-    }
-  }
-  return row[b.length] ?? 0;
-}
-
 function findColumn(header: string[], field: MappedField, name: string): number {
   const exact = header.flatMap((h, i) => (h === name ? [i] : []));
   const matches = exact.length > 0 ? exact : header.flatMap((h, i) => (h.toLowerCase() === name.toLowerCase() ? [i] : []));
@@ -89,8 +75,8 @@ function findColumn(header: string[], field: MappedField, name: string): number 
   }
   const shown = header.slice(0, 30).map((h) => `"${clip(h)}"`);
   const more = header.length > 30 ? ` and ${header.length - 30} more` : '';
-  const closest = [...header].sort((a, b) => distance(a.toLowerCase(), name.toLowerCase()) - distance(b.toLowerCase(), name.toLowerCase()))[0];
-  const hint = closest !== undefined && distance(closest.toLowerCase(), name.toLowerCase()) <= Math.max(2, Math.floor(name.length / 3)) ? ` Did you mean "${clip(closest)}"?` : '';
+  const near = closest(name, header);
+  const hint = near === undefined ? '' : ` Did you mean "${clip(near)}"?`;
   throw new ToolError(
     'COLUMN_NOT_FOUND',
     `The CSV header has no column "${clip(name)}" (mapped as ${field}).${hint} The columns are: ${shown.join(', ')}${more}.`,

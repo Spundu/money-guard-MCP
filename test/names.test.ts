@@ -24,15 +24,22 @@ const MONEY = [
   'balance_after', 'account_balance', 'refund', 'payout', 'salary', 'revenue', 'price_cents',
   'priceInCents', 'compare_at_price', 'deposit_amount', 'charge', 'surcharge', 'money', 'net_amount',
   'gross_amount', 'amount_gbp', 'credit_amount', 'debit_amount', 'wage',
+  // Per-unit prices: the words after "per" say what the amount is for (review round 1).
+  'price_per_month', 'price_per_hour', 'cost_per_hour', 'fee_per_day', 'amount_per_month', 'cost_per_kg_weight',
+  // Unquoted CamelCase that PostgreSQL folded to lowercase.
+  'totalamount', 'unitprice', 'shippingcost', 'amountminor', 'grandtotal', 'totalpence',
+  'minor_units', 'amount_minor_units', 'price_cents_usd',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
   'tax_rate', 'vat_rate', 'fee_bps', 'discount_percent', 'total_items', 'payment_method',
   'payment_status', 'payment_attempts', 'refund_reason', 'charge_id', 'tax_code', 'vat_number',
-  'price_tier', 'fee_type', 'balance_updated_at', 'payout_date', 'cost_per_kg_weight', 'total_weight',
+  'price_tier', 'fee_type', 'balance_updated_at', 'payout_date', 'total_weight',
   'total_distance', 'discount_code', 'tax_year', 'payment_terms_days', 'salary_band', 'price_version',
   'created_at', 'name', 'email', 'quantity', 'percent', 'accent_color', 'taxonomy_id', 'discharge_date',
   'coffee_type', 'europe_region', 'percentage',
+  'tax_rate_per_year', 'count_per_day', 'minor', 'minor_version', 'total_kwh', 'total_volume', 'total_points',
+  'total_votes', 'costcenter', 'pricelist', 'totalcount', 'paymentmethod', 'coffee', 'syntax', 'discharge',
 ];
 
 describe('looksLikeMoney', () => {
@@ -51,7 +58,9 @@ describe('looksLikeMoney', () => {
 
 describe('namesMinorUnits', () => {
   it('spots names that already hold minor units', () => {
-    expect(['amount_pence', 'amountMinor', 'price_cents', 'fee_penny'].map(namesMinorUnits)).toEqual([true, true, true, true]);
-    expect(['total', 'price', 'pence_total', 'amount_gbp'].map(namesMinorUnits)).toEqual([false, false, false, false]);
+    const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence'];
+    expect(yes.map(namesMinorUnits)).toEqual(yes.map(() => true));
+    const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent'];
+    expect(no.map(namesMinorUnits)).toEqual(no.map(() => false));
   });
 });
