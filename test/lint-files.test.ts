@@ -1,6 +1,6 @@
 // money_lint_schema (SPEC.md §3): which files run, links, and names from a hostile project. Failures,
 // platforms and safety are in lint-failures.test.ts.
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ToolError, type ErrorCode } from '../src/errors.js';
@@ -38,6 +38,9 @@ describe('money_lint_schema: names from a hostile project', () => {
     // A table name with a hidden character gets no fix_sql either, whatever its column is called.
     const t = await lint({ 'db/migrations/0001.sql': 'create table "orders\u{200b}" (total double precision);' });
     expect(t.findings.map((f) => [f.table, f.fix_sql])).toEqual([['public.orders\\u200b', null]]);
+    // A domain's name, shown in the column's type, is escaped too.
+    const d = await lint({ 'db/migrations/0001.sql': 'create domain "cash\u{200b}" as double precision; create table p (total "cash\u{200b}");' });
+    expect(d.findings.map((f) => f.type)).toEqual(['"cash\\u200b" (double precision)']);
   });
 
   it('escapes hidden characters in its own errors, without relying on the server', async () => {
@@ -105,6 +108,13 @@ describe('money_lint_schema: links in the migrations folder', () => {
     }
     const run = () => collectSources(rootOf(dir), { migrations: 'db/migrations', files: ['0001.sql', '0002.sql'] });
     expect(run).toThrow('"0002.sql" is not a file in "db/migrations".');
+  });
+
+  it('stops looking through a folder of more than 10,000 files and folders, which would block the server', () => {
+    const dir = tempDir();
+    mkdirSync(path.join(dir, 'big'));
+    for (let i = 0; i <= 10_000; i += 1) writeFileSync(path.join(dir, 'big', `${i}.txt`), '');
+    expect(() => collectSources(rootOf(dir), { migrations: 'big' })).toThrow(/^The folder holds more than 10,000 files and folders; /);
   });
 
   it('walks a folder that links to itself only once', () => {

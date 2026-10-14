@@ -10,6 +10,9 @@ import { ToolError } from '../errors.js';
 import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, readChecked, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
 
 export const MAX_FILES = 2000;
+
+/** Most files and folders the walk of a migrations folder visits: listing them blocks the server. */
+export const MAX_ENTRIES = 10_000;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
@@ -113,7 +116,7 @@ function tooManyFiles(): ToolError {
  * (counted in `seen.down`, so an empty result can say why) and the setup file (`seen.setup`, its real
  * path), which runs once, as setup.
  */
-function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number; setup: string | undefined; setupFound: boolean }): void {
+function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number; setup: string | undefined; setupFound: boolean; entries: number }): void {
   if (visited.has(dir)) return; // a link loop
   visited.add(dir);
   let entries: Dirent[];
@@ -123,6 +126,14 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
     throw unreadable(toPosix(path.relative(root.real, dir)), err);
   }
   for (const entry of entries) {
+    seen.entries += 1;
+    if (seen.entries > MAX_ENTRIES) {
+      throw new ToolError(
+        'TOO_MANY_FILES',
+        `The folder holds more than ${MAX_ENTRIES.toLocaleString('en-GB')} files and folders; money-guard looks through at most that many for migrations.`,
+        'Point migrations at the folder of migrations only, or pass files with the ones to run.',
+      );
+    }
     const full = path.join(dir, entry.name);
     if (isSensitive(path.relative(root.real, full))) {
       // Never read, and never dropped in silence: a .sql file left out would be a migration the lint
@@ -253,7 +264,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     });
   } else {
     const found: string[] = [];
-    const seen = { down: 0, setup: setupReal, setupFound: false };
+    const seen = { down: 0, setup: setupReal, setupFound: false, entries: 0 };
     walk(root, target.real, target.real, found, new Set(), seen);
     if (found.length === 0 && (seen.down > 0 || seen.setupFound)) {
       const left: string[] = [];

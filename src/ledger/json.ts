@@ -47,12 +47,21 @@ function hexValue(code: number): number {
   return -1;
 }
 
+/**
+ * A document with more objects and arrays than the caller allows. Each costs about 180 bytes of memory
+ * for 1 or 2 bytes of text, so a 25 MiB file of nested arrays would take over 2 GiB to build.
+ */
+export class JsonLimitError extends Error {
+  override name = 'JsonLimitError';
+}
+
 class Parser {
   #pos = 0;
 
   constructor(
     private readonly text: string,
     private readonly maxDepth: number,
+    private readonly budget: { containers: number },
   ) {}
 
   parse(): unknown {
@@ -85,6 +94,8 @@ class Parser {
     if (c === QUOTE) return this.#string();
     if (c === 123 /* { */ || c === 91 /* [ */) {
       if (depth >= this.maxDepth) this.#fail(`nesting deeper than ${this.maxDepth}`);
+      this.budget.containers -= 1;
+      if (this.budget.containers < 0) throw new JsonLimitError('too many objects and arrays');
       return c === 123 ? this.#object(depth) : this.#array(depth);
     }
     if (c === 116 /* t */) return this.#expectWord('true'), true;
@@ -204,9 +215,13 @@ class Parser {
   }
 }
 
-/** Parse JSON text strictly (RFC 8259), numbers as JsonNumber. Throws JsonSyntaxError ("... at position N"). */
-export function parseLedgerJson(text: string, maxDepth: number): unknown {
-  return new Parser(text, maxDepth).parse();
+/**
+ * Parse JSON text strictly (RFC 8259), numbers as JsonNumber. Throws JsonSyntaxError ("... at position
+ * N"), or JsonLimitError once more objects and arrays than `budget.containers` were built; a budget
+ * shared by several calls (the lines of a JSONL file) counts them all.
+ */
+export function parseLedgerJson(text: string, maxDepth: number, budget: { containers: number } = { containers: Infinity }): unknown {
+  return new Parser(text, maxDepth, budget).parse();
 }
 
 /** How far a number's decimal point may move, either way, before it counts as too large or too small. */

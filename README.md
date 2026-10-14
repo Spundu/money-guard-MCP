@@ -278,18 +278,19 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
 - **Migrations run in WebAssembly,** in a worker thread, with a virtual filesystem. They cannot read
   your files (`COPY ... FROM '/etc/hosts'` finds nothing) or run programs. An endless migration is
   stopped at the time limit (45 seconds by default), a database left stuck is caught within 5
-  seconds, and a migration that grows the server's memory by more than 1 GiB is stopped.
+  seconds, and a migration that grows the lint database's memory by more than 1 GiB is stopped.
 - **Paths are confined to the project folder.** Links are followed and their real target is checked.
   `..`, absolute paths outside the project, and Windows device and UNC paths are refused. Files that
-  look like secrets (`.env`, private keys, `.npmrc`, anything in `.git`) are refused even inside the
-  project.
+  look like secrets (`.env`, private keys, `.npmrc`, cloud credential downloads, anything in `.git`)
+  are refused even inside the project.
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
   cut to 40 characters. Table and column names stay whole, so the agent can act on them; a path over
   400 characters is cut in the middle. Characters that can hide text are escaped in money-guard's
   results and errors, by Unicode category: control characters, the zero-width and direction
   characters of the "Trojan Source" trick, and the invisible TAG characters that can spell out
   instructions a person cannot see but a model reads. (A few blank-looking characters, such as wide
-  spaces, are outside those categories and pass as they are.) A result is at most 20,000 characters.
+  spaces, are outside those categories and pass as they are; a backslash before `u` is doubled, so
+  text cannot pass for an escape.) A result is at most 20,000 characters.
   SPEC.md §2.4 has the exact rules.
 - **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
   project that does not look like a secret.

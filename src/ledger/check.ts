@@ -2,7 +2,7 @@
 // legs, no leg that moves nothing, whole minor units, legs netting to zero), applied to every
 // transaction of an export, returning every problem instead of throwing at the first.
 
-import { clip } from '../echo.js';
+import { clip, cut } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { parseAmount, type AmountFormat } from '../money.js';
 import { JsonNumber, plainDecimal } from './json.js';
@@ -272,8 +272,10 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
     if (off.length > 0) {
       // Grouping used the full currency text; the result shows it cut like any value from the file.
       const nets = off.slice(0, MAX_NETS).map(([currency, sum]) => ({ currency: currency === null ? null : clip(currency), net: sum.toString() }));
+      // The message is made safe once, from the raw currencies, each cut like any value from the file.
+      const raw = off.slice(0, MAX_NETS).map(([currency, sum]) => ({ currency: currency === null ? null : cut(currency), net: sum.toString() }));
       const message =
-        off.length > MAX_NETS ? `${off.length} currencies do not net to 0; nets lists the first ${MAX_NETS}` : clip(`${netsText(nets)}, not 0`, MAX_MESSAGE);
+        off.length > MAX_NETS ? `${off.length} currencies do not net to 0; nets lists the first ${MAX_NETS}` : clip(`${netsText(raw)}, not 0`, MAX_MESSAGE);
       findings.push({ ...at, code: 'UNBALANCED', severity: 'error', nets, message });
     } else {
       balanced += 1;

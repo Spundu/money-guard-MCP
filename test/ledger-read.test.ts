@@ -177,6 +177,16 @@ describe('money_check_double_entry: reading JSON and JSONL', () => {
     expect(codeOf(() => check('.csv', `t,a\n${'A,1\n'.repeat(1_000_001)}`, { columns }))).toBe('TOO_MANY_ROWS');
   });
 
+  it('refuses more than 2,500,000 JSON objects and arrays in one file, which would take gigabytes to build', () => {
+    const columns = { transaction_id: 't', amount: 'a' };
+    const tooMany = errorText(() => check('.json', `[${'[],'.repeat(2_500_000)}[]]`, { columns }));
+    expect(tooMany).toMatch(/^FILE_TOO_LARGE: The file holds more than 2,500,000 JSON objects and arrays; this tool reads at most that many\./);
+    // In JSONL the count is for the whole file: each of these lines alone is within it.
+    const line = `{"t":"A","a":1,"x":[${'[],'.repeat(999_999)}[]]}\n`;
+    expect(codeOf(() => check('.jsonl', line, { columns }))).toBe('no error');
+    expect(codeOf(() => check('.jsonl', line.repeat(3), { columns }))).toBe('FILE_TOO_LARGE');
+  });
+
   it('decodes ~01 in a JSON Pointer as "~1", not as "/" (RFC 6901: ~1 first, then ~0)', () => {
     const r = check('.jsonl', '{"t":"A","a~1b":5}\n{"t":"A","a~1b":-5}\n', { columns: { transaction_id: 't', amount: '/a~01b' } });
     expect(r.balanced).toBe(true);

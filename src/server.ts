@@ -5,7 +5,8 @@ import { createRequire } from 'node:module';
 import { McpServer, SdkError, SdkErrorCode, type CallToolResult } from '@modelcontextprotocol/server';
 import { verifyAuditLog } from './audit/verify.js';
 import type { Config } from './config.js';
-import { clipPath, escapeStrings, escapeUnsafe } from './echo.js';
+import { MAX_RESULT_CHARS } from './budget.js';
+import { clipPath, escapeHidden, escapeStrings } from './echo.js';
 import { ToolError } from './errors.js';
 import { checkLedgerFile } from './ledger/run.js';
 import { lintSchema } from './lint/run.js';
@@ -24,6 +25,11 @@ const AUDIT_MAX_BYTES = 100 * 1024 * 1024;
 
 export type Log = (line: string) => void;
 const stderrLog: Log = logLine;
+
+/** A result over the budget: each tool keeps within it (SPEC.md §2.4), so this is a bug, never sent. */
+class OverBudgetError extends Error {
+  override name = 'OverBudgetError';
+}
 
 /** null and undefined both mean "not given" (SPEC.md §2.4). */
 function given<T>(value: T | null | undefined): T | undefined {
@@ -61,8 +67,10 @@ async function answer(tool: string, log: Log, signal: AbortSignal | undefined, w
   try {
     // Every string escaped once more on the way out (SPEC.md §2.4): a field a tool forgot cannot arrive raw.
     const result = escapeStrings(await work());
+    const text = JSON.stringify(result);
+    if (text.length > MAX_RESULT_CHARS) throw new OverBudgetError(); // the last guard, should a tool's own fail
     log(`${NAME}: ${tool} ${signal?.aborted ? gaveUp(signal) : 'ok'} ${ms()}`);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result as Record<string, unknown> };
+    return { content: [{ type: 'text', text }], structuredContent: result as Record<string, unknown> };
   } catch (err) {
     if (signal?.aborted) {
       log(`${NAME}: ${tool} ${gaveUp(signal)} ${ms()}`);
@@ -70,11 +78,11 @@ async function answer(tool: string, log: Log, signal: AbortSignal | undefined, w
     }
     if (err instanceof ToolError) {
       log(`${NAME}: ${tool} ${err.code} ${ms()}`);
-      return { content: [{ type: 'text', text: escapeUnsafe(err.toText()) }], isError: true };
+      return { content: [{ type: 'text', text: escapeHidden(err.toText()) }], isError: true };
     }
     log(`${NAME}: ${tool} INTERNAL_ERROR ${ms()} ${trace(err)}`);
     const internal = new ToolError('INTERNAL_ERROR', `money-guard failed unexpectedly (${err instanceof Error ? err.name : typeof err}).`, 'This is a bug in money-guard: please report it. The server log has the details.');
-    return { content: [{ type: 'text', text: escapeUnsafe(internal.toText()) }], isError: true };
+    return { content: [{ type: 'text', text: escapeHidden(internal.toText()) }], isError: true };
   }
 }
 

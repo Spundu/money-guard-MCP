@@ -206,6 +206,10 @@ describe('a hostile project', () => {
       outcomes.push(r.isError ? textOf(r).replace(/:.*$/s, '') : 'ok');
       expect(RAW_HIDDEN.test(textOf(r)), `${name} ${JSON.stringify(args)}`).toBe(false);
       expect(RAW_HIDDEN.test(JSON.stringify(r.structuredContent ?? null)), name).toBe(false);
+      // The server's last pass leaves the tools' escapes as they are: one backslash, never two.
+      const all = textOf(r) + JSON.stringify(r.structuredContent ?? null);
+      expect(all, name).toContain('u202e');
+      expect(all, name).not.toContain(`${'\\'.repeat(4)}u202e`); // two backslashes, as JSON writes them
     }
     expect(outcomes).toEqual(['ok', 'MIGRATION_FAILED', 'NO_SQL_FILES', 'ok', 'ok', 'PATH_NOT_FOUND']);
   });

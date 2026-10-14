@@ -51,13 +51,20 @@ export const MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024;
 const MEMORY_CHECK_MS = 100;
 
 /**
- * The memory the lint can be blamed for: the process's, less what the main thread's JavaScript holds.
- * A ledger or audit call running beside the lint keeps its data there; the database thread's memory
- * (PGlite's WebAssembly memory and in-memory files) is outside it.
+ * The memory the lint can be blamed for: the database thread's own JavaScript heap and the memory
+ * outside it that the thread holds (PGlite's WebAssembly memory and in-memory files), as Node.js 22.16
+ * and later report for one thread, unmoved by a ledger or audit call on the main thread. Older Node.js
+ * cannot measure one thread: the process's memory, less what the main thread's JavaScript holds, stands
+ * in, and memory the main thread frees but the system keeps can then count against the lint.
  */
-function lintMemory(): number {
-  const m = process.memoryUsage();
-  return m.rss - m.heapTotal - m.external;
+async function lintMemory(worker: Worker): Promise<number> {
+  const thread = worker as Partial<Pick<Worker, 'getHeapStatistics'>>;
+  if (thread.getHeapStatistics === undefined) {
+    const m = process.memoryUsage();
+    return m.rss - m.heapTotal - m.external;
+  }
+  const stats = await thread.getHeapStatistics.call(worker);
+  return stats.total_heap_size + stats.external_memory;
 }
 
 /** A setup script (the preset or the setup file) fails as SETUP_FAILED, a migration as MIGRATION_FAILED. */
@@ -235,11 +242,22 @@ export function runScripts(
     };
 
     const memoryLimit = options.memoryLimitBytes ?? MEMORY_LIMIT_BYTES;
-    let baseline: number | undefined; // the process's memory once the database had started
+    let baseline: number | undefined; // the lint's memory once the database had started
+    let measuring = false; // one measurement at a time
     const memory = setInterval(() => {
-      if (baseline === undefined || lintMemory() - baseline <= memoryLimit) return;
-      const script = scriptAt(Math.max(running, 0));
-      finish({ error: new ToolError(failedCode(script), `${script.name}: the lint database grew by more than ${formatMib(memoryLimit)} of memory while running this file.`, tooBig(script)) });
+      if (baseline === undefined || measuring) return;
+      measuring = true;
+      lintMemory(worker).then(
+        (used) => {
+          measuring = false;
+          if (baseline === undefined || used - baseline <= memoryLimit) return;
+          const script = scriptAt(Math.max(running, 0));
+          finish({ error: new ToolError(failedCode(script), `${script.name}: the lint database grew by more than ${formatMib(memoryLimit)} of memory while running this file.`, tooBig(script)) });
+        },
+        () => {
+          measuring = false; // the thread has just ended: its own exit says why
+        },
+      );
     }, MEMORY_CHECK_MS);
 
     const overall = setTimeout(() => {
@@ -256,7 +274,12 @@ export function runScripts(
           postgres = versionOf(m.version);
           available = m.available;
           reserved = m.reserved;
-          baseline = lintMemory();
+          lintMemory(worker).then(
+            (used) => {
+              baseline ??= used;
+            },
+            () => {},
+          );
           break;
         case 'running':
           running = m.step;

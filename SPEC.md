@@ -140,11 +140,15 @@ Every path argument:
    - `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.keystore`
    - `id_rsa*`, `id_ed25519*`
    - `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`
-   - cloud credential downloads, which are `.csv` and `.json` files: names starting `credentials` or
-     `secrets` (`credentials.csv`, `secrets.json`), and names holding `accesskeys`, `access_keys`,
-     `rootkey`, `client_secret` or `service-account` (AWS access-key downloads, Google OAuth and
-     service-account keys). The same words in another name, such as the migration
-     `0002_create_access_keys.sql` or the folder `add_service_accounts`, are not a secret.
+   - cloud credential downloads, which are `.csv` and `.json` files: names holding `credentials`
+     (`credentials.csv`, AWS's `alice_credentials.csv`, `application_default_credentials.json`),
+     `accesskeys`, `access_keys`, `rootkey`, `client_secret`, `service-account`, `serviceaccount`
+     or `adminsdk` (AWS access-key downloads, Google OAuth, service-account and Firebase keys); names
+     starting `secrets` (`secrets.json`); `token.json` and `tokens.json`; and a Google Cloud key as
+     downloaded, `<project>-<12 hex digits>.json` with at least one letter among the digits (so a
+     timestamp such as `export-202401011230.json` is not one). The same words in another name, such as
+     the migration `0002_create_access_keys.sql` or the folder `add_service_accounts`, are not a
+     secret. A name the list misses is not refused: the list covers the usual downloads, not every one.
    - anything inside `.git/`
 
    This is defence in depth. The tools echo only tiny pieces of a file, but a read-only tool must
@@ -179,14 +183,19 @@ already read the files).
     below one). The counts still cover everything, and the `..._truncated` flags say what was cut.
   - `money_check_double_entry`: a shorter page (never empty). `next_offset` continues from the first
     finding left out, so paging still reaches every finding.
+
+  Each field that can be long is bounded first, so one finding always fits. As a last guard, the
+  server never sends a result over the budget: should a tool's own shortening ever fail, the model gets
+  `INTERNAL_ERROR` and the log says `OverBudgetError`.
 - **Money values are strings of integer minor units** (`"-150"`). That is exact at any size; sums use
   `BigInt`. No floating point touches an amount, anywhere.
 - **Data minimisation.** A value copied from a data file into a result (a ledger cell, a header name,
   a transaction id, a currency) is cut at 40 characters, `…` marking the cut. A few things are cut at
   other lengths: a log entry's `writer_key_id` at 64, a library reason at 120, a finding's `message` at
   120, and a Postgres error message at 300 (it can quote the migration's own text, such as a path the
-  migration names). Database table, column and type names stay whole, so the model can act on them
-  (PostgreSQL caps a name at 63 bytes). A path inside the project stays whole up to 400 characters; a
+  migration names). Database table and column names stay whole, so the model can act on them
+  (PostgreSQL caps a name at 63 bytes). A column's type is cut at 200 characters: PostgreSQL's
+  `format_type` writes it, and a migration can replace that function. A path inside the project stays whole up to 400 characters; a
   longer one (folders can nest deep) is cut in the middle with `…`, keeping its first folders and its
   file name, so one finding or one error always fits the budget. A result never holds a whole line
   from a file, and never any key material.
@@ -194,10 +203,14 @@ already read the files).
   zero-width characters, direction marks, the bidirectional overrides and isolates of "Trojan Source",
   which make text read differently from what it is, the byte order mark, and the TAG characters, which
   can spell out text a person cannot see but a model reads); line and paragraph separators (Zl, Zp);
-  lone surrogates (Cs); and the other default-ignorable code points (variation selectors, the Hangul
-  and Mongolian fillers). Each appears as `\uXXXX`, or `\u{XXXXX}` above U+FFFF, in every result and
+  lone surrogates (Cs); private-use characters (Co) and code points with no character (Cn), which show
+  as nothing or a box; the other default-ignorable code points (variation selectors, the Hangul and
+  Mongolian fillers); and four characters drawn blank that no category gives away (U+2800, U+16FE4,
+  U+13440, U+1D159). Each appears as `\uXXXX`, or `\u{XXXXX}` above U+FFFF, in every result and
   error money-guard writes: each tool escapes what it copies, and the server escapes every result and
-  error once more on the way out. (Text the SDK writes itself, such as an input validation error that
+  error once more on the way out. In text copied from a project or a file, a backslash before `u`
+  appears doubled (`\\u200b`), so text that looks like an escape cannot pass for one. Other
+  blank-looking characters, such as wide spaces, are ordinary text and appear as they are. (Text the SDK writes itself, such as an input validation error that
   quotes the model's own argument, is not money-guard's.) Names that hold such characters get no
   `fix_sql` (§3.6).
 - **Deterministic.** The same files and the same arguments give byte-identical results. Findings are
@@ -570,7 +583,7 @@ shows it: the tool runs the new migration too.
 | `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file, line and column (from Postgres's `position`, counted in characters), SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
 | `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead (the five most common file types, such as "It holds 3 .ts files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup). |
-| `TOO_MANY_FILES` | More than 2,000. | |
+| `TOO_MANY_FILES` | More than 2,000 `.sql` files, or more than 10,000 files and folders to look through for them (listing them blocks the server). | Points at the folder of migrations, or `files`. |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing, or lies outside `migrations`. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
 | `TIMEOUT` | The time limit was hit. | Which file was running, and the limit; the fix says a larger limit helps only with a client that waits longer than 60 seconds. |
@@ -602,16 +615,20 @@ project call again with preset "supabase"; otherwise pass setup: a .sql file tha
 ROLE ..., CREATE SCHEMA ...).`
 
 ### 3.9 Limits
-- At most 2,000 files.
+- At most 2,000 files, found among at most 10,000 files and folders.
 - Each file at most 5 MiB; all files together at most 20 MiB.
 - Time limit from `timeout_seconds`.
 - Memory: while the files run, the lint may take at most 1 GiB more than it had once the database
-  had started. That is the process's memory less what the server's own JavaScript holds, so a ledger or
-  audit call running meanwhile does not count. It is checked ten times a second, so one statement can
-  briefly take more before the check sees it. A file that needs more fails as `MIGRATION_FAILED`
+  had started. That is the database thread's own memory: its JavaScript heap and what it holds outside
+  it (PGlite's WebAssembly memory and in-memory files), as Node.js 22.16 and later report for one
+  thread, so a ledger or audit call has no effect on it. (Older Node.js cannot measure one thread: there
+  the process's memory, less what the main thread's JavaScript holds, stands in, and memory a ledger
+  call frees but the system keeps can count against the lint.) It is checked ten times a second, so one
+  statement can briefly take more before the check sees it; the checks and the time limit run on the
+  server's main thread, so while a ledger or audit call runs (a few seconds at most) they wait, and a
+  lint can take more for that long. A file that needs more fails as `MIGRATION_FAILED`
   (`SETUP_FAILED` for setup) with a hint, and its database is discarded. (The worker's JavaScript heap
-  has its own 1 GiB limit, but PGlite keeps its WebAssembly memory and in-memory files outside that
-  heap, so the process's memory is what is watched.)
+  has its own 1 GiB limit too.)
 - One lint at a time.
 - At most 50 findings in a result. The counts still cover them all, and the model fixes those and runs
   the tool again.
@@ -844,7 +861,10 @@ The fields come in the order of this table. Findings are sorted by their first l
 
 ### 4.8 Limits
 - The file is at most 25 MiB and holds at most 1,000,000 rows.
-- JSON nests at most 100 levels.
+- JSON nests at most 100 levels, and a file (all the lines of a JSONL file together) holds at most
+  2,500,000 objects and arrays: each costs about 180 bytes of memory for one or two bytes of text, so
+  a 25 MiB file of nested arrays would take over 2 GiB (`FILE_TOO_LARGE`). A million records with one
+  nested object each fit.
 - At most 20 locations per finding.
 - Pages of at most 50 findings.
 - Each call re-reads the file, so nothing is stored between calls (the 2026-07-28 protocol has no

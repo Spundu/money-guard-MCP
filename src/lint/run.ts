@@ -15,6 +15,8 @@ import { SUPABASE_PRESET } from './supabase.js';
 export const DEFAULT_TIMEOUT_SECONDS = 45;
 const MAX_FINDINGS = 50;
 const MAX_LISTED = 30;
+/** Longest column type a finding shows: a schema-qualified domain and its base type fit. */
+const MAX_TYPE_CHARS = 200;
 
 export interface LintParams {
   migrations: string;
@@ -139,7 +141,8 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
         severity: code === 'FLOAT_MONEY' || code === 'MONEY_TYPE' ? 'error' : 'warning',
         table: escapeUnsafe(table),
         column: escapeUnsafe(row.column_name),
-        type: escapeUnsafe(displayType(row)),
+        // format_type writes it, and a migration can replace that function: cut like any outside text.
+        type: clip(displayType(row), MAX_TYPE_CHARS),
         introduced_in: clipPath(sources.files[since]?.rel ?? '?'),
         fix_sql: fixSql(row, code, db.reserved),
       });

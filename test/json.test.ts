@@ -1,7 +1,7 @@
 // The ledger's JSON parser (src/ledger/json.ts): strict RFC 8259, never JSON.parse, and numbers kept as
 // the exact text the file wrote.
 import { describe, expect, it } from 'vitest';
-import { JsonNumber, JsonSyntaxError, parseLedgerJson, plainDecimal } from '../src/ledger/json.js';
+import { JsonLimitError, JsonNumber, JsonSyntaxError, parseLedgerJson, plainDecimal } from '../src/ledger/json.js';
 
 const parse = (text: string) => parseLedgerJson(text, 100);
 const n = (text: string) => new JsonNumber(text);
@@ -25,6 +25,15 @@ describe('parseLedgerJson', () => {
   it('reads every hex digit of an escape, in either letter case (.NET writes them in capitals)', () => {
     const escapes = ['0123', '4567', '89ab', 'cdef', '89AB', 'CDEF'].map((hex) => `\\u${hex}`).join('');
     expect(parse(`"${escapes}"`)).toBe(String.fromCharCode(0x0123, 0x4567, 0x89ab, 0xcdef, 0x89ab, 0xcdef));
+  });
+
+  it('stops past the objects and arrays its budget allows, counting across calls that share one', () => {
+    expect(parse('[[],{},[[]]]')).toEqual([[], {}, [[]]]); // five containers, no budget given
+    expect(parseLedgerJson('[[],{},[[]]]', 100, { containers: 5 })).toEqual([[], {}, [[]]]);
+    expect(() => parseLedgerJson('[[],{},[[]]]', 100, { containers: 4 })).toThrow(JsonLimitError);
+    const shared = { containers: 3 };
+    parseLedgerJson('{"a":[]}', 100, shared);
+    expect(() => parseLedgerJson('{"b":[]}', 100, shared)).toThrow(JsonLimitError);
   });
 
   it('keeps "__proto__" as an ordinary key, and the last of duplicate keys', () => {

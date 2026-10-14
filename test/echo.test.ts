@@ -1,7 +1,7 @@
 // src/echo.ts: what a result may repeat from a file (SPEC.md §2.4). Pieces are cut to a fixed length,
 // paths are cut in the middle, and every character that could hide or disguise text is escaped.
 import { describe, expect, it } from 'vitest';
-import { ECHO_MAX, PATH_MAX, clip, clipPath, escapeStrings, escapeUnsafe, hasUnsafe } from '../src/echo.js';
+import { ECHO_MAX, PATH_MAX, clip, clipPath, cut, escapeHidden, escapeStrings, escapeUnsafe, hasUnsafe } from '../src/echo.js';
 import { RAW_HIDDEN, inTags } from './support/hidden.js';
 
 const width = (s: string) => [...s].length;
@@ -59,9 +59,34 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
     expect(escapeUnsafe('plain name_1 😀')).toBe('plain name_1 😀');
   });
 
-  it('changes nothing the second time: its escapes are plain ASCII', () => {
-    expect(escapeUnsafe(shown)).toBe(shown);
+  it('escapes hidden characters only once: escapeHidden changes nothing the second time', () => {
+    expect(escapeHidden(shown)).toBe(shown);
+    expect(escapeHidden(hostile)).toBe(shown);
     expect([hasUnsafe(hostile), hasUnsafe(shown), hasUnsafe('😀 fine')]).toEqual([true, false, false]);
+  });
+
+  it('doubles a backslash before "u" in raw text, so text cannot pass for an escape', () => {
+    const fake = `pay${'\\'}u200b`; // a backslash, then u200b: six plain characters typed into a name
+    const real = 'pay\u{200b}';
+    expect([escapeUnsafe(fake), escapeUnsafe(real)]).toEqual([`pay${'\\\\'}u200b`, `pay${'\\'}u200b`]);
+    expect(clip(fake)).toBe(escapeUnsafe(fake));
+    expect(clipPath(`db/${fake}.sql`)).toBe(`db/${escapeUnsafe(fake)}.sql`);
+    expect(escapeUnsafe(`C:${'\\'}x`)).toBe(`C:${'\\'}x`); // a backslash before anything else stays one
+  });
+
+  it('cuts raw text without escaping it, for a value that becomes part of a longer text clipped as a whole', () => {
+    expect(cut('GBP')).toBe('GBP');
+    expect(cut('x'.repeat(41))).toBe(`${'x'.repeat(39)}…`);
+    const hidden = `GBP\u{202e}`;
+    expect(cut(hidden)).toBe(hidden); // left raw: clip escapes the whole text once
+    expect(clip(`${cut(hidden)} legs net to 1`)).toBe(`${escapeUnsafe(hidden)} legs net to 1`);
+  });
+
+  it('escapes private-use characters, code points with no character, and four characters drawn blank', () => {
+    for (const cp of [0xe000, 0xf8ff, 0xfdd0, 0xfffe, 0x2800, 0x16fe4, 0x13440, 0x1d159]) {
+      const char = String.fromCodePoint(cp);
+      expect(escapeUnsafe(`a${char}b`), cp.toString(16)).toBe(`a${'\\'}u${cp > 0xffff ? `{${cp.toString(16)}}` : cp.toString(16).padStart(4, '0')}b`);
+    }
   });
 
   it('escapes characters that show as nothing but that a model reads, by Unicode category', () => {

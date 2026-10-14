@@ -70,7 +70,9 @@ export function isSensitive(rel: string): boolean {
     base.startsWith('id_ed25519') ||
     ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext)) ||
     (/\.(?:csv|json)$/.test(base) &&
-      (/^(?:credentials|secrets)[._-]/.test(base) || /accesskeys|access_keys|rootkey|client_secret|service[-_]account/.test(base)))
+      (/credentials|^secrets[._-]|accesskeys|access_keys|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$/.test(base) ||
+        // a Google Cloud key as downloaded: the project's name, then 12 hex digits with at least one letter
+        /-(?=[0-9a-f]*[a-f])[0-9a-f]{12}\.json$/.test(base)))
   );
 }
 

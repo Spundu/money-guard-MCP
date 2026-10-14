@@ -17,10 +17,16 @@ const ELLIPSIS = '…';
  * byte order mark, and the TAG characters U+E0000-E007F, which can spell out text a person cannot see
  * but a model reads); line and paragraph separators (Zl, Zp); lone surrogates (Cs); and every other
  * default-ignorable code point (variation selectors, the Hangul and Mongolian fillers), which shows as
- * nothing.
+ * nothing; private-use characters (Co) and code points with no character (Cn), which show as nothing
+ * or a box; and four characters drawn blank that no category gives away: the blank Braille pattern
+ * U+2800, the Khitan filler U+16FE4, the hieroglyph mirror mark U+13440 and the null notehead U+1D159.
  */
-const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Default_Ignorable_Code_Point}]/u;
+// The two combining marks stand outside the class: inside one, a mark reads as joined to its neighbour.
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u{2800}\u{1d159}]|\u{16fe4}|\u{13440}/u;
 const EVERY_UNSAFE = new RegExp(UNSAFE.source, 'gu');
+
+/** A backslash before "u" in raw text, shown doubled: text that looks like an escape cannot pass for one. */
+const BACKSLASH_U = /\\(?=u)/g;
 
 /** What the model sees for an unsafe character: `\u200b`, or `\u{e0041}` above U+FFFF. Plain ASCII. */
 function escapeChar(char: string): string {
@@ -35,29 +41,47 @@ function shown(char: string): [piece: string, width: number] {
   return [escape, escape.length];
 }
 
+/** Raw text as the model may see it, one character at a time: `shown`, and a backslash before "u" doubled. */
+function* piecesOf(text: string): Generator<[piece: string, width: number]> {
+  for (let i = 0; i < text.length; ) {
+    const char = String.fromCodePoint(text.codePointAt(i) ?? 0);
+    i += char.length;
+    yield char === '\\' && text.charCodeAt(i) === 117 /* u */ ? ['\\\\', 2] : shown(char);
+  }
+}
+
 /** True if `text` holds a character that `escapeUnsafe`, `clip` and `clipPath` escape. */
 export function hasUnsafe(text: string): boolean {
   return UNSAFE.test(text);
 }
 
 /**
- * `text` with every character that must not reach the model raw escaped, and nothing cut. For names a
- * result must show whole so the model can act on them: database identifiers (PostgreSQL caps them at
- * 63 bytes). The escapes are plain ASCII, so applying it twice changes nothing.
+ * Raw `text` with every character that must not reach the model raw escaped, a backslash before "u"
+ * doubled, and nothing cut. For names a result must show whole so the model can act on them: database
+ * identifiers (PostgreSQL caps them at 63 bytes). Apply it once, to raw text: a second pass would double
+ * the backslashes of its own escapes.
  */
 export function escapeUnsafe(text: string): string {
+  return text.replace(BACKSLASH_U, '\\\\').replace(EVERY_UNSAFE, escapeChar);
+}
+
+/**
+ * Text with its hidden characters escaped and nothing else changed, for text that may already have been
+ * made safe: the escapes are plain ASCII, so applying it twice changes nothing.
+ */
+export function escapeHidden(text: string): string {
   return text.replace(EVERY_UNSAFE, escapeChar);
 }
 
 /**
- * A JSON value with `escapeUnsafe` applied to every string in it, keys included: the server's last
+ * A JSON value with `escapeHidden` applied to every string in it, keys included: the server's last
  * step before anything reaches the client, so no string can arrive raw even if a field was missed.
  */
 export function escapeStrings<T>(value: T): T {
-  if (typeof value === 'string') return escapeUnsafe(value) as T;
+  if (typeof value === 'string') return escapeHidden(value) as T;
   if (Array.isArray(value)) return value.map((item: unknown) => escapeStrings(item)) as T;
   if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [escapeUnsafe(key), escapeStrings(item)])) as T;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [escapeHidden(key), escapeStrings(item)])) as T;
   }
   return value;
 }
@@ -70,8 +94,7 @@ export function escapeStrings<T>(value: T): T {
 export function clip(text: string, max: number = ECHO_MAX): string {
   const pieces: Array<[piece: string, width: number]> = [];
   let width = 0;
-  for (const char of text) {
-    const piece = shown(char);
+  for (const piece of piecesOf(text)) {
     pieces.push(piece);
     width += piece[1];
     if (width > max) break; // already too long, so it will be cut: no need to read further
@@ -89,12 +112,26 @@ export function clip(text: string, max: number = ECHO_MAX): string {
 }
 
 /**
+ * Raw `text` cut to at most `max` characters, `…` marking a cut, and not escaped: for a value that
+ * becomes part of a longer text, which `clip` then makes safe as a whole. Clipping text twice would
+ * escape it twice.
+ */
+export function cut(text: string, max: number = ECHO_MAX): string {
+  const chars: string[] = [];
+  for (const char of text) {
+    chars.push(char);
+    if (chars.length > max) return chars.slice(0, max - 1).join('') + ELLIPSIS;
+  }
+  return text;
+}
+
+/**
  * A path inside the project, made safe to show: escaped and, past `max` characters, cut in the middle
  * with `…`, so it keeps its first folders and its file name. An escape is never split. A path can be
  * far longer than any name (folders nest), so this keeps one finding or one error within bounds.
  */
 export function clipPath(text: string, max: number = PATH_MAX): string {
-  const pieces = Array.from(text, shown);
+  const pieces = [...piecesOf(text)];
   if (pieces.reduce((sum, [, w]) => sum + w, 0) <= max) return pieces.map(([piece]) => piece).join('');
 
   const room = max - 1; // one character for the ellipsis

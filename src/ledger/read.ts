@@ -6,7 +6,7 @@ import { CsvError, parse } from 'csv-parse/sync';
 import { closest } from '../closest.js';
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { JsonNumber, JsonSyntaxError, parseLedgerJson } from './json.js';
+import { JsonLimitError, JsonNumber, JsonSyntaxError, parseLedgerJson } from './json.js';
 
 export type LedgerFormat = 'csv' | 'json' | 'jsonl';
 
@@ -39,6 +39,20 @@ export interface LedgerRow {
 export const MAX_ROWS = 1_000_000;
 /** JSON nesting limit (SPEC.md §4.8). */
 const MAX_DEPTH = 100;
+
+/**
+ * Most JSON objects and arrays one file may hold. A million records with one nested object each fit; a
+ * file of bare nested arrays, at about 180 bytes of memory each, stops near 450 MB instead of 2 GiB.
+ */
+export const MAX_CONTAINERS = 2_500_000;
+
+function tooManyContainers(): ToolError {
+  return new ToolError(
+    'FILE_TOO_LARGE',
+    `The file holds more than ${MAX_CONTAINERS.toLocaleString('en-GB')} JSON objects and arrays; this tool reads at most that many.`,
+    'Export a smaller file (a date range, say) and check the parts one by one.',
+  );
+}
 
 const MAPPED_FIELDS: readonly MappedField[] = ['transaction_id', 'amount', 'side', 'debit', 'credit', 'currency'];
 
@@ -225,8 +239,9 @@ function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, fir
 
 function parseOrThrow(text: string): unknown {
   try {
-    return parseLedgerJson(text, MAX_DEPTH);
+    return parseLedgerJson(text, MAX_DEPTH, { containers: MAX_CONTAINERS });
   } catch (err) {
+    if (err instanceof JsonLimitError) throw tooManyContainers();
     if (!(err instanceof JsonSyntaxError)) throw err;
     const at = /at position (\d+)$/.exec(err.message);
     const where = at?.[1] === undefined ? '' : (({ line, column }) => `Line ${line}, column ${column}: `)(lineColumn(text, Number(at[1])));
@@ -254,6 +269,7 @@ function readJsonl(text: string, columns: ColumnMap): Ledger {
   const rows: LedgerRow[] = [];
   let first: Record<string, unknown> | undefined;
   const lines = text.split('\n');
+  const budget = { containers: MAX_CONTAINERS }; // for the whole file, not each line
   for (const [i, raw] of lines.entries()) {
     const content = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
     if (content.trim() === '') continue;
@@ -261,8 +277,9 @@ function readJsonl(text: string, columns: ColumnMap): Ledger {
     const base = { seq: rows.length, line: i + 1 };
     let value: unknown;
     try {
-      value = parseLedgerJson(content, MAX_DEPTH);
+      value = parseLedgerJson(content, MAX_DEPTH, budget);
     } catch (err) {
+      if (err instanceof JsonLimitError) throw tooManyContainers();
       if (!(err instanceof JsonSyntaxError)) throw err;
       rows.push({ ...base, values: {}, bad: 'the line is not valid JSON' });
       continue;

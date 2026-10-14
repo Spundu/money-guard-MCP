@@ -4,6 +4,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolError } from '../src/errors.js';
 import { failure, locate, runScripts } from '../src/lint/database.js';
@@ -184,6 +185,29 @@ describe('runScripts with a database that misbehaves', () => {
       code: 'MIGRATION_FAILED',
       message: 'db/0001.sql: the database stopped while running this file (the database thread died).',
     });
+  });
+
+  it.skipIf(!('getHeapStatistics' in Worker.prototype))('does not count memory the server thread freed but the system kept against the lint (Node.js 22.16+)', async () => {
+    const MIB = 1024 * 1024;
+    const started = path.join(tempDir(), 'started');
+    process.env.MONEY_GUARD_TEST_HEARTBEAT = started;
+    process.env.MONEY_GUARD_TEST_WORKER = 'slow';
+    const outcome = runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, memoryLimitBytes: 64 * MIB }).then(
+      (ok) => ({ ok }),
+      (error: unknown) => ({ error }),
+    );
+    await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000 });
+    await new Promise((r) => setTimeout(r, 100)); // the database has started: the memory baseline is taken
+    // A ledger call has freed 3 GiB that the system keeps: the process is big, its JavaScript small again.
+    const real = process.memoryUsage();
+    const spy = vi.spyOn(process, 'memoryUsage').mockReturnValue({ ...real, rss: real.rss + 3 * 1024 * MIB });
+    try {
+      await new Promise((r) => setTimeout(r, 500)); // five memory checks
+      writeFileSync(`${started}.go`, '');
+      expect(await outcome).toMatchObject({ ok: { postgres: 'PostgreSQL 0 (fake)' } });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('fails the file when the database answers wrongly after it', async () => {
