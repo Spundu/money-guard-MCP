@@ -83,8 +83,8 @@ describe('money_lint_schema: judging columns', () => {
         '  plain_label money,',
         '  fee smallint,',
         '  amount_pence real,',
-        '  gross double precision,',
-        '  total double precision generated always as (gross * 2) stored,',
+        '  base double precision,',
+        '  total double precision generated always as (base * 2) stored,',
         '  lat double precision,',
         '  tax_rate double precision',
         ');',
@@ -109,8 +109,8 @@ describe('money_lint_schema: judging columns', () => {
       ['NUMERIC_MONEY', 'public.sales.amount', 'numeric', 'ALTER TABLE public.sales ALTER COLUMN amount TYPE bigint USING round(amount * 100)::bigint;'],
       ['SMALLINT_MONEY', 'public.shop.fee', 'smallint', 'ALTER TABLE public.shop ALTER COLUMN fee TYPE bigint;'],
     ]);
-    // gross is not money-named; lat and tax_rate are not money: listed for the model to look at.
-    expect(r.other_float_columns).toEqual(['public.shop.gross', 'public.shop.lat', 'public.shop.tax_rate']);
+    // base is not money-named; lat and tax_rate are not money: listed for the model to look at.
+    expect(r.other_float_columns).toEqual(['public.shop.base', 'public.shop.lat', 'public.shop.tax_rate']);
     expect(r.tables_checked).toBe(5); // shop, Orders, sales (not its partition), base_fees, child_fees; not the view
   });
 

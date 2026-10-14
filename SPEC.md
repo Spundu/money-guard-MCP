@@ -402,15 +402,19 @@ word**, with three refinements:
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
   `totalamount`. A one-word name also counts when it ends in a long money word (amount, balance, cost,
   payment, payout, price, refund, revenue, salary, subtotal, surcharge, total), maybe followed by
-  minor, pence or cents: `totalamount`, `unitprice`, `amountminor`. The short words (fee, tax, vat,
+  minor, pence or cents: `totalamount`, `unitprice`, `amountminor`. It counts too when it starts with
+  one of those words and does not end in a non-money word of four letters or more: `amountdue`,
+  `totaltax`, `balanceafter`, but not `totalcount` or `pricelist`. The short words (fee, tax, vat,
   cent, charge) are left out, because they also end coffee, syntax, percent and discharge.
-- **"minor" alone** is a version number (major, minor, patch), not money; with another word
-  (`amount_minor`, `minor_units`) it is.
+- **"minor"** is a version part, not money, alone or beside version, major or patch (`version_minor`);
+  with another money word (`amount_minor`) or alone with another word (`minor_units`) it is money.
 
 - **Money words:** amount, amounts, amt, balance, balances, charge, charges, cost, costs, discount,
-  discounts, fee, fees, money, payment, payments, payout, payouts, pence, penny, cent, cents, minor,
-  price, prices, refund, refunds, revenue, salary, salaries, subtotal, surcharge, tax, taxes, total,
-  totals, vat, wage, wages, gbp, usd, eur.
+  discounts, fee, fees, money, payment, payments, payout, payouts, pence, penny, pennies, cent, cents,
+  paise, minor, price, prices, refund, refunds, revenue, salary, salaries, subtotal, surcharge, tax,
+  taxes, total, totals, vat, wage, wages, gbp, usd, eur; and the ledger and finance words debit,
+  debits, credit, credits, net, gross, commission, commissions, deposit, deposits, interest, principal,
+  expense, expenses, income, profit, profits, earnings, budget, budgets, msrp, mrr, arr.
 - **Non-money last words:**
   - identifiers and labels: id, ids, uuid, key, ref, code, currency, ccy, type, kind, status, state,
     method, mode, reason, note, notes, description, desc, label, name, title, text, url, hash, flag,
@@ -420,14 +424,18 @@ word**, with three refinements:
   - counts and order: count, number, num, no, qty, quantity, items, attempts, retries, rank, tier, level,
     band, position, priority, index, seq, sequence, step, stage
   - rates and measures: percent, percentage, pct, rate, ratio, bps, factor, multiplier, weight, score,
-    distance, duration, km, kg, kwh, volume, points, votes
+    distance, duration, km, kg, kwh, volume, points, votes, miles, ml, margin, elasticity
+  - groupings and terms: category, categories, list, lists, center, centre, terms, period
+- **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, minor.
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
-  `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`.
+  `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`,
+  `amountdue`, `debit`, `credit_limit`, `net`.
 - **Examples that are not:** `stripe_price_id`, `amount_currency`, `price_updated_at`, `total_count`,
-  `tax_rate`, `fee_bps`, `total_items`, `payment_method`, `minor`, `total_kwh`, `costcenter`.
+  `tax_rate`, `fee_bps`, `total_items`, `payment_method`, `minor`, `version_minor`, `total_kwh`,
+  `costcenter`, `gross_margin`, `credit_score`.
 
-The lists are tested against a table of about 120 real column names (Stripe, Shopify, Supabase
-templates and the author's own apps), in `test/names.test.ts`. Names the rule still gets wrong can be
+The lists are tested against a table of about 160 real column names (Stripe, Shopify, Supabase
+templates, ledgers and the author's own apps), in `test/names.test.ts`. Names the rule still gets wrong can be
 added with `money_columns` or left out with `ignore_columns`.
 
 ### 3.6 Findings
@@ -450,8 +458,8 @@ keywords PostgreSQL gives before any migration runs: the migrations control the 
 one that redefined `quote_ident` could otherwise write the SQL the model is told to run. Its
 conversion follows the name and the declared scale; the test suite runs each kind on stored rows.
 - **`FLOAT_MONEY`:** `ALTER TABLE <t> ALTER COLUMN <c> TYPE bigint USING round(<c> * 100)::bigint;`,
-  taking the column to hold pounds or dollars. When the name says minor units (pence, penny, cent,
-  cents or minor anywhere in it), it only rounds: `USING round(<c>)::bigint`.
+  taking the column to hold pounds or dollars. When the name says minor units (a minor-unit word of
+  §3.5 anywhere in it), it only rounds: `USING round(<c>)::bigint`.
 - **`NUMERIC_MONEY`:** the same, by declared scale: 1 or 2 decimal places multiply by 100; scale 0 (or
   less) holds whole numbers, which stay as they are (`... TYPE bigint;`); no declared scale rounds like
   a float. A column finer than a minor unit (more than 2 decimal places, or any decimals on a
@@ -981,7 +989,7 @@ The tests are in `test/` (Vitest, about 370); each file starts with a comment sa
   deleted, a cut tail, a torn line, a wrong key, a forged seal, a rewritten line, CR LF line ends);
   anchors from an earlier run (grown, emptied, replaced); and a scan of the library's code that fails
   if it can return a reason this server does not map.
-- **Every error code** and every finding code is produced by a test. **Names:** about 120 real column
+- **Every error code** and every finding code is produced by a test. **Names:** about 160 real column
   names with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (the file-link cases skip
   on Windows without Developer Mode, and the test run says so); secret files, also behind a link in a

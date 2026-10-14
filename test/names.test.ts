@@ -1,3 +1,5 @@
+// Which column names count as money (src/lint/names.ts, SPEC.md §3.5), against a table of real column
+// names, and which names say the amounts are minor units already.
 import { describe, expect, it } from 'vitest';
 import { looksLikeMoney, namesMinorUnits, words } from '../src/lint/names.js';
 
@@ -27,8 +29,14 @@ const MONEY = [
   // Per-unit prices: the words after "per" say what the amount is for (review round 1).
   'price_per_month', 'price_per_hour', 'cost_per_hour', 'fee_per_day', 'amount_per_month', 'cost_per_kg_weight',
   // Unquoted CamelCase that PostgreSQL folded to lowercase.
-  'totalamount', 'unitprice', 'shippingcost', 'amountminor', 'grandtotal', 'totalpence',
+  'totalamount', 'unitprice', 'shippingcost', 'amountminor', 'grandtotal', 'totalpence', 'pricecents', 'amountcents',
+  // ... or that starts with a long money word (review round 2): Stripe's amount_due, total_tax and
+  // balance_after, written in CamelCase without quotes.
+  'amountdue', 'totaltax', 'balanceafter', 'amountpaid',
   'minor_units', 'amount_minor_units', 'price_cents_usd',
+  // Ledger and finance words (review round 2).
+  'debit', 'credit', 'net', 'gross', 'commission', 'deposit', 'interest', 'principal', 'expense', 'income',
+  'profit', 'earnings', 'budget', 'credit_limit', 'msrp', 'mrr', 'amount_pennies', 'amount_paise',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -40,6 +48,10 @@ const NOT_MONEY = [
   'coffee_type', 'europe_region', 'percentage',
   'tax_rate_per_year', 'count_per_day', 'minor', 'minor_version', 'total_kwh', 'total_volume', 'total_points',
   'total_votes', 'costcenter', 'pricelist', 'totalcount', 'paymentmethod', 'coffee', 'syntax', 'discharge',
+  // Review round 2: a version part, measures, ratios, groupings and terms.
+  'version_minor', 'minor_patch', 'gross_margin', 'profit_margin', 'price_elasticity', 'total_miles', 'amount_ml',
+  'cost_center', 'price_list', 'expense_category', 'payment_terms', 'budget_period', 'interest_rate',
+  'commission_rate', 'credit_score', 'net_weight', 'principal_id', 'totaltime', 'pricetier',
 ];
 
 describe('looksLikeMoney', () => {
@@ -51,14 +63,14 @@ describe('looksLikeMoney', () => {
     expect(looksLikeMoney(name)).toBe(false);
   });
 
-  it('has a table of at least 80 real names (SPEC.md §3.5)', () => {
-    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(80);
+  it('has the table of about 160 real names that SPEC.md §3.5 promises', () => {
+    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(160);
   });
 });
 
 describe('namesMinorUnits', () => {
   it('spots names that already hold minor units', () => {
-    const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence'];
+    const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence', 'amount_pennies', 'amount_paise'];
     expect(yes.map(namesMinorUnits)).toEqual(yes.map(() => true));
     const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent'];
     expect(no.map(namesMinorUnits)).toEqual(no.map(() => false));

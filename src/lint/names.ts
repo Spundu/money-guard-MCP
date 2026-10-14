@@ -2,13 +2,19 @@
 // money word and its LAST word is not a word that turns it into something else (an id, a date, a
 // count, a rate): "amount_due" is money, "amount_currency" and "price_id" are not. Words after "per"
 // only say what the amount is for ("price_per_month" is money), and a one-word name that PostgreSQL
-// folded to lowercase ("TotalAmount" became "totalamount") is money when it ends in a long money word.
+// folded to lowercase ("TotalAmount" became "totalamount", "AmountDue" "amountdue") is money when it
+// ends in a long money word, or starts with one and does not end in a long non-money word.
 
 const MONEY_WORDS: ReadonlySet<string> = new Set([
   'amount', 'amounts', 'amt', 'balance', 'balances', 'charge', 'charges', 'cost', 'costs', 'discount',
-  'discounts', 'fee', 'fees', 'money', 'payment', 'payments', 'payout', 'payouts', 'pence', 'penny', 'cent',
-  'cents', 'minor', 'price', 'prices', 'refund', 'refunds', 'revenue', 'salary', 'salaries', 'subtotal',
-  'surcharge', 'tax', 'taxes', 'total', 'totals', 'vat', 'wage', 'wages', 'gbp', 'usd', 'eur',
+  'discounts', 'fee', 'fees', 'money', 'payment', 'payments', 'payout', 'payouts', 'pence', 'penny',
+  'pennies', 'cent', 'cents', 'paise', 'minor', 'price', 'prices', 'refund', 'refunds', 'revenue', 'salary',
+  'salaries', 'subtotal', 'surcharge', 'tax', 'taxes', 'total', 'totals', 'vat', 'wage', 'wages', 'gbp',
+  'usd', 'eur',
+  // ledgers and finance
+  'debit', 'debits', 'credit', 'credits', 'net', 'gross', 'commission', 'commissions', 'deposit',
+  'deposits', 'interest', 'principal', 'expense', 'expenses', 'income', 'profit', 'profits', 'earnings',
+  'budget', 'budgets', 'msrp', 'mrr', 'arr',
 ]);
 
 const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
@@ -24,11 +30,17 @@ const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   'band', 'position', 'priority', 'index', 'seq', 'sequence', 'step', 'stage',
   // rates and measures
   'percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'weight', 'score',
-  'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes',
+  'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
+  'elasticity',
+  // groupings and terms
+  'category', 'categories', 'list', 'lists', 'center', 'centre', 'terms', 'period',
 ]);
 
 /** Words that say the column already holds minor units, so a fix must not multiply by 100. */
-const MINOR_UNIT_WORDS: ReadonlySet<string> = new Set(['pence', 'penny', 'cent', 'cents', 'minor']);
+const MINOR_UNIT_WORDS: ReadonlySet<string> = new Set(['pence', 'penny', 'pennies', 'cent', 'cents', 'paise', 'minor']);
+
+/** Words of a version number: with them, "minor" is a version part ("version_minor"), not a unit. */
+const VERSION_WORDS: ReadonlySet<string> = new Set(['version', 'major', 'patch']);
 
 /**
  * Money words long enough to find at the end of a folded one-word name. The short ones (fee, tax, vat,
@@ -38,6 +50,9 @@ const FOLDED_MONEY_ENDINGS = ['amount', 'balance', 'cost', 'payment', 'payout', 
 
 /** Unit words that can follow the money word in a folded name: "amountminor", "totalpence". */
 const FOLDED_UNIT_ENDINGS = ['minor', 'pence', 'cents'];
+
+/** Non-money last words long enough to find at the end of a folded name ("totalcount", "pricelist"). */
+const FOLDED_NOT_MONEY_ENDINGS = [...NOT_MONEY_LAST_WORDS].filter((w) => w.length >= 4);
 
 /** A folded one-word name ("totalamount", "amountminor") without its unit ending, if it has one. */
 function withoutUnit(word: string): string {
@@ -67,8 +82,12 @@ export function looksLikeMoney(name: string): boolean {
   const last = ws.at(-1);
   if (last === undefined || NOT_MONEY_LAST_WORDS.has(last)) return false;
   if (ws.length === 1 && last === 'minor') return false; // a version number (major, minor, patch)
-  if (ws.some((w) => MONEY_WORDS.has(w))) return true;
-  return ws.length === 1 && FOLDED_MONEY_ENDINGS.some((ending) => withoutUnit(last).endsWith(ending));
+  const version = ws.some((w) => VERSION_WORDS.has(w)); // "version_minor": a version part, not a unit
+  if (ws.some((w) => MONEY_WORDS.has(w) && !(version && w === 'minor'))) return true;
+  if (ws.length !== 1) return false;
+  const word = withoutUnit(last);
+  if (FOLDED_MONEY_ENDINGS.some((ending) => word.endsWith(ending))) return true;
+  return FOLDED_MONEY_ENDINGS.some((start) => word.startsWith(start)) && !FOLDED_NOT_MONEY_ENDINGS.some((ending) => word.endsWith(ending));
 }
 
 /**
