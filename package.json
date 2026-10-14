@@ -36,7 +36,6 @@
   },
   "files": [
     "dist/**/*.js",
-    "dist/**/*.map",
     "LICENSE",
     "README.md"
   ],

@@ -1,6 +1,7 @@
 // The audit logs of the demo project in fixtures/shop, sealed with a TEST key that is published on
-// purpose (FIXTURE_KEY_HEX; never use it for anything real). Run `node scripts/fixtures.mts` to rewrite
-// them; test/fixtures.test.ts fails if the committed files differ from what this produces.
+// purpose (FIXTURE_KEY_HEX; never use it for anything real). Run `node scripts/fixtures.mts` (Node.js
+// 22.18 or newer runs TypeScript directly) to rewrite them; test/fixtures.test.ts fails if the committed
+// files differ from what this produces.
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

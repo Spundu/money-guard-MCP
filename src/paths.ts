@@ -184,7 +184,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   if (stat.isFile() && rule.maxBytes !== undefined && stat.size > rule.maxBytes) {
     throw new ToolError(
       'FILE_TOO_LARGE',
-      `${shown(input)} is ${formatMib(stat.size)}; this tool reads at most ${formatMib(rule.maxBytes)}.`,
+      `${shown(input)} is ${formatSize(stat.size)}; this tool reads at most ${formatMib(rule.maxBytes)}.`,
       'Export a smaller file (a date range, say) and check the parts one by one.',
     );
   }
@@ -193,4 +193,9 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
 
 export function formatMib(bytes: number): string {
   return `${(bytes / MIB).toFixed(bytes < 10 * MIB ? 1 : 0)} MiB`;
+}
+
+/** A size over a limit, exact enough to see that it is over: "25 MiB (26,214,401 bytes)". */
+export function formatSize(bytes: number): string {
+  return `${formatMib(bytes)} (${bytes.toLocaleString('en-GB')} bytes)`;
 }

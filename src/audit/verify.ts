@@ -35,7 +35,7 @@ export interface AuditBreak {
   /** entry_index + 1, or null when the log has no such line (an anchor counting more entries). */
   line: number | null;
   code: ReasonCode;
-  /** sealed-audit-chain's own wording, unchanged. */
+  /** sealed-audit-chain's own wording (or money-guard's, for an anchor), cut at MAX_REASON characters. */
   reason: string;
   writer_key_id?: string;
 }

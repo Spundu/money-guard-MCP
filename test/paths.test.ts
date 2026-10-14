@@ -67,6 +67,10 @@ describe('resolveInRoot', () => {
     expect(codeOf(() => resolveInRoot(root, '../outside/does-not-exist.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
     expect(codeOf(() => resolveInRoot(root, path.join(base, 'outside', 'secret.csv'), CSV))).toBe('PATH_OUTSIDE_ROOT');
     expect(codeOf(() => resolveInRoot(root, 'exports/../../outside/secret.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
+    // The parent folder itself, as a folder argument (migrations: ".."), is outside too.
+    for (const parent of ['..', '../', 'exports/../..', path.dirname(root.real)]) {
+      expect(codeOf(() => resolveInRoot(root, parent, DIR)), parent).toBe('PATH_OUTSIDE_ROOT');
+    }
   });
 
   it('refuses empty, over-long, NUL, network and device paths', () => {
@@ -111,6 +115,14 @@ describe('resolveInRoot', () => {
     expect(codeOf(() => resolveInRoot(root, 'exports/ledger.csv', DIR))).toBe('NOT_A_DIRECTORY');
     expect(codeOf(() => resolveInRoot(root, 'exports/big.csv', { ...CSV, maxBytes: 10 }))).toBe('FILE_TOO_LARGE');
     expect(codeOf(() => resolveInRoot(root, 'exports/big.csv', { ...CSV, maxBytes: 11 }))).toBe('no error');
+  });
+
+  it('gives the exact size of a file just over the limit, which a rounded size would hide', () => {
+    const limit = 25 * 1024 * 1024;
+    writeTree(root.real, { 'exports/huge.csv': Buffer.alloc(limit + 1, 0x41) });
+    expect(messageOf(() => resolveInRoot(root, 'exports/huge.csv', { ...CSV, maxBytes: limit }))).toMatch(
+      /^FILE_TOO_LARGE: "exports\/huge\.csv" is 25 MiB \(26,214,401 bytes\); this tool reads at most 25 MiB\./,
+    );
   });
 
   it('refuses a folder link that leads outside the project', () => {

@@ -7,7 +7,7 @@ import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { formatMib, isInside, isSensitive, resolveInRoot, toPosix, type Root } from '../paths.js';
+import { formatMib, formatSize, isInside, isSensitive, resolveInRoot, toPosix, type Root } from '../paths.js';
 
 export const MAX_FILES = 2000;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -157,14 +157,15 @@ function describeOtherFiles(dir: string): string {
     const ext = path.extname(entry.name).toLowerCase() || '(no extension)';
     counts.set(ext, (counts.get(ext) ?? 0) + 1);
   }
-  const list = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([ext, n]) => `${n} ${clip(ext, 20)}`);
+  // Most common first; ties by name, so the text is the same on every machine (readdir order is not).
+  const list = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, 5).map(([ext, n]) => `${n} ${clip(ext, 20)}`);
   return list.length === 0 ? 'It is empty.' : `It holds ${list.join(', ')} files.`;
 }
 
 /** Read a .sql file: the size limits, the hash, UTF-8, the format markers. */
 function readScript(real: string, rel: string, size: number, budget: { total: number }, hash: ReturnType<typeof createHash>, failure: 'MIGRATION_FAILED' | 'SETUP_FAILED'): SqlScript {
   if (size > MAX_FILE_BYTES) {
-    throw new ToolError('FILE_TOO_LARGE', `"${clip(rel, 120)}" is ${formatMib(size)}; a migration file may be at most ${formatMib(MAX_FILE_BYTES)}.`, 'Split the file, or leave it out with files.');
+    throw new ToolError('FILE_TOO_LARGE', `"${clip(rel, 120)}" is ${formatSize(size)}; a migration file may be at most ${formatMib(MAX_FILE_BYTES)}.`, 'Split the file, or leave it out with files.');
   }
   budget.total += size;
   if (budget.total > MAX_TOTAL_BYTES) {

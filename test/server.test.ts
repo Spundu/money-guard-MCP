@@ -155,6 +155,18 @@ describe('the server with bad settings', () => {
   });
 });
 
+describe('the audit log size limit', () => {
+  it('refuses a log over 100 MiB before reading it, and takes one of exactly 100 MiB', async () => {
+    const dir = tempDir();
+    writeTree(dir, { 'logs/over.jsonl': Buffer.alloc(100 * 1024 * 1024 + 1, 0x20), 'logs/at.jsonl': Buffer.alloc(100 * 1024 * 1024, 0x20) });
+    const client = await connect('modern', resolveConfig({ MONEY_GUARD_ROOT: dir, MONEY_GUARD_AUDIT_KEYS: `k1=${FIXTURE_KEY_HEX}` }, dir));
+    const over = await client.callTool({ name: 'audit_verify_chain', arguments: { file: 'logs/over.jsonl' } });
+    expect([over.isError, textOf(over)]).toEqual([true, expect.stringMatching(/^FILE_TOO_LARGE: /)]);
+    const at = await client.callTool({ name: 'audit_verify_chain', arguments: { file: 'logs/at.jsonl' } });
+    expect(at.isError ?? false).toBe(false); // read and verified (it is not a valid log, which is a result, not an error)
+  });
+});
+
 describe('a long files list', () => {
   it('passes the input-element limit with room to spare (up to 2,000 files)', async () => {
     const dir = tempDir();
