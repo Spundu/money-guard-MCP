@@ -1,0 +1,69 @@
+{
+  "name": "money-guard-mcp",
+  "version": "0.1.0",
+  "private": false,
+  "description": "MCP server that checks how a project handles money: float money columns in SQL migrations, unbalanced double-entry ledger exports, and tampered sealed audit logs. Read-only and offline.",
+  "license": "MIT",
+  "author": "Davide Pistone Celestino",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Spundu/money-guard-mcp.git"
+  },
+  "homepage": "https://github.com/Spundu/money-guard-mcp#readme",
+  "bugs": "https://github.com/Spundu/money-guard-mcp/issues",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "money",
+    "postgres",
+    "migrations",
+    "double-entry",
+    "ledger",
+    "audit-log",
+    "claude"
+  ],
+  "mcpName": "io.github.Spundu/money-guard-mcp",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "bin": {
+    "money-guard-mcp": "dist/index.js"
+  },
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.map",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "lint": "eslint src test scripts",
+    "test": "vitest run",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prepare": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.9",
+    "@electric-sql/pglite-pgvector": "0.0.10",
+    "@modelcontextprotocol/server": "^2.3.1",
+    "csv-parse": "^7.0.3",
+    "sealed-audit-chain": "github:Spundu/audit-chain#5fd1fecd2e2f0a76f1475686cd7d84069711f129",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.12.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
+  }
+}

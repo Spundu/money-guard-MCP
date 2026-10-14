@@ -1,0 +1,183 @@
+// Which files the tools may read (SPEC.md §2.3). Every path argument goes through resolveInRoot; the
+// migration-folder walk (lint/files.ts) uses the same checks for every file it finds.
+//
+// The order of the checks matters: a path that is outside the project is refused BEFORE the file system
+// is touched, so the answer never reveals whether something outside the project exists.
+
+import { realpathSync, statSync } from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
+import { clip } from './echo.js';
+import { ToolError } from './errors.js';
+
+/** The project folder, already resolved to its real path (config.ts). */
+export interface Root {
+  /** Absolute real path. Never shown in a result or an error. */
+  real: string;
+  /** Its folder name, the only part of it that messages show. */
+  name: string;
+}
+
+export interface PathRule {
+  kind: 'file' | 'directory';
+  /** Allowed extensions for a file, lowercase with the dot (".csv"). */
+  extensions?: readonly string[];
+  /** Largest file accepted, in bytes. */
+  maxBytes?: number;
+}
+
+export interface ResolvedPath {
+  /** Absolute real path, for reading. Never shown. */
+  real: string;
+  /** Relative to the root with "/" separators ("." for the root itself), for results. */
+  rel: string;
+  /** Size in bytes (files). */
+  size: number;
+}
+
+const MAX_PATH_CHARS = 1024;
+const MIB = 1024 * 1024;
+
+/** "/"-separated form of a relative path, the form every result uses. */
+export function toPosix(rel: string): string {
+  return rel === '' ? '.' : rel.split(path.sep).join('/');
+}
+
+/** Whether `candidate` (absolute) is `root` or inside it. Works across drives and letter case on Windows. */
+export function isInside(root: string, candidate: string): boolean {
+  const rel = path.relative(root, candidate);
+  return rel === '' || (!path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`));
+}
+
+/**
+ * Names the tools refuse at any depth: environment files, private keys and certificates, package-manager
+ * and git credentials, and anything inside .git (SPEC.md §2.3). Compared in lower case.
+ */
+export function isSensitive(rel: string): boolean {
+  const segments = rel.split(/[\\/]/).map((s) => s.toLowerCase());
+  if (segments.includes('.git')) return true;
+  const base = segments.at(-1) ?? '';
+  return (
+    base === '.env' ||
+    base.startsWith('.env.') ||
+    ['.npmrc', '.pypirc', '.netrc', '.git-credentials'].includes(base) ||
+    base.startsWith('id_rsa') ||
+    base.startsWith('id_ed25519') ||
+    ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext))
+  );
+}
+
+function shown(input: string): string {
+  return `"${clip(input, 120)}"`;
+}
+
+function checkSyntax(input: string): void {
+  const invalid = (why: string) =>
+    new ToolError('PATH_INVALID', `The path ${shown(input)} ${why}.`, 'Pass a path relative to the project root, such as "db/migrations".');
+  if (input.length === 0) throw invalid('is empty');
+  if (input.length > MAX_PATH_CHARS) throw invalid(`is longer than ${MAX_PATH_CHARS} characters`);
+  if (input.includes('\0')) throw invalid('contains a NUL character');
+  // UNC shares (\\server\share) and Windows device paths (\\?\, \\.\), and their "//" spellings.
+  if (/^[\\/]{2}/.test(input)) throw invalid('is a network or device path');
+  // On Windows a colon anywhere but after a drive letter names an alternate data stream ("a.csv:hidden").
+  if (process.platform === 'win32' && input.slice(/^[A-Za-z]:/.test(input) ? 2 : 0).includes(':')) {
+    throw invalid('contains a colon');
+  }
+}
+
+function checkName(root: Root, input: string, rel: string, rule: PathRule): void {
+  if (isSensitive(rel)) {
+    throw new ToolError(
+      'SENSITIVE_PATH',
+      `${shown(input)} looks like a secrets file (an .env file, a private key or credentials).`,
+      'money-guard never reads secret files. Point it at migrations, ledger exports or audit logs.',
+    );
+  }
+  if (rule.kind === 'file' && rule.extensions) {
+    const ext = path.extname(rel).toLowerCase();
+    if (!rule.extensions.includes(ext)) {
+      throw new ToolError(
+        'FILE_TYPE_NOT_ALLOWED',
+        `${shown(input)} is not one of the file types this tool reads.`,
+        `Pass a file ending in ${rule.extensions.join(', ')} inside the project folder (${root.name}).`,
+      );
+    }
+  }
+}
+
+/** The closest folder above `lexical` that exists, relative to the root ("." for the root). */
+function nearestExisting(root: Root, lexical: string): string {
+  let dir = path.dirname(lexical);
+  while (isInside(root.real, dir)) {
+    try {
+      if (statSync(dir).isDirectory()) return toPosix(path.relative(root.real, dir));
+    } catch {
+      // keep walking up
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return '.';
+}
+
+/**
+ * Resolve a path argument and check it against every rule of SPEC.md §2.3. Throws a ToolError naming the
+ * first rule it breaks; returns the real path to read and the relative path to show.
+ */
+export function resolveInRoot(root: Root, input: string, rule: PathRule): ResolvedPath {
+  checkSyntax(input);
+
+  const lexical = path.resolve(root.real, input);
+  if (!isInside(root.real, lexical)) {
+    throw new ToolError(
+      'PATH_OUTSIDE_ROOT',
+      `${shown(input)} is outside the project folder (${root.name}).`,
+      'Pass a path inside the project, relative to its root.',
+    );
+  }
+  const lexRel = path.relative(root.real, lexical);
+  checkName(root, input, lexRel, rule);
+
+  let real: string;
+  try {
+    real = realpathSync.native(lexical);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const what = code === 'EACCES' || code === 'EPERM' ? 'cannot be opened (permission denied)' : 'does not exist';
+    throw new ToolError(
+      'PATH_NOT_FOUND',
+      `${shown(input)} ${what}. The nearest existing folder is "${nearestExisting(root, lexical)}".`,
+      `Check the spelling. Paths are relative to the project folder (${root.name}).`,
+    );
+  }
+  // A link inside the project may point outside it: the REAL target is what gets read.
+  if (!isInside(root.real, real)) {
+    throw new ToolError(
+      'PATH_OUTSIDE_ROOT',
+      `${shown(input)} is a link to a place outside the project folder (${root.name}).`,
+      'Pass a file or folder that really lives inside the project.',
+    );
+  }
+  checkName(root, input, path.relative(root.real, real), rule);
+
+  const stat = statSync(real);
+  if (rule.kind === 'file' && !stat.isFile()) {
+    throw new ToolError('NOT_A_FILE', `${shown(input)} is not a file.`, 'Pass the path of a file, not a folder.');
+  }
+  if (rule.kind === 'directory' && !stat.isDirectory()) {
+    throw new ToolError('NOT_A_DIRECTORY', `${shown(input)} is not a folder.`, 'Pass the path of a folder.');
+  }
+  if (rule.maxBytes !== undefined && stat.size > rule.maxBytes) {
+    throw new ToolError(
+      'FILE_TOO_LARGE',
+      `${shown(input)} is ${formatMib(stat.size)}; this tool reads at most ${formatMib(rule.maxBytes)}.`,
+      'Export a smaller file (a date range, say) and check the parts one by one.',
+    );
+  }
+  return { real, rel: toPosix(lexRel), size: stat.size };
+}
+
+export function formatMib(bytes: number): string {
+  return `${(bytes / MIB).toFixed(bytes < 10 * MIB ? 1 : 0)} MiB`;
+}
