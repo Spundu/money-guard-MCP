@@ -1,0 +1,10 @@
+txn_id,account,amount_pence,currency
+T1,cash,1000,GBP
+T1,sales,-1000,GBP
+T2,cash,1999,GBP
+T2,sales,-2000,GBP
+T3,fees,10.5,GBP
+T3,cash,-10.5,GBP
+T4,cash,0,GBP
+T4,sales,500,GBP
+T4,vat,-500,GBP

@@ -96,12 +96,18 @@ function versionOf(raw: string): string {
   return cut === -1 ? raw : raw.slice(0, cut);
 }
 
-export function runScripts(scripts: readonly Script[], options: { timeoutMs: number; preset: boolean; signal?: AbortSignal | undefined }): Promise<DatabaseOutcome> {
+/** The worker that runs the SQL. Tests pass another one to prove its output is contained. */
+const WORKER = new URL('./worker.js', import.meta.url);
+
+export function runScripts(
+  scripts: readonly Script[],
+  options: { timeoutMs: number; preset: boolean; signal?: AbortSignal | undefined; worker?: URL | undefined },
+): Promise<DatabaseOutcome> {
   const firstMigration = scripts.findIndex((s) => s.phase === 'migration');
   return new Promise<DatabaseOutcome>((resolve, reject) => {
     // stdout and stderr are captured and dropped: a NOTICE a migration raises must never reach the
     // server's stdout (the protocol channel) or its log.
-    const worker = new Worker(new URL('./worker.js', import.meta.url), {
+    const worker = new Worker(options.worker ?? WORKER, {
       workerData: { scripts: scripts.map(({ name, text }) => ({ name, text })), snapshotSql: SNAPSHOT_SQL, detailSql: DETAIL_SQL },
       stdout: true,
       stderr: true,

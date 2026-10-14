@@ -1,0 +1,148 @@
+// The MCP server: one factory that builds the server with its three tools (SPEC.md §2). The same
+// factory serves both protocol eras (index.ts hands it to serveStdio) and the in-process tests.
+
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import process from 'node:process';
+import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
+import { verifyAuditLog } from './audit/verify.js';
+import type { Config } from './config.js';
+import { ToolError } from './errors.js';
+import { checkLedgerFile } from './ledger/run.js';
+import { lintSchema } from './lint/run.js';
+import { resolveInRoot, type Root } from './paths.js';
+import { auditInput, auditOutput, ledgerInput, ledgerOutput, lintInput, lintOutput } from './schemas.js';
+import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from './text.js';
+
+export const NAME = 'money-guard-mcp';
+export const VERSION: string = (createRequire(import.meta.url)('../package.json') as { version: string }).version;
+
+/** Every tool only reads, and only the project folder (SPEC.md §2.7). */
+const ANNOTATIONS = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
+
+/** Calls in progress at once, across the whole process (SPEC.md §2.6). */
+const MAX_IN_FLIGHT = 8;
+let inFlight = 0;
+
+const AUDIT_MAX_BYTES = 100 * 1024 * 1024;
+
+export type Log = (line: string) => void;
+const stderrLog: Log = (line) => process.stderr.write(`${line}\n`);
+
+/** null and undefined both mean "not given" (SPEC.md §2.4). */
+function given<T>(value: T | null | undefined): T | undefined {
+  return value ?? undefined;
+}
+
+/**
+ * An unexpected error, for the log: its type and the code locations it came from, file names only.
+ * Never its message, which might quote a file.
+ */
+function trace(err: unknown): string {
+  if (!(err instanceof Error)) return typeof err;
+  const frames = (err.stack ?? '')
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith('at '))
+    .slice(0, 4)
+    .map((line) => line.trim().replace(/[^\s()]*[\\/]/g, ''));
+  return [err.name, ...frames].join(' | ');
+}
+
+async function answer(tool: string, log: Log, signal: AbortSignal | undefined, work: () => Promise<object> | object): Promise<CallToolResult> {
+  const started = performance.now();
+  const ms = () => `${Math.round(performance.now() - started)}ms`;
+  if (inFlight >= MAX_IN_FLIGHT) {
+    log(`${NAME}: ${tool} BUSY`);
+    const busy = new ToolError('BUSY', `${MAX_IN_FLIGHT} money-guard calls are already running.`, 'Call again when one of them has finished.');
+    return { content: [{ type: 'text', text: busy.toText() }], isError: true };
+  }
+  inFlight += 1;
+  try {
+    const result = await work();
+    log(`${NAME}: ${tool} ok ${ms()}`);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result as Record<string, unknown> };
+  } catch (err) {
+    if (signal?.aborted) throw err; // cancelled: the client is no longer waiting for an answer
+    if (err instanceof ToolError) {
+      log(`${NAME}: ${tool} ${err.code} ${ms()}`);
+      return { content: [{ type: 'text', text: err.toText() }], isError: true };
+    }
+    log(`${NAME}: ${tool} INTERNAL_ERROR ${ms()} ${trace(err)}`);
+    const internal = new ToolError('INTERNAL_ERROR', `money-guard failed unexpectedly (${err instanceof Error ? err.name : typeof err}).`, 'This is a bug in money-guard: please report it. The server log has the details.');
+    return { content: [{ type: 'text', text: internal.toText() }], isError: true };
+  } finally {
+    inFlight -= 1;
+  }
+}
+
+export function createServer(config: Config, log: Log = stderrLog): McpServer {
+  const server = new McpServer(
+    { name: NAME, version: VERSION },
+    { capabilities: { tools: {} }, instructions: INSTRUCTIONS, maxToolInputElements: 2500 },
+  );
+  const root = (): Root => {
+    if (!config.root.ok) throw config.root.error;
+    return config.root.value;
+  };
+
+  server.registerTool(
+    'money_lint_schema',
+    { title: 'Lint money column types', description: LINT_DESCRIPTION, inputSchema: lintInput, outputSchema: lintOutput, annotations: ANNOTATIONS },
+    async (args, ctx) =>
+      answer('money_lint_schema', log, ctx.mcpReq.signal, () =>
+        lintSchema(
+          root(),
+          {
+            migrations: args.migrations,
+            files: given(args.files),
+            preset: given(args.preset),
+            setup: given(args.setup),
+            accept_numeric: given(args.accept_numeric),
+            money_columns: given(args.money_columns),
+            ignore_columns: given(args.ignore_columns),
+            timeout_seconds: given(args.timeout_seconds),
+          },
+          ctx.mcpReq.signal,
+        ),
+      ),
+  );
+
+  server.registerTool(
+    'money_check_double_entry',
+    { title: 'Check double-entry balance', description: LEDGER_DESCRIPTION, inputSchema: ledgerInput, outputSchema: ledgerOutput, annotations: ANNOTATIONS },
+    async (args, ctx) =>
+      answer('money_check_double_entry', log, ctx.mcpReq.signal, () =>
+        checkLedgerFile(root(), {
+          file: args.file,
+          columns: {
+            transaction_id: args.columns.transaction_id,
+            amount: given(args.columns.amount),
+            side: given(args.columns.side),
+            debit: given(args.columns.debit),
+            credit: given(args.columns.credit),
+            currency: given(args.columns.currency),
+          },
+          amount_format: given(args.amount_format),
+          decimal_places: given(args.decimal_places),
+          format: given(args.format),
+          delimiter: given(args.delimiter),
+          records_pointer: given(args.records_pointer),
+          offset: given(args.offset),
+          limit: given(args.limit),
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'audit_verify_chain',
+    { title: 'Verify audit log chain', description: AUDIT_DESCRIPTION, inputSchema: auditInput, outputSchema: auditOutput, annotations: ANNOTATIONS },
+    async (args, ctx) =>
+      answer('audit_verify_chain', log, ctx.mcpReq.signal, () => {
+        const target = resolveInRoot(root(), args.file, { kind: 'file', extensions: ['.jsonl', '.ndjson', '.log'], maxBytes: AUDIT_MAX_BYTES });
+        if (!config.auditKeys.ok) throw config.auditKeys.error;
+        return verifyAuditLog({ file: target.rel, bytes: readFileSync(target.real), keys: config.auditKeys.value, anchor: given(args.anchor) });
+      }),
+  );
+
+  return server;
+}

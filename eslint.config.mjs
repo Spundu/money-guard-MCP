@@ -10,6 +10,11 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Node scripts, and the noisy test worker that writes to the console on purpose (test/database.test.ts).
+    files: ['test/**/*.mjs', 'scripts/**/*.mjs'],
+    languageOptions: { globals: { console: 'readonly' } },
+  },
+  {
     rules: {
       '@typescript-eslint/no-unused-vars': [
         'warn',
