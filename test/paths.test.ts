@@ -1,7 +1,13 @@
+// Which files the tools may read (src/paths.ts, SPEC.md §2.3): confinement to the project, secret files,
+// file types, sizes, links, and a file that passes the checks but cannot be read.
+import { chmodSync } from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ToolError, type ErrorCode } from '../src/errors.js';
-import { isSensitive, resolveInRoot, type PathRule, type Root } from '../src/paths.js';
+import { checkLedgerFile } from '../src/ledger/run.js';
+import { collectSources } from '../src/lint/files.js';
+import { isSensitive, readChecked, resolveInRoot, type PathRule, type Root } from '../src/paths.js';
 import { rootOf, tempDir, trySymlink, writeTree } from './support/tmp.js';
 
 const CSV: PathRule = { kind: 'file', extensions: ['.csv', '.json'] };
@@ -146,6 +152,38 @@ describe('resolveInRoot', () => {
       ctx.skip();
     }
     expect(codeOf(() => resolveInRoot(root, 'exports/notes.csv', CSV))).toBe('SENSITIVE_PATH');
+  });
+});
+
+describe('readChecked', () => {
+  it('turns a read that fails after the checks into FILE_UNREADABLE, saying why, not a crash', () => {
+    // A folder cannot be read as a file (EISDIR) on every platform: the same path as a locked file.
+    const err = (() => {
+      try {
+        readChecked(path.join(root.real, 'exports'), 'exports');
+      } catch (e) {
+        return e;
+      }
+      return undefined;
+    })();
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).toText()).toBe('FILE_UNREADABLE: "exports" cannot be read (EISDIR). Fix: Close the program that holds it, or fix its permissions, then call again.');
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('says "permission denied" for a file or folder nobody may read, in every tool (POSIX; root reads anything)', () => {
+    writeTree(root.real, { 'exports/locked.csv': 't,a\n', 'locked/db/0001.sql': 'select 1;', 'locked/db/inner/0002.sql': 'select 1;' });
+    const file = path.join(root.real, 'exports', 'locked.csv');
+    const folder = path.join(root.real, 'locked', 'db', 'inner');
+    chmodSync(file, 0o000);
+    chmodSync(folder, 0o000);
+    try {
+      expect(() => readChecked(file, 'exports/locked.csv')).toThrow(/^"exports\/locked\.csv" cannot be read \(permission denied\)\.$/);
+      expect(codeOf(() => checkLedgerFile(root, { file: 'exports/locked.csv', columns: { transaction_id: 't', amount: 'a' } }))).toBe('FILE_UNREADABLE');
+      expect(codeOf(() => collectSources(root, { migrations: 'locked/db' }))).toBe('FILE_UNREADABLE');
+    } finally {
+      chmodSync(file, 0o600);
+      chmodSync(folder, 0o700);
+    }
   });
 });
 

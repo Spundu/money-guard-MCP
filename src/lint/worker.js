@@ -48,7 +48,7 @@ import { vector } from '@electric-sql/pglite-pgvector';
 /**
  * @typedef {{ name: string, text: string }} Script
  * @typedef {{ scripts: Script[], snapshotSql: string, detailSql: string }} Job
- * @typedef {{ message: string, code?: string, position?: string, detail?: string, hint?: string, where?: string }} DbError
+ * @typedef {{ message: string, name?: string, code?: string, position?: string, detail?: string, hint?: string, where?: string }} DbError
  */
 
 const extensions = {
@@ -73,7 +73,7 @@ function dbError(err) {
   const e = err !== null && typeof err === 'object' ? /** @type {Record<string, unknown>} */ (err) : {};
   /** @type {DbError} */
   const out = { message: typeof e.message === 'string' ? e.message : String(err) };
-  for (const key of /** @type {const} */ (['code', 'position', 'detail', 'hint', 'where'])) {
+  for (const key of /** @type {const} */ (['name', 'code', 'position', 'detail', 'hint', 'where'])) {
     if (typeof e[key] === 'string') out[key] = /** @type {string} */ (e[key]);
   }
   return out;

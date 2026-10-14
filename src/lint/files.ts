@@ -3,11 +3,11 @@
 // itself is never parsed; Postgres runs it.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { clip, clipPath } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { formatMib, formatSize, isInside, isSensitive, resolveInRoot, toPosix, type Root } from '../paths.js';
+import { formatMib, formatSize, isInside, isSensitive, readChecked, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
 
 export const MAX_FILES = 2000;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -108,7 +108,13 @@ function tooManyFiles(): ToolError {
 function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number }): void {
   if (visited.has(dir)) return; // a link loop
   visited.add(dir);
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    throw unreadable(toPosix(path.relative(root.real, dir)), err);
+  }
+  for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (isSensitive(path.relative(root.real, full))) continue;
     let real = full;
@@ -171,7 +177,7 @@ function readScript(real: string, rel: string, size: number, budget: { total: nu
   if (budget.total > MAX_TOTAL_BYTES) {
     throw new ToolError('FILE_TOO_LARGE', `The migrations together are over ${formatMib(MAX_TOTAL_BYTES)}.`, 'Pass files with the migrations to run, or point migrations at a smaller folder.');
   }
-  const bytes = readFileSync(real);
+  const bytes = readChecked(real, rel);
   hash.update(rel).update('\0').update(bytes);
   let text: string;
   try {

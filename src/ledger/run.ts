@@ -3,13 +3,12 @@
 // must fix before the file can be checked at all.
 
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { overBudget } from '../budget.js';
 import { clipPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
-import { resolveInRoot, type Root } from '../paths.js';
+import { readChecked, resolveInRoot, type Root } from '../paths.js';
 import { checkLedger, mappingMode, type Finding, type FindingCode } from './check.js';
 import { readLedger, type ColumnMap, type LedgerFormat } from './read.js';
 
@@ -73,7 +72,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const format = params.format ?? BY_EXTENSION[extension] ?? 'csv';
   const delimiter = params.delimiter ?? (extension === '.tsv' ? '\t' : ',');
 
-  const bytes = readFileSync(target.real);
+  const bytes = readChecked(target.real, target.rel);
   const rows = readLedger(bytes, decodeUtf8(bytes), { format, columns: params.columns, delimiter, recordsPointer: params.records_pointer ?? '' });
   const outcome = checkLedger(
     rows,

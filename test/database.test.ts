@@ -1,8 +1,13 @@
+// The lint's database thread (src/lint/database.ts, SPEC.md §3.4, §3.9): its output kept off the
+// protocol channel, error positions and hints, and the limits that stop a database that hangs, answers
+// wrongly, runs forever, cannot start or outgrows its memory.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { describe, expect, it, vi } from 'vitest';
+import { ToolError } from '../src/errors.js';
 import { failure, locate, runScripts } from '../src/lint/database.js';
+import { trace } from '../src/server.js';
 import { tempDir } from './support/tmp.js';
 
 describe('runScripts', () => {
@@ -74,6 +79,16 @@ describe('runScripts with a database that misbehaves', () => {
     });
   });
 
+  it('treats a database that cannot start as a failure of money-guard: no detail for the model, the cause for the log', async () => {
+    const err: unknown = await run('broken').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ToolError); // so the server answers INTERNAL_ERROR without detail
+    expect((err as Error).name).toBe('DatabaseStartError');
+    expect((err as Error).message).not.toContain('Private Clients');
+    expect(trace(err)).toMatch(/^DatabaseStartError \| .* <- Error ERR_MODULE_NOT_FOUND/);
+    expect(trace(err)).not.toContain('Private Clients');
+  });
+
   it.each(['the time limit', 'cancellation'])('kills the database thread at %s: its heartbeat stops', async (how) => {
     const heartbeat = path.join(tempDir(), 'beat');
     process.env.MONEY_GUARD_TEST_HEARTBEAT = heartbeat;
@@ -85,5 +100,22 @@ describe('runScripts with a database that misbehaves', () => {
     const beat = readFileSync(heartbeat, 'utf8');
     await new Promise((r) => setTimeout(r, 400));
     expect(readFileSync(heartbeat, 'utf8')).toBe(beat);
+  });
+});
+
+describe('runScripts memory', () => {
+  it('stops a file whose data outgrows the memory limit, and names it', async () => {
+    // About 400 MB of rows, against a limit of 64 MiB (the real one is 1 GiB). PGlite keeps them in
+    // WebAssembly memory and in-memory files, which the worker's heap limit does not cover.
+    const seed = {
+      name: 'db/0002_seed.sql',
+      text: 'create table big (b text); insert into big select repeat(md5(i::text), 30) from generate_series(1, 400000) i;',
+      phase: 'migration' as const,
+    };
+    await expect(runScripts([seed], { timeoutMs: 60_000, preset: false, memoryLimitBytes: 64 * 1024 * 1024 })).rejects.toMatchObject({
+      code: 'MIGRATION_FAILED',
+      message: 'db/0002_seed.sql: the lint database grew by more than 64 MiB of memory while running this file.',
+      fix: expect.stringMatching(/^The file needs more than the lint database can give it/),
+    });
   });
 });

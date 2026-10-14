@@ -8,13 +8,22 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { resolveConfig } from './config.js';
 import { NAME, VERSION, createServer, trace } from './server.js';
 
+// The log is a convenience. A host that closes this process's stderr, or dies, must not turn a log line
+// into a crash or an endless loop: a write to a closed pipe raises EPIPE, which would reach the
+// uncaught-error handler below, whose own write raises it again. Lost log lines are fine.
+process.stderr.on('error', () => {});
+
 const config = resolveConfig(process.env, process.cwd());
 // Transport problems (a message over the SDK's 10 MiB stdio limit, which closes the connection, or a
 // line that is not JSON) arrive here. Log the kind only: the content could quote a file or an argument.
 const handle = serveStdio(() => createServer(config), { onerror: (err) => process.stderr.write(`${NAME}: transport error (${err.name})\n`) });
 
 const root = config.root.ok ? `project folder "${config.root.value.name}"` : 'no usable project folder (the tools answer ROOT_INVALID)';
-const keys = config.auditKeys.ok ? `${config.auditKeys.value.ids.length} audit key id(s)` : 'no audit keys';
+const keys = config.auditKeys.ok
+  ? `${config.auditKeys.value.ids.length} audit key id(s)`
+  : config.auditKeys.error.code === 'KEYS_INVALID'
+    ? 'audit keys malformed (the audit tool answers KEYS_INVALID)'
+    : 'no audit keys';
 // The Node.js version helps when a host (Claude Desktop) runs the server with its own built-in Node.
 process.stderr.write(`${NAME} ${VERSION} (Node.js ${process.version}) on stdio: ${root}; ${keys}.\n`);
 

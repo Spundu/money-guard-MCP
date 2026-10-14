@@ -4,13 +4,18 @@
 //   "unusable": it says the first script ran, then that the database no longer answers correctly (as
 //               after COPY ... PROGRAM);
 //   "endless":  it never answers at all, and writes a heartbeat to the file MONEY_GUARD_TEST_HEARTBEAT
-//               names every 20 ms, so a test can see whether the thread is still alive.
+//               names every 20 ms, so a test can see whether the thread is still alive;
+//   "broken":   it fails before the database starts, as a broken install would (a module not found),
+//               with a message that holds an absolute path.
 import { writeFileSync } from 'node:fs';
 import process from 'node:process';
 import { setInterval } from 'node:timers';
 import { parentPort } from 'node:worker_threads';
 
 const mode = process.env.MONEY_GUARD_TEST_WORKER;
+if (mode === 'broken') {
+  throw Object.assign(new Error("Cannot find module '/home/jo/Private Clients/money-guard/dist/lint/missing.js'"), { code: 'ERR_MODULE_NOT_FOUND' });
+}
 if (mode === 'endless') {
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (let beat = 0; ; beat += 1) {

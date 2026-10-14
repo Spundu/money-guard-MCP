@@ -2,9 +2,11 @@
 // endless migration from holding the server (SPEC.md §3.4, §3.9). Resolves with the catalog's answers;
 // rejects with a ToolError naming the file that failed, hung or ran out of time.
 
+import process from 'node:process';
 import { Worker } from 'node:worker_threads';
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
+import { formatMib } from '../paths.js';
 import { DETAIL_SQL, SNAPSHOT_SQL, type DetailRow } from './catalog.js';
 
 export interface Script {
@@ -16,6 +18,7 @@ export interface Script {
 
 export interface DbError {
   message: string;
+  name?: string;
   code?: string;
   position?: string;
   detail?: string;
@@ -35,6 +38,18 @@ export interface DatabaseOutcome {
 
 /** How long the check after a file may take before the database counts as stuck. */
 const SANITY_MS = 5000;
+
+/**
+ * How much the server's memory may grow while the scripts run, over what it was once the database had
+ * started (SPEC.md §3.9). resourceLimits caps only the worker's JavaScript heap; PGlite keeps its
+ * WebAssembly memory and its in-memory files outside it, so the process as a whole is watched.
+ */
+export const MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024;
+
+/** How often the memory is checked. One statement can allocate more between two checks. */
+const MEMORY_CHECK_MS = 100;
+
+const TOO_BIG = 'The file needs more than the lint database can give it (memory or a size limit). Leave the file out with files, or lint the migrations in smaller groups.';
 
 type Message =
   | { type: 'ready'; version: string; available: string[]; reserved: string[] }
@@ -96,11 +111,19 @@ export function failure(script: Script, err: DbError, context: { available: read
   } else if (err.code === '55P04') {
     fix = 'money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). Split the file in two, or leave it out with files.';
   } else if (err.code !== undefined && /^5[34]/.test(err.code)) {
-    fix = 'The file needs more than the lint database can give it (memory or a size limit). Leave the file out with files, or lint the migrations in smaller groups.';
+    fix = TOO_BIG;
   } else {
     fix = 'If this file runs on your real database, it probably needs objects your platform creates: pass setup or preset. Otherwise fix the SQL at that place.';
   }
   return new ToolError(code, message, fix);
+}
+
+/** The worker's error as an Error for the log: its type and code only (its stack stayed in the worker). */
+function workerError(e: DbError): Error {
+  const err = Object.assign(new Error('error in the database thread'), { code: e.code });
+  err.name = e.name ?? 'Error';
+  err.stack = err.name;
+  return err;
 }
 
 function versionOf(raw: string): string {
@@ -113,7 +136,7 @@ const WORKER = new URL('./worker.js', import.meta.url);
 
 export function runScripts(
   scripts: readonly Script[],
-  options: { timeoutMs: number; preset: boolean; signal?: AbortSignal | undefined; worker?: URL | undefined },
+  options: { timeoutMs: number; preset: boolean; signal?: AbortSignal | undefined; worker?: URL | undefined; memoryLimitBytes?: number | undefined },
 ): Promise<DatabaseOutcome> {
   const firstMigration = scripts.findIndex((s) => s.phase === 'migration');
   return new Promise<DatabaseOutcome>((resolve, reject) => {
@@ -141,18 +164,35 @@ export function runScripts(
       finished = true;
       clearTimeout(overall);
       clearTimeout(sanity);
+      clearInterval(memory);
       options.signal?.removeEventListener('abort', onAbort);
       void worker.terminate();
       if ('ok' in outcome) resolve(outcome.ok);
       else reject(outcome.error);
     };
     const scriptAt = (step: number): Script => scripts[step] ?? { name: 'a script', text: '', phase: 'migration' };
-    const stopped = (why: string) => {
-      const script = running >= 0 ? scriptAt(running) : null;
-      return script === null
-        ? new ToolError('INTERNAL_ERROR', `The database could not start: ${clip(why, 200)}.`, 'Report this; details are in the server log.')
-        : new ToolError(script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED', `${script.name}: the database stopped while running this file (${clip(why, 200)}).`, 'Leave the file out with files, or lint it on its own to find the statement that stops the database.');
+    // The database stopped. While a script runs, that script did it: a tool error naming the file.
+    // Before any script ran, money-guard itself failed (a broken install, say): not a ToolError, so the
+    // server answers INTERNAL_ERROR without detail and logs the type and code locations, the worker's
+    // error as the cause (SPEC.md §2.1).
+    const stopped = (why: string, cause?: Error): Error => {
+      if (running < 0) {
+        const err = new Error('the lint database could not start', { cause });
+        err.name = 'DatabaseStartError';
+        return err;
+      }
+      const script = scriptAt(running);
+      return new ToolError(script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED', `${script.name}: the database stopped while running this file (${clip(why, 200)}).`, 'Leave the file out with files, or lint it on its own to find the statement that stops the database.');
     };
+
+    const memoryLimit = options.memoryLimitBytes ?? MEMORY_LIMIT_BYTES;
+    let baseline: number | undefined; // the process's memory once the database had started
+    const memory = setInterval(() => {
+      if (baseline === undefined || process.memoryUsage.rss() - baseline <= memoryLimit) return;
+      const script = scriptAt(Math.max(running, 0));
+      const code = script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
+      finish({ error: new ToolError(code, `${script.name}: the lint database grew by more than ${formatMib(memoryLimit)} of memory while running this file.`, TOO_BIG) });
+    }, MEMORY_CHECK_MS);
 
     const overall = setTimeout(() => {
       const name = running >= 0 ? scriptAt(running).name : 'the database start-up';
@@ -168,6 +208,7 @@ export function runScripts(
           postgres = versionOf(m.version);
           available = m.available;
           reserved = m.reserved;
+          baseline = process.memoryUsage.rss();
           break;
         case 'running':
           running = m.step;
@@ -196,14 +237,14 @@ export function runScripts(
           finish({ error: new ToolError('MIGRATION_FAILED', `${scriptAt(m.step).name}: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, 'Leave the file out with files.') });
           break;
         case 'crashed':
-          finish({ error: stopped(m.error.message) });
+          finish({ error: stopped(m.error.message, workerError(m.error)) });
           break;
         case 'done':
           finish({ ok: { postgres, detail: m.detail, since: new Map([...since].map(([col, v]) => [col, v.since])), reserved: new Set(reserved) } });
           break;
       }
     });
-    worker.on('error', (err) => finish({ error: stopped(err.message) }));
+    worker.on('error', (err) => finish({ error: stopped(err.message, err) }));
     worker.on('exit', (code) => finish({ error: stopped(`the worker exited with code ${code}`) }));
   });
 }

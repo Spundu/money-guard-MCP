@@ -13,6 +13,7 @@ export type ErrorCode =
   | 'FILE_TYPE_NOT_ALLOWED'
   | 'SENSITIVE_PATH'
   | 'FILE_TOO_LARGE'
+  | 'FILE_UNREADABLE'
   | 'BUSY'
   | 'INTERNAL_ERROR'
   // money_lint_schema (SPEC.md §3.8).

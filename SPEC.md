@@ -56,13 +56,19 @@ internet and never touches a real database.
 - No network requests, no shell, no child processes. PGlite runs in a worker thread inside the same
   process.
 - stdout carries only protocol messages. Diagnostics go to stderr: a startup line (version, Node.js
-  version, the project folder's name, how many key ids), one line per call the server answers or the
-  client cancels (tool, milliseconds, outcome code or `CANCELLED`), and the type of any transport error
-  (for example a message over the SDK's 10 MiB stdio limit, after which the SDK closes the connection).
-  A call the SDK refuses before the handler runs (bad arguments, an unknown tool) is not logged. No line contains file content, keys or absolute
-  paths; an unexpected error is logged as its type and `file:line:column` locations only.
+  version, the project folder's name, how many key ids, or that the key setting is malformed), one
+  line per call (tool, milliseconds, and the outcome: `ok`, an error code, `CANCELLED` when the client
+  cancelled the call, or `DISCONNECTED` when the client went away first; a call the client gave up on
+  gets no answer, whatever the tool did), and the type of any transport error (for example a message
+  over the SDK's 10 MiB stdio limit, after which the SDK closes the connection). A call the SDK refuses
+  before the handler runs (bad arguments, an unknown tool) is not logged. No line contains file
+  content, keys or absolute paths; an unexpected error is logged as its type, its error code (such as
+  `EBUSY`) and its `file:line:column` locations only, then the same for its cause.
+- The log is a convenience: when the host closes the server's stderr, or dies, the server keeps
+  serving (or exits with its client) without it, never stuck on a write that fails.
 - One bad call never kills the server. Every handler catches everything. An unexpected exception
-  becomes `INTERNAL_ERROR` with no internal detail; the detail goes to stderr only.
+  becomes `INTERNAL_ERROR` with no internal detail; the detail goes to stderr only. A lint database
+  that cannot start (a broken install) is such an exception.
 - Starts in well under a second. PGlite loads only inside a `money_lint_schema` call, at about
   1.5 s per call.
 
@@ -197,6 +203,7 @@ Shared error codes:
 | `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. |
 | `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. |
 | `FILE_TOO_LARGE` | Over the tool's size limit. | States the limit; suggests a smaller export. |
+| `FILE_UNREADABLE` | The file or folder passed the checks but cannot be read: another program has it locked (Windows), permission is denied, or it went away. | Close the program that holds it, or fix its permissions. |
 | `BUSY` | A second `money_lint_schema` while one runs (§2.6). | Retry after the running lint finishes. |
 | `INTERNAL_ERROR` | A bug. | Details are in the server's log (stderr). |
 
@@ -516,7 +523,12 @@ ROLE ..., CREATE SCHEMA ...).`
 - At most 2,000 files.
 - Each file at most 5 MiB; all files together at most 20 MiB.
 - Time limit from `timeout_seconds`.
-- The database thread may use up to 1 GiB of memory; a migration that needs more fails with a hint.
+- Memory: while the files run, the server's memory may grow by at most 1 GiB over what it was once
+  the database had started. It is checked ten times a second, so one statement can briefly take more
+  before the check sees it. A file that needs more fails as `MIGRATION_FAILED` (`SETUP_FAILED` for
+  setup) with a hint, and its database is discarded. (The worker's JavaScript heap has its own 1 GiB
+  limit, but PGlite keeps its WebAssembly memory and in-memory files outside that heap, so the process
+  as a whole is watched.)
 - One lint at a time.
 - At most 50 findings in a result. The counts still cover them all, and the model fixes those and runs
   the tool again.
@@ -964,12 +976,15 @@ The tests are in `test/` (Vitest, about 370); each file starts with a comment sa
 - **Limits and time:** the 20,000-character budget with the longest names in a deep folder, with one
   migration 18 to 30 folders deep (its path cut in the middle) and with long records pointers (and
   every ledger result in the tests is held to it); a JSON number with long runs of zeros, read in
-  linear time; the size and row limits;
-  an endless migration stopped at the time limit; a stand-in database thread that goes silent (caught
-  within 5 seconds), answers wrongly, or runs forever (its heartbeat stops at the time limit and on a
-  cancel).
+  linear time; the size and row limits; a migration whose data outgrows the memory limit; a file or
+  folder nobody may read (POSIX), which is `FILE_UNREADABLE`, not a crash; an endless migration
+  stopped at the time limit; a stand-in database thread that goes silent (caught within 5 seconds),
+  answers wrongly, runs forever (its heartbeat stops at the time limit and on a cancel), or cannot
+  start (`INTERNAL_ERROR` without detail, its cause in the log).
 - **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
-  `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; stdout purity (a stand-in thread
+  `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; a cancel that arrives before the
+  call ran (logged `CANCELLED`, no answer); the client going away mid-lint (`DISCONNECTED`, then the
+  process exits); the host closing the server's stderr (it keeps answering); stdout purity (a stand-in thread
   that writes everywhere is contained); advertised schemas that fit the Claude API (no root
   combinators, short plain names, no type arrays); `listChanged: false`; `null` for every optional
   argument; unknown and misspelt parameters refused; `INTERNAL_ERROR` without detail.

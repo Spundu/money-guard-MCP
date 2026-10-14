@@ -4,7 +4,7 @@
 // The order of the checks matters: a path that is outside the project is refused BEFORE the file system
 // is touched, so the answer never reveals whether something outside the project exists.
 
-import { realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { clip, clipPath } from './echo.js';
@@ -189,6 +189,33 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     );
   }
   return { real, rel: toPosix(lexRel), size: stat.size, isDirectory: stat.isDirectory() };
+}
+
+/**
+ * The tool error for a file or folder that passed the checks but could not be read: another program has
+ * it locked (Windows), the permissions forbid it, or it went away in between. `shownPath` is the path
+ * relative to the root; it is made safe here.
+ */
+export function unreadable(shownPath: string, err: unknown): ToolError {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  const why =
+    code === 'EBUSY'
+      ? 'is locked by another program'
+      : code === 'EACCES' || code === 'EPERM'
+        ? 'cannot be read (permission denied)'
+        : code === 'ENOENT'
+          ? 'no longer exists'
+          : `cannot be read (${typeof code === 'string' ? clip(code, 20) : 'an unknown error'})`;
+  return new ToolError('FILE_UNREADABLE', `"${clipPath(shownPath)}" ${why}.`, 'Close the program that holds it, or fix its permissions, then call again.');
+}
+
+/** Read a file that resolveInRoot accepted; a read that fails is FILE_UNREADABLE, not a crash. */
+export function readChecked(real: string, shownPath: string): Buffer {
+  try {
+    return readFileSync(real);
+  } catch (err) {
+    throw unreadable(shownPath, err);
+  }
 }
 
 export function formatMib(bytes: number): string {

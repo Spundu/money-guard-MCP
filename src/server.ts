@@ -1,17 +1,16 @@
 // The MCP server: one factory that builds the server with its three tools (SPEC.md §2). The same
 // factory serves both protocol eras (index.ts hands it to serveStdio) and the in-process tests.
 
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import process from 'node:process';
-import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
+import { McpServer, SdkError, SdkErrorCode, type CallToolResult } from '@modelcontextprotocol/server';
 import { verifyAuditLog } from './audit/verify.js';
 import type { Config } from './config.js';
 import { clipPath, escapeStrings, escapeUnsafe } from './echo.js';
 import { ToolError } from './errors.js';
 import { checkLedgerFile } from './ledger/run.js';
 import { lintSchema } from './lint/run.js';
-import { resolveInRoot, type Root } from './paths.js';
+import { readChecked, resolveInRoot, type Root } from './paths.js';
 import { auditInput, auditOutput, ledgerInput, ledgerOutput, lintInput, lintOutput } from './schemas.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from './text.js';
 
@@ -32,18 +31,28 @@ function given<T>(value: T | null | undefined): T | undefined {
 }
 
 /**
- * An unexpected error, for the log: its type and the code locations it came from, as file:line:column
- * only. Never its message, which might quote a file, and never a folder: the location is taken from the
- * end of each frame, so folder names with spaces or brackets cannot leave words behind.
+ * An unexpected error, for the log: its type, its error code and the code locations it came from, as
+ * file:line:column only, then the same for its cause. Never its message, which might quote a file, and
+ * never a folder: the location is taken from the end of each frame, so folder names with spaces or
+ * brackets cannot leave words behind.
  */
-export function trace(err: unknown): string {
+export function trace(err: unknown, depth = 0): string {
   if (!(err instanceof Error)) return typeof err;
   const frames = (err.stack ?? '')
     .split('\n')
     .filter((line) => line.trimStart().startsWith('at '))
     .slice(0, 4)
     .map((line) => /([^\\/\s()]+:\d+:\d+)\)?\s*$/.exec(line)?.[1] ?? '?');
-  return [err.name, ...frames].join(' | ');
+  // An error code (EBUSY, ERR_MODULE_NOT_FOUND) says what failed and quotes nothing.
+  const code = (err as { code?: unknown }).code;
+  const head = typeof code === 'string' && /^[A-Z0-9_]{1,40}$/.test(code) ? `${err.name} ${code}` : err.name;
+  const line = [head, ...frames].join(' | ');
+  return err.cause instanceof Error && depth < 2 ? `${line} <- ${trace(err.cause, depth + 1)}` : line;
+}
+
+/** How a call the client gave up on is logged: it gets no answer (the SDK drops it), whatever the tool did. */
+function gaveUp(signal: AbortSignal): string {
+  return signal.reason instanceof SdkError && signal.reason.code === SdkErrorCode.ConnectionClosed ? 'DISCONNECTED' : 'CANCELLED';
 }
 
 async function answer(tool: string, log: Log, signal: AbortSignal | undefined, work: () => Promise<object> | object): Promise<CallToolResult> {
@@ -52,11 +61,11 @@ async function answer(tool: string, log: Log, signal: AbortSignal | undefined, w
   try {
     // Every string escaped once more on the way out (SPEC.md §2.4): a field a tool forgot cannot arrive raw.
     const result = escapeStrings(await work());
-    log(`${NAME}: ${tool} ok ${ms()}`);
+    log(`${NAME}: ${tool} ${signal?.aborted ? gaveUp(signal) : 'ok'} ${ms()}`);
     return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result as Record<string, unknown> };
   } catch (err) {
     if (signal?.aborted) {
-      log(`${NAME}: ${tool} CANCELLED ${ms()}`);
+      log(`${NAME}: ${tool} ${gaveUp(signal)} ${ms()}`);
       throw err; // the client is no longer waiting for an answer
     }
     if (err instanceof ToolError) {
@@ -135,7 +144,7 @@ export function createServer(config: Config, log: Log = stderrLog): McpServer {
       answer('audit_verify_chain', log, ctx.mcpReq.signal, () => {
         const target = resolveInRoot(root(), args.file, { kind: 'file', extensions: ['.jsonl', '.ndjson', '.log'], maxBytes: AUDIT_MAX_BYTES });
         if (!config.auditKeys.ok) throw config.auditKeys.error;
-        return verifyAuditLog({ file: clipPath(target.rel), bytes: readFileSync(target.real), keys: config.auditKeys.value, anchor: given(args.anchor) });
+        return verifyAuditLog({ file: clipPath(target.rel), bytes: readChecked(target.real, target.rel), keys: config.auditKeys.value, anchor: given(args.anchor) });
       }),
   );
 

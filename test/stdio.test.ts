@@ -15,6 +15,31 @@ const REPO = path.resolve(import.meta.dirname, '..');
 // What ships: test/support/build.ts builds it from the current source before the tests run.
 const ENTRY = path.join(REPO, 'dist', 'index.js');
 
+/** The built server as a process spoken to in raw JSON-RPC lines, for what the SDK client hides. */
+function raw(env: Record<string, string>) {
+  const child = spawn(process.execPath, [ENTRY], { env: { ...getDefaultEnvironment(), ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
+  child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
+  child.stderr.on('error', () => {});
+  const send = (message: object) => child.stdin.write(`${JSON.stringify(message)}\n`);
+  const answered = (id: number) => vi.waitFor(() => expect(stdout).toContain(`"id":${id}`), { timeout: 10_000 });
+  return {
+    child,
+    send,
+    answered,
+    stdout: () => stdout,
+    stderr: () => stderr,
+    exited: new Promise<number | null>((resolve) => child.on('exit', resolve)),
+    async initialize() {
+      send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '1' } } });
+      await answered(1);
+      send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    },
+  };
+}
+
 async function connect(era: 'modern' | 'legacy', env: Record<string, string>): Promise<Client> {
   const transport = new StdioClientTransport({ command: process.execPath, args: [ENTRY], env: { ...getDefaultEnvironment(), ...env }, stderr: 'pipe' });
   const client = new Client({ name: 'money-guard-stdio-tests', version: '1.0.0' }, era === 'modern' ? { versionNegotiation: { mode: { pin: '2026-07-28' } } } : {});
@@ -84,6 +109,58 @@ describe('the stdio process', () => {
     expect(stderr).toMatch(/^money-guard-mcp: transport error \(\w+\)$/m);
     expect(stderr).not.toContain('xxxxxxxx');
   }, 30_000);
+
+  it('keeps answering after the host closes its stderr: a log line must not turn into an endless EPIPE loop', async () => {
+    const server = raw({ MONEY_GUARD_ROOT: SHOP });
+    try {
+      await server.initialize();
+      server.child.stderr.destroy(); // the host stops reading the log
+      server.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'money_check_double_entry', arguments: { file: 'exports/journal.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence' } } } });
+      await server.answered(2);
+      server.send({ jsonrpc: '2.0', id: 3, method: 'ping' });
+      await server.answered(3);
+    } finally {
+      server.child.kill();
+    }
+  });
+
+  it('logs a call the client cancelled before it ran as CANCELLED, not ok, and sends no answer for it', async () => {
+    const server = raw({ MONEY_GUARD_ROOT: SHOP });
+    try {
+      await server.initialize();
+      const call = { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'money_check_double_entry', arguments: { file: 'exports/journal.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence' } } } };
+      const cancel = { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'changed my mind' } };
+      server.child.stdin.write(`${JSON.stringify(call)}\n${JSON.stringify(cancel)}\n`);
+      server.send({ jsonrpc: '2.0', id: 3, method: 'ping' });
+      await server.answered(3);
+      await vi.waitFor(() => expect(server.stderr()).toMatch(/money-guard-mcp: money_check_double_entry CANCELLED \d+ms/), { timeout: 5000 });
+      expect(server.stdout()).not.toContain('"id":2');
+    } finally {
+      server.child.kill();
+    }
+  });
+
+  it('logs a lint cut short by the client going away as DISCONNECTED, then exits', async () => {
+    const project = tempDir();
+    writeTree(project, { 'endless/0001.sql': 'do $$ begin loop end loop; end $$;' });
+    const server = raw({ MONEY_GUARD_ROOT: project });
+    await server.initialize();
+    server.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'money_lint_schema', arguments: { migrations: 'endless' } } });
+    await new Promise((r) => setTimeout(r, 1000));
+    server.child.stdin.end();
+    expect(await Promise.race([server.exited, new Promise((r) => setTimeout(() => r('still running'), 15_000))])).toBe(0);
+    expect(server.stderr()).toMatch(/money-guard-mcp: money_lint_schema DISCONNECTED \d+ms/);
+  }, 30_000);
+
+  it('says in its startup line that the audit keys are malformed, not that there are none', async () => {
+    const server = raw({ MONEY_GUARD_ROOT: SHOP, MONEY_GUARD_AUDIT_KEYS: 'k1=not-hex' });
+    try {
+      await vi.waitFor(() => expect(server.stderr()).toContain('audit keys malformed (the audit tool answers KEYS_INVALID).'), { timeout: 10_000 });
+      expect(server.stderr()).not.toContain('not-hex');
+    } finally {
+      server.child.kill();
+    }
+  });
 
   it('writes nothing but protocol messages to stdout, and no file content to stderr, then exits when stdin closes', async () => {
     const project = tempDir();
