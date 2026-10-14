@@ -204,6 +204,17 @@ describe('money_lint_schema: safety', () => {
     expect(Date.now() - started).toBeLessThan(20_000);
   });
 
+  it('says the catalog could not be read after the last file, not that the file failed while it ran', async () => {
+    // A migration that replaces one of PostgreSQL's own functions breaks money-guard's read of the
+    // catalog, which runs once every file has run.
+    const e = await failure({
+      'db/migrations/0001.sql': 'create table t (amount numeric);',
+      'db/migrations/0002.sql': 'create or replace function pg_catalog.format_type(oid, integer) returns text language sql as $$ select ($2 / 0)::text $$;',
+    });
+    expect(e.code).toBe('MIGRATION_FAILED');
+    expect(e.message).toBe(`${lastDir()}/db/migrations/0002.sql: the catalog could not be read after this file, the last one (division by zero).`);
+  });
+
   it('stops when the call is cancelled', async () => {
     const dir = newDir();
     writeTree(path.join(projectRoot().real, dir), { 'db/migrations/0001.sql': 'do $$ begin loop end loop; end $$;' });

@@ -64,7 +64,9 @@ describe('money_lint_schema: fix_sql', () => {
       "create function max_total() returns numeric language sql immutable as 'select 1000';\n" +
       'create table t (id int, status text, total double precision check (total >= 0), fee numeric(10,2) check (fee is not null and fee <> 0), ' +
       'amount_cap numeric(10,2) check (amount_cap <= max_total()), net numeric(10,2), subtotal numeric(10,2), check (net >= subtotal));\n' +
-      "create index t_open on t (total) where status = 'open';\n";
+      "create index t_open on t (total) where status = 'open';\n" +
+      // An ordinary index's condition only decides which rows it speeds up: it may hold an amount.
+      'create index t_big on t (fee) where fee > 100;\n';
     const r = await lint({ 'db/migrations/0001.sql': schema });
     const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
     expect([fix.amount_cap, fix.net, fix.subtotal]).toEqual([null, null, null]); // a function's result; a CHECK across two columns
@@ -98,6 +100,10 @@ describe('money_lint_schema: fix_sql', () => {
         // A child that declares the column again has it as its own too: reported, but changed only on the parent.
         'create table rents (amount numeric(10,2));',
         'create table rents_old (amount numeric(10,2)) inherits (rents);',
+        // A unique index on a child, whose condition holds an amount.
+        'create table tips (amount numeric(10,2));',
+        'create table tips_old () inherits (tips);',
+        'create unique index tips_old_big on tips_old (amount) where amount > 5;',
       ].join('\n'),
     });
     expect(r.findings.map((f) => [f.table, f.fix_sql])).toEqual([
@@ -106,6 +112,7 @@ describe('money_lint_schema: fix_sql', () => {
       ['public.payments', null],
       ['public.rents', 'ALTER TABLE public.rents ALTER COLUMN amount TYPE bigint USING round(amount * 100)::bigint;'],
       ['public.rents_old', null],
+      ['public.tips', null],
     ]);
   });
 

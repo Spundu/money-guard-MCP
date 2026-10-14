@@ -115,6 +115,9 @@ async function main() {
     });
     send({ type: 'snapshot', step, rows });
   }
+  // Said first, so a time limit or a failure while the catalog is read says so, rather than seeming to
+  // happen while the last file ran.
+  send({ type: 'reading' });
   const detail = (await db.query(job.detailSql)).rows;
   send({ type: 'done', detail });
   await db.close();

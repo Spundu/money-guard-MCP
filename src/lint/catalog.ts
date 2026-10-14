@@ -36,7 +36,9 @@ export const SNAPSHOT_SQL = `
  * (an ALTER of the parent changes their column too, matched by name): the defaults; the CHECK
  * constraints, as written back (null for one that also uses another column); and whether a unique or
  * exclusion index with an expression or a WHERE clause depends on it (pg_depend). An ordinary index's
- * condition only decides which rows it speeds up, so it does not count.
+ * condition only decides which rows it speeds up, so it does not count. Each of the three is gathered
+ * once, by table and column name, and joined to the columns: looked up column by column, it searched
+ * the whole catalog for each, and a schema of 1,000 tables took longer than the time limit.
  */
 export const DETAIL_SQL = `
   WITH RECURSIVE descendants AS (
@@ -45,33 +47,50 @@ export const DETAIL_SQL = `
     SELECT d.root, i.inhrelid FROM descendants d JOIN pg_catalog.pg_inherits i ON i.inhparent = d.rel
   ),
   cols AS (
-    SELECT a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
+    SELECT a.attrelid AS relid, a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
            n.nspname AS schema_name, c.relname AS table_name, a.attname AS column_name,
            pg_catalog.format_type(a.atttypid, a.atttypmod) AS declared, a.atttypid AS typid,
-           a.attgenerated::pg_catalog.text AS generated, a.attinhcount > 0 AS inherited,
-           (SELECT pg_catalog.array_agg(pg_catalog.pg_get_expr(ad.adbin, ad.adrelid))
-            FROM pg_catalog.pg_attribute fa
-            JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = fa.attrelid AND ad.adnum = fa.attnum
-            WHERE fa.attname = a.attname AND NOT fa.attisdropped
-              AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS defaults,
-           (SELECT pg_catalog.array_agg(CASE WHEN pg_catalog.array_length(k.conkey, 1) = 1 THEN pg_catalog.pg_get_expr(k.conbin, k.conrelid) END)
-            FROM pg_catalog.pg_attribute fa
-            JOIN pg_catalog.pg_constraint k ON k.conrelid = fa.attrelid AND k.contype = 'c' AND fa.attnum = ANY (k.conkey)
-            WHERE fa.attname = a.attname AND NOT fa.attisdropped
-              AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS checks,
-           (SELECT pg_catalog.array_agg(pg_catalog.concat_ws(' AND ', pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid)))
-            FROM pg_catalog.pg_attribute fa
-            JOIN pg_catalog.pg_index i ON i.indrelid = fa.attrelid AND (i.indisunique OR i.indisexclusion)
-              AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
-            JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
-              AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = fa.attrelid AND p.refobjsubid = fa.attnum
-            WHERE fa.attname = a.attname AND NOT fa.attisdropped
-              AND (fa.attrelid = c.oid OR fa.attrelid IN (SELECT d.rel FROM descendants d WHERE d.root = c.oid))) AS index_exprs
+           a.attgenerated::pg_catalog.text AS generated, a.attinhcount > 0 AS inherited
     ${USER_TABLES}
       AND NOT c.relispartition AND a.attislocal
       AND NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_depend d
         WHERE d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.objid = c.oid AND d.deptype = 'e')
+  ),
+  family AS (
+    SELECT relid AS root, relid AS rel FROM cols
+    UNION
+    SELECT d.root, d.rel FROM descendants d WHERE d.root IN (SELECT relid FROM cols)
+  ),
+  members AS (
+    SELECT f.root, fa.attrelid AS rel, fa.attnum, fa.attname
+    FROM family f
+    JOIN pg_catalog.pg_attribute fa ON fa.attrelid = f.rel AND fa.attnum > 0 AND NOT fa.attisdropped
+  ),
+  col_defaults AS (
+    SELECT m.root, m.attname, pg_catalog.array_agg(pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)) AS defaults
+    FROM members m
+    JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = m.rel AND ad.adnum = m.attnum
+    GROUP BY m.root, m.attname
+  ),
+  col_checks AS (
+    SELECT m.root, m.attname,
+           pg_catalog.array_agg(CASE WHEN pg_catalog.array_length(k.conkey, 1) = 1 THEN pg_catalog.pg_get_expr(k.conbin, k.conrelid) END) AS checks
+    FROM pg_catalog.pg_constraint k
+    CROSS JOIN LATERAL pg_catalog.unnest(k.conkey) AS ck (attnum)
+    JOIN members m ON m.rel = k.conrelid AND m.attnum = ck.attnum
+    WHERE k.contype = 'c'
+    GROUP BY m.root, m.attname
+  ),
+  col_indexes AS (
+    SELECT m.root, m.attname,
+           pg_catalog.array_agg(pg_catalog.concat_ws(' AND ', pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid))) AS index_exprs
+    FROM pg_catalog.pg_index i
+    JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
+      AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = i.indrelid
+    JOIN members m ON m.rel = p.refobjid AND m.attnum = p.refobjsubid
+    WHERE (i.indisunique OR i.indisexclusion) AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
+    GROUP BY m.root, m.attname
   ),
   chain AS (
     SELECT t.oid AS start, t.oid AS cur, false AS via_array, NULL::pg_catalog.text AS domain_name, 0 AS depth
@@ -95,9 +114,13 @@ export const DETAIL_SQL = `
     ORDER BY ch.start, ch.depth DESC
   )
   SELECT cols.col, cols.schema_name, cols.table_name, cols.column_name, cols.declared, cols.generated, cols.inherited,
-         cols.defaults, cols.checks, cols.index_exprs,
+         col_defaults.defaults, col_checks.checks, col_indexes.index_exprs,
          base.via_array, base.domain_name, base.base_name, base.base_schema, base.base_kind
-  FROM cols JOIN base ON base.start = cols.typid
+  FROM cols
+  JOIN base ON base.start = cols.typid
+  LEFT JOIN col_defaults ON col_defaults.root = cols.relid AND col_defaults.attname = cols.column_name
+  LEFT JOIN col_checks ON col_checks.root = cols.relid AND col_checks.attname = cols.column_name
+  LEFT JOIN col_indexes ON col_indexes.root = cols.relid AND col_indexes.attname = cols.column_name
   ORDER BY cols.schema_name, cols.table_name, cols.column_name`;
 
 export interface DetailRow {

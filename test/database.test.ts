@@ -74,6 +74,25 @@ describe('failure', () => {
     }
     expect(setup('select x;', { message: 'column "x" does not exist', code: '42703' }).fix).toBe('Fix the setup file at that place.');
   });
+
+  it('never says to use files when migrations is one file, which files cannot pick from', () => {
+    const single = (text: string, err: { message: string; code?: string; position?: string }) => failure({ name: 'schema.sql', text, phase: 'migration' }, err, { ...context, single: true }).fix;
+    const fixes = [
+      single('create extension pg_net;', { message: 'extension "pg_net" is not available', code: '0A000' }),
+      single('create table x (a uuid references auth.users);', { message: 'relation "auth.users" does not exist', code: '42P01' }),
+      single('\\connect other\n', { message: 'syntax error at or near "\\"', code: '42601', position: '1' }),
+      single('create index concurrently i on t (a);', { message: 'CREATE INDEX CONCURRENTLY cannot run inside a transaction block', code: '25001' }),
+      single("alter type s add value 'b';", { message: 'unsafe use of new value "b" of enum type s', code: '55P04' }),
+      single('select 1;', { message: 'out of memory', code: '53200' }),
+    ];
+    for (const fix of fixes) expect(fix).not.toMatch(/with files|pass files|out of order/);
+    expect(fixes[0]).toContain('If the file uses it for something unrelated to money, lint a copy of the file without that part.');
+    expect(fixes[1]).toMatch(/^This file needs objects your platform creates\./);
+    expect(fixes[2]).toMatch(/Lint a copy without that line\.$/);
+    expect(fixes[3]).toMatch(/Lint a copy without it\.$/);
+    expect(fixes[4]).toMatch(/Split the file in two, put both in a folder, and lint the folder\.$/);
+    expect(fixes[5]).toMatch(/Lint a copy without the part that needs it \(a large data load, say\)\.$/);
+  });
 });
 
 describe('runScripts with a setup file that goes wrong', () => {
@@ -215,6 +234,56 @@ describe('runScripts with a database that misbehaves', () => {
       code: 'MIGRATION_FAILED',
       message: 'db/0001.sql: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
     });
+  });
+
+  it('says when time ran out or the thread died while the catalog was read, after every file had run', async () => {
+    await expect(run('reading', { timeoutMs: 3000 })).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      message: 'The lint ran out of time (3 s) while reading the catalog, after every file had run.',
+      fix: 'Leave slow data-loading files out with files. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.',
+    });
+    await expect(run('reading-crash')).rejects.toMatchObject({
+      code: 'MIGRATION_FAILED',
+      message: 'db/0001.sql: the catalog could not be read after this file, the last one (the database thread died).',
+      fix: "Leave the file out with files, or lint it on its own to find the statement that breaks the read (one that replaces PostgreSQL's own functions, say).",
+    });
+  });
+
+  it('says when the memory limit was hit while the catalog was read, after every file had run', async () => {
+    process.env.MONEY_GUARD_TEST_WORKER = 'reading-grows';
+    await expect(runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, memoryLimitBytes: 64 * 1024 * 1024 })).rejects.toMatchObject({
+      code: 'MIGRATION_FAILED',
+      message: 'db/0001.sql: the lint database grew by more than 64 MiB of memory while reading the catalog after this file, the last one.',
+    });
+  });
+
+  it('says what was running when time ran out: the start of the database, or the setup file', async () => {
+    process.env.MONEY_GUARD_TEST_HEARTBEAT = path.join(tempDir(), 'beat');
+    await expect(run('endless', { timeoutMs: 3000 })).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      message: 'The lint ran out of time (3 s) while starting the database.',
+      fix: 'A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.',
+    });
+    process.env.MONEY_GUARD_TEST_WORKER = 'hang';
+    await expect(runScripts([{ name: 'setup.sql', text: 'select 1;', phase: 'setup' }], { timeoutMs: 3000, preset: false, worker: FAKE })).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      message: 'The lint ran out of time (3 s) while running setup.sql.',
+      fix: 'Take slow data loading out of the setup file. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.',
+    });
+  });
+
+  it('never says to use files when migrations is one file, which files cannot pick from', async () => {
+    const fixOf = (mode: string, timeoutMs = 30_000) => {
+      process.env.MONEY_GUARD_TEST_WORKER = mode;
+      return runScripts([script], { timeoutMs, preset: false, single: true, worker: FAKE }).then(
+        () => 'no error',
+        (e: unknown) => (e instanceof ToolError ? e.fix : String(e)),
+      );
+    };
+    expect(await fixOf('reading', 3000)).toBe('If the file loads data, lint a schema-only copy (pg_dump --schema-only). A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.');
+    expect(await fixOf('unusable')).toBe('Lint a copy without that statement.');
+    expect(await fixOf('crash')).toBe('Lint parts of the file on their own to find the statement that stops the database.');
+    expect(await fixOf('reading-crash')).toBe("Lint parts of the file on their own to find the statement that breaks the read (one that replaces PostgreSQL's own functions, say).");
   });
 
   it('treats a database that cannot start as a failure of money-guard: no detail for the model, the cause for the log', async () => {

@@ -249,6 +249,13 @@ describe('money_lint_schema: which files run', () => {
     );
   });
 
+  it('says so without pointing at files when no table is left after the one file migrations names', async () => {
+    const dir = newDir();
+    writeTree(path.join(projectRoot().real, dir), { 'schema.sql': 'create table t (price double precision);\ndrop table t;\n' });
+    const r = await lintSchema(projectRoot(), { migrations: `${dir}/schema.sql` });
+    expect(r.summary).toBe('No tables exist after the migration file, so nothing was checked. If it also holds its down step, that step dropped what the file created: lint a copy without the down step.');
+  });
+
   it('explains a folder that only holds down steps', async () => {
     expect((await failure({ 'db/migrations/0001.down.sql': 'drop table t;' })).toText()).toMatch(
       /^NO_SQL_FILES: "p\d+\/db\/migrations" holds no migrations to run: 1 \.sql file is a down step /,
@@ -305,6 +312,25 @@ describe('money_lint_schema: which files run', () => {
     const e = await failure({ 'db/migrations/001_init.ts': 'export {}', 'db/migrations/002.ts': '', 'db/migrations/readme.md': '' });
     expect(e.code).toBe('NO_SQL_FILES');
     expect(e.message).toMatch(/holds no \.sql files\. It holds 2 \.ts, 1 \.md files\./);
+  });
+
+  it('counts the files in subfolders too when a folder has no SQL, and says "file" for one', async () => {
+    const knex = await failure({ 'db/migrations/knex/001_init.js': '', 'db/migrations/knex/002.js': '', 'db/migrations/seeds/s.js': '', 'db/migrations/knexfile.ts': '' });
+    expect(knex.message).toMatch(/holds no \.sql files\. It holds 3 \.js, 1 \.ts files\.$/);
+    expect((await failure({ 'db/migrations/prisma/schema.prisma': '' })).message).toMatch(/holds no \.sql files\. It holds 1 \.prisma file\.$/);
+    for (const [inside, holds] of [['db/migrations/empty', 'It holds folders but no files.'], ['db/migrations', 'It is empty.']] as const) {
+      const dir = newDir();
+      mkdirSync(path.join(projectRoot().real, dir, inside), { recursive: true });
+      await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'NO_SQL_FILES', message: `"${dir}/db/migrations" holds no .sql files. ${holds}` });
+    }
+  });
+
+  it('fits the advice for a file over 5 MiB to what it is: the one file migrations names, or the setup file', async () => {
+    const big = `-- ${'x'.repeat(5 * 1024 * 1024)}`;
+    const dir = newDir();
+    writeTree(path.join(projectRoot().real, dir), { 'schema.sql': big, 'setup.sql': big, 'db/0001.sql': 'select 1;' });
+    await expect(lintSchema(projectRoot(), { migrations: `${dir}/schema.sql` })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE', fix: 'Split the file into a folder of smaller files, and lint the folder.' });
+    await expect(lintSchema(projectRoot(), { migrations: `${dir}/db`, setup: `${dir}/setup.sql` })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE', fix: 'Keep only what the migrations need in the setup file.' });
   });
 
   it('refuses more than 2,000 files, a file over 5 MiB, and more than 20 MiB in all', async () => {

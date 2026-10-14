@@ -30,6 +30,8 @@ export interface Sources {
   files: SqlScript[];
   /** SHA-256 over every applied file (path, NUL, bytes), setup first, then the migrations in order. */
   sha256: string;
+  /** Whether migrations is one file, not a folder: files cannot pick from it, so advice must not say to. */
+  single: boolean;
 }
 
 /** Compare one path segment: runs of digits by numeric value, everything else by character code. */
@@ -107,6 +109,24 @@ export function prepareSql(text: string): string {
     .join('\n');
 }
 
+/** What a walk has met so far: for its limits, and so an empty result can say why. */
+interface Seen {
+  /** Down steps left out. */
+  down: number;
+  /** The setup file's real path: it runs once, as setup. */
+  setup: string | undefined;
+  setupFound: boolean;
+  /** Files and folders met, against MAX_ENTRIES. */
+  entries: number;
+  /** Files that are not .sql, by extension, subfolders included. */
+  others: Map<string, number>;
+}
+
+function countOther(seen: Seen, name: string): void {
+  const ext = path.extname(name).toLowerCase() || '(no extension)';
+  seen.others.set(ext, (seen.others.get(ext) ?? 0) + 1);
+}
+
 function tooManyFiles(): ToolError {
   return new ToolError('TOO_MANY_FILES', `The folder holds more than ${MAX_FILES} .sql files.`, 'Point migrations at the folder of migrations only, or pass files with the ones to run.');
 }
@@ -116,7 +136,7 @@ function tooManyFiles(): ToolError {
  * (counted in `seen.down`, so an empty result can say why) and the setup file (`seen.setup`, its real
  * path), which runs once, as setup.
  */
-function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: { down: number; setup: string | undefined; setupFound: boolean; entries: number }): void {
+function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: Seen): void {
   if (visited.has(dir)) return; // a link loop
   visited.add(dir);
   let entries: Dirent[];
@@ -145,6 +165,7 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
           'Rename the migration, or pass files without it.',
         );
       }
+      if (entry.isFile()) countOther(seen, entry.name);
       continue;
     }
     let real = full;
@@ -191,26 +212,29 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       }
       out.push(toPosix(path.relative(base, full)));
       if (out.length > MAX_FILES) throw tooManyFiles();
+    } else if (isFile) {
+      countOther(seen, entry.name);
     }
   }
 }
 
-function describeOtherFiles(dir: string): string {
-  const counts = new Map<string, number>();
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    const ext = path.extname(entry.name).toLowerCase() || '(no extension)';
-    counts.set(ext, (counts.get(ext) ?? 0) + 1);
-  }
+/** What a folder without .sql files holds instead, subfolders included: its five most common file types. */
+function describeOtherFiles(seen: Seen): string {
   // Most common first; ties by name, so the text is the same on every machine (readdir order is not).
-  const list = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, 5).map(([ext, n]) => `${n} ${clip(ext, 20)}`);
-  return list.length === 0 ? 'It is empty.' : `It holds ${list.join(', ')} files.`;
+  const top = [...seen.others].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, 5);
+  if (top.length === 0) return seen.entries === 0 ? 'It is empty.' : 'It holds folders but no files.';
+  const shown = top.reduce((sum, [, n]) => sum + n, 0);
+  return `It holds ${top.map(([ext, n]) => `${n} ${clip(ext, 20)}`).join(', ')} ${shown === 1 ? 'file' : 'files'}.`;
 }
 
-/** Read a .sql file: the size limits, the hash, UTF-8, the format markers. */
-function readScript(real: string, rel: string, size: number, budget: { total: number }, hash: ReturnType<typeof createHash>, failure: 'MIGRATION_FAILED' | 'SETUP_FAILED'): SqlScript {
+/**
+ * Read a .sql file: the size limits, the hash, UTF-8, the format markers. `role`: the setup file, a
+ * migration in a folder, or the one file migrations names (which files cannot leave out).
+ */
+function readScript(real: string, rel: string, size: number, budget: { total: number }, hash: ReturnType<typeof createHash>, role: 'setup' | 'folder' | 'single'): SqlScript {
   if (size > MAX_FILE_BYTES) {
-    throw new ToolError('FILE_TOO_LARGE', `"${clipPath(rel)}" is ${formatSize(size)}; a migration file may be at most ${formatMib(MAX_FILE_BYTES)}.`, 'Split the file, or leave it out with files.');
+    const fix = { setup: 'Keep only what the migrations need in the setup file.', folder: 'Split the file, or leave it out with files.', single: 'Split the file into a folder of smaller files, and lint the folder.' }[role];
+    throw new ToolError('FILE_TOO_LARGE', `"${clipPath(rel)}" is ${formatSize(size)}; a .sql file may be at most ${formatMib(MAX_FILE_BYTES)}.`, fix);
   }
   budget.total += size;
   if (budget.total > MAX_TOTAL_BYTES) {
@@ -222,7 +246,7 @@ function readScript(real: string, rel: string, size: number, budget: { total: nu
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new ToolError(failure, `"${clipPath(rel)}" is not valid UTF-8 text.`, 'Save the file as UTF-8.');
+    throw new ToolError(role === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED', `"${clipPath(rel)}" is not valid UTF-8 text.`, 'Save the file as UTF-8.');
   }
   return { rel, text: prepareSql(text) };
 }
@@ -237,7 +261,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
   let setupReal: string | undefined;
   if (args.setup !== undefined) {
     const s = resolveInRoot(root, args.setup, { kind: 'file', extensions: ['.sql'] });
-    setup = readScript(s.real, s.rel, s.size, budget, hash, 'SETUP_FAILED');
+    setup = readScript(s.real, s.rel, s.size, budget, hash, 'setup');
     setupReal = s.real;
   }
 
@@ -264,7 +288,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     });
   } else {
     const found: string[] = [];
-    const seen = { down: 0, setup: setupReal, setupFound: false, entries: 0 };
+    const seen: Seen = { down: 0, setup: setupReal, setupFound: false, entries: 0, others: new Map() };
     walk(root, target.real, target.real, found, new Set(), seen);
     if (found.length === 0 && (seen.down > 0 || seen.setupFound)) {
       const left: string[] = [];
@@ -273,7 +297,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
       throw new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${left.join('; ')}.`, 'Point migrations at the folder of up migrations, or pass files with the ones to run.');
     }
     if (found.length === 0) {
-      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no .sql files. ${describeOtherFiles(target.real)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
+      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no .sql files. ${describeOtherFiles(seen)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
     }
     found.sort(naturalCompare);
     chosen = found.map((rel) => {
@@ -287,6 +311,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     });
   }
 
-  const files = chosen.map((f) => readScript(f.real, f.rel, f.size, budget, hash, 'MIGRATION_FAILED'));
-  return { migrations: target.rel, setup, files, sha256: hash.digest('hex') };
+  const single = !target.isDirectory;
+  const files = chosen.map((f) => readScript(f.real, f.rel, f.size, budget, hash, single ? 'single' : 'folder'));
+  return { migrations: target.rel, setup, files, sha256: hash.digest('hex'), single };
 }

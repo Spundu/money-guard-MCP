@@ -67,7 +67,7 @@ internet and never touches a real database.
   before the handler runs (bad arguments, an unknown tool) is not logged. No line contains file
   content, keys or absolute paths; an unexpected error is logged as its type, its error code (such as
   `EBUSY`) and its `file:line:column` locations only, then the same for its cause.
-- The log is a convenience and never holds the server up. Lines are written one at a time in the
+- The log is a convenience and never holds up an answer. Lines are written one at a time in the
   background (on Windows, Node would otherwise wait until the host reads the pipe); while one waits, at
   most 100 more queue up and later ones are dropped. When the host closes the server's stderr, never
   reads it, or dies, the server keeps serving without it. (On Windows, once a host that never reads
@@ -235,7 +235,7 @@ Shared error codes:
 |---|---|---|
 | `ROOT_INVALID` | The root is missing, cannot be listed or entered (permission denied), is not a folder, or is a filesystem root. | Set `MONEY_GUARD_ROOT` to the project folder. |
 | `PATH_INVALID` | Empty, too long, NUL, a device/UNC path, or (on Windows) a colon anywhere but after a drive letter, which names an alternate data stream. | Pass a path relative to the project root. |
-| `PATH_OUTSIDE_ROOT` | Resolves outside the root (including through a symlink). | Use a path inside the project. |
+| `PATH_OUTSIDE_ROOT` | Resolves outside the root (including through a symlink). | Use a path inside the project. On Windows, for a path that starts with one `/`, it adds that such a path begins at the root of the drive: Git Bash paths (`/c/Users/...`) are not understood. |
 | `PATH_NOT_FOUND` | Nothing at that path. | Names the nearest existing parent folder. |
 | `NOT_A_FILE` | A folder where a file is needed, or something that is neither a file nor a folder. | Says which one the tool expects. |
 | `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. |
@@ -393,11 +393,19 @@ never converged: verify by executing, not by parsing.
    - Column identity is the table's internal id plus the column number, so renaming a table or a
      column does not lose track of it.
    - A file that fails stops the run. Postgres rolls that file back as a whole.
-5. Classify the columns of every **ordinary and partitioned table** in non-system schemas. Excluded:
+5. Once every file has run, **read the catalog** and classify the columns of every **ordinary and
+   partitioned table** in non-system schemas. Excluded:
    - views
    - partitions (reported once, through their parent)
    - inherited columns (reported where they are defined)
    - tables created by extensions
+
+   The read gathers each column's defaults, CHECK constraints and unique-index conditions once per
+   table and column name, so its cost grows with the size of the schema (a 1,000-table schema reads in
+   about a second). The worker says first that it is reading: a time limit or the memory limit hit
+   there says so, not that the last file was running, and a read that fails (after a migration
+   replaced one of PostgreSQL's own functions that it uses, say) is `MIGRATION_FAILED` for the last
+   file: "the catalog could not be read after this file, the last one".
 6. For each finding, `introduced_in` is the earliest file after which the column has had its current
    type without a break. A change of precision or length (`numeric(10,2)` to `numeric(12,2)`, or `real`
    to `double precision`) is not a break. Examples:
@@ -607,13 +615,13 @@ shows it: the tool runs the new migration too.
 ### 3.8 Errors (besides §2.5)
 | Code | When | Message contents |
 |---|---|---|
-| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent. | The file; the line and column where Postgres gives a `position` (a syntax error or an unknown name does; a missing role or schema, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
+| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent; or the catalog cannot be read after the last file (§3.4). | The file; the line and column where Postgres gives a `position` (a syntax error or an unknown name does; a missing role or schema, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
-| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead (the five most common file types, such as "It holds 3 .ts files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup). |
+| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .ts files." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup). |
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, or more than 10,000 files and folders to look through for them (listing them blocks the server). | Points at the folder of migrations, or `files`. |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, or `files` is given with a single `.sql` file. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
-| `TIMEOUT` | The time limit was hit. | Which file was running, and the limit; the fix says a larger limit helps only with a client that waits longer than 60 seconds. |
+| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy), and that a larger limit helps only with a client that waits longer than 60 seconds. |
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
@@ -635,6 +643,12 @@ The `MIGRATION_FAILED` hints by SQLSTATE:
 - **55P04** (a new enum value used in the transaction that adds it): "split the file in two".
 - **Classes 53 and 54** (out of memory, a program limit): "the file needs more than the lint database
   can give it".
+
+When `migrations` names one file, `files` cannot pick from it: a hint that would leave the file out
+with `files` says to lint a copy without the part named instead (or, for 55P04, to split the file in
+two and lint the folder that holds both), `FILE_TOO_LARGE` says to split it into a folder of smaller
+files, and the hint that the files ran out of order is not given. A setup file over the size limit is
+told to keep only what the migrations need.
 
 **Example** (a migration that grants to a role only Supabase creates; PostgreSQL gives no position for
 it): `MIGRATION_FAILED: db/migrations/0004_rls.sql: role "authenticated"
@@ -883,7 +897,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 | Code | When |
 |---|---|
 | `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). |
-| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match. |
+| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match. When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter`. |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. |
 | `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. "an object with keys data, meta" (≤ 20 keys, ≤ 40 characters each). |
@@ -1107,9 +1121,11 @@ The tests are in `test/` (Vitest, about 550); each file starts with a comment sa
   file with `\restrict`; failures with the line and column where PostgreSQL gives a position, and each hint
   as real PostgreSQL triggers it; the Supabase preset; a setup file inside the migrations folder, a
   folder that holds only the setup file, and a setup file that fails in each way (`SETUP_FAILED`,
-  with advice for the setup file); pgvector; every kind of `fix_sql` run on stored rows, with names
-  quoted as `quote_ident` quotes them, and none offered while a default, a CHECK constraint or an
-  index condition would keep amounts in pounds.
+  with advice for the setup file); advice without `files` when `migrations` is one file; pgvector;
+  every kind of `fix_sql` run on stored rows, with names quoted as `quote_ident` quotes them, and
+  none offered while a default, a CHECK constraint or a unique index's condition would keep amounts
+  in pounds (in the table or in a partition or child), while an ordinary index's condition does not
+  count.
 - **Ledger cases:** the §4.9 example; every finding code; the three column shapes; decimal mode and
   when the summary suggests it; header names matched exactly before letter case; CSV line numbers
   (quoted line breaks, CR LF, a lone CR, a BOM, blank lines); JSON Pointers; JSONL with a bad line;
@@ -1135,15 +1151,18 @@ The tests are in `test/` (Vitest, about 550); each file starts with a comment sa
 - **Limits and time:** the 20,000-character budget with the longest names in a deep folder, with one
   migration 18 to 30 folders deep (its path cut in the middle) and with long records pointers (and
   every ledger result in the tests is held to it); a JSON number with long runs of zeros, read in
-  linear time; the size and row limits; a migration whose data outgrows the memory limit, and memory
+  linear time; the final catalog read of a 400-table schema, in well under the time limit (it grows
+  with the schema, not with its square); the size and row limits; a migration whose data outgrows the
+  memory limit, and memory
   the server's own thread takes during a lint (not counted against it); a file or folder nobody may
   read or open (POSIX), as a path argument, in a migrations folder, in `files` or behind a link there,
   which is `FILE_UNREADABLE`, not a crash (and a project folder nobody may open, which `ROOT_INVALID`
   says); an endless migration stopped at the time limit; a stand-in database thread that goes silent
   (caught within 5 seconds), answers late while the server's thread is busy (not called silent),
   answers wrongly, dies while a file runs (that file is named), runs forever (its heartbeat stops at
-  the time limit and on a cancel), or cannot start (`INTERNAL_ERROR` without detail, its cause in the
-  log).
+  the time limit and on a cancel), cannot start (`INTERNAL_ERROR` without detail, its cause in the
+  log), or runs out of time, dies or outgrows its memory while it reads the catalog (said as such);
+  and a migration that breaks that read by replacing `pg_catalog.format_type`.
 - **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
   `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; a cancel that arrives before the
   call ran (logged `CANCELLED`, no answer); the client going away mid-lint (`DISCONNECTED`, then the

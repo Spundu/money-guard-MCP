@@ -11,7 +11,12 @@
 //               1 second after that;
 //   "slow":     it starts, writes the file MONEY_GUARD_TEST_HEARTBEAT names, and runs the first script
 //               only once that name with ".go" added exists;
-//   "crash":    it says the first script is running, then dies (an uncaught error) while it runs.
+//   "crash":    it says the first script is running, then dies (an uncaught error) while it runs;
+//   "hang":     it says the first script is running, then never answers again (a script that runs on);
+//   "reading":  it runs the first script, says it is reading the catalog, then never answers again;
+//   "reading-crash": it runs the first script, says it is reading the catalog, then dies;
+//   "reading-grows": it runs the first script, says it is reading the catalog, then takes 256 MiB.
+import { Buffer } from 'node:buffer';
 import { existsSync, writeFileSync } from 'node:fs';
 import process from 'node:process';
 import { setInterval, setTimeout } from 'node:timers';
@@ -40,7 +45,7 @@ if (mode === 'crash') {
   setTimeout(() => {
     throw new Error('the database thread died');
   }, 50);
-} else {
+} else if (mode !== 'hang') {
   post({ type: 'executed', step: 0 });
 }
 const answer = () => {
@@ -52,5 +57,15 @@ else if (mode === 'slow') answer();
 else if (mode === 'late') {
   setTimeout(() => post({ type: 'snapshot', step: 0, rows: [] }), 500);
   setTimeout(() => post({ type: 'done', detail: [] }), 1500);
+} else if (mode === 'reading' || mode === 'reading-crash' || mode === 'reading-grows') {
+  post({ type: 'snapshot', step: 0, rows: [] });
+  post({ type: 'reading' });
+  if (mode === 'reading-crash') {
+    setTimeout(() => {
+      throw new Error('the database thread died');
+    }, 50);
+  }
+  // Later than the memory baseline, which the server takes once the database has started.
+  if (mode === 'reading-grows') setTimeout(() => globalThis.held = Buffer.alloc(256 * 1024 * 1024, 1), 300);
 }
 setInterval(() => {}, 1000); // stay alive until the server ends the thread (silent: and say nothing)

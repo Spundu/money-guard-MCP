@@ -80,7 +80,15 @@ function tooManyRows(): ToolError {
 
 // ---------------------------------------------------------------------------------------------- CSV
 
-function findColumn(header: string[], field: MappedField, name: string): number {
+/** The delimiters the delimiter parameter takes (SPEC.md §4.2). */
+const DELIMITERS: readonly string[] = [',', ';', '\t', '|'];
+
+/** A delimiter as a fix shows it: in JSON, as the parameter takes it, with tabs named. */
+function showDelimiter(d: string): string {
+  return d === '\t' ? '"\\t" (tabs)' : JSON.stringify(d);
+}
+
+function findColumn(header: string[], field: MappedField, name: string, delimiter: string): number {
   const exact = header.flatMap((h, i) => (h === name ? [i] : []));
   const matches = exact.length > 0 ? exact : header.flatMap((h, i) => (h.toLowerCase() === name.toLowerCase() ? [i] : []));
   if (matches.length === 1) return matches[0] ?? -1;
@@ -91,10 +99,14 @@ function findColumn(header: string[], field: MappedField, name: string): number 
   const more = header.length > 30 ? ` and ${header.length - 30} more` : '';
   const near = closest(name, header);
   const hint = near === undefined ? '' : ` Did you mean "${clip(near)}"?`;
+  // A header read as one column that holds another delimiter: the file is separated by that one.
+  const other = header.length === 1 ? DELIMITERS.find((d) => d !== delimiter && (header[0] ?? '').includes(d)) : undefined;
   throw new ToolError(
     'COLUMN_NOT_FOUND',
     `The CSV header has no column "${clip(name)}" (mapped as ${field}).${hint} The columns are: ${shown.join(', ')}${more}.`,
-    'Map each field to one of the column names in the header.',
+    other === undefined
+      ? 'Map each field to one of the column names in the header.'
+      : `The file looks separated by ${showDelimiter(other)}, not ${showDelimiter(delimiter)}: pass delimiter ${JSON.stringify(other)}.`,
   );
 }
 
@@ -162,7 +174,7 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledg
   const [header, ...data] = records;
   if (header === undefined) return { rows: [], names: [] };
   if (data.length > MAX_ROWS) throw tooManyRows();
-  const indexes = mappedEntries(columns).map(([field, name]) => [field, findColumn(header, field, name)] as const);
+  const indexes = mappedEntries(columns).map(([field, name]) => [field, findColumn(header, field, name, delimiter)] as const);
   const lines = startLines(bytes, ends);
   const rows = data.map((record, seq) => {
     const values: Partial<Record<MappedField, unknown>> = {};

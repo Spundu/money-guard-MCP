@@ -30,6 +30,15 @@ describe('money_check_double_entry: reading CSV', () => {
     );
   });
 
+  it('suggests the delimiter when the header was read as one column that holds another one', () => {
+    const map = { columns: { transaction_id: 'txn_id', amount: 'amount_pence' } };
+    expect(errorText(() => check('.csv', 'txn_id;amount_pence;currency\nA;100;GBP\n', map))).toMatch(/ Fix: The file looks separated by ";", not ",": pass delimiter ";"\.$/);
+    expect(errorText(() => check('.csv', 'txn_id\tamount_pence\nA\t100\n', map))).toMatch(/ Fix: The file looks separated by "\\t" \(tabs\), not ",": pass delimiter "\\t"\.$/);
+    expect(errorText(() => check('.tsv', 'txn_id,amount_pence\nA,100\n', map))).toMatch(/ Fix: The file looks separated by ",", not "\\t" \(tabs\): pass delimiter ","\.$/);
+    expect(errorText(() => check('.csv', 'txn_id,amount_pence\nA,100\n', { ...map, delimiter: '|' }))).toMatch(/ Fix: The file looks separated by ",", not "\|": pass delimiter ","\.$/);
+    expect(errorText(() => check('.csv', 'id,value\nA,100\n', map))).toMatch(/ Fix: Map each field to one of the column names in the header\.$/);
+  });
+
   it('groups a quoted id with spaces around it with the same id, and reads a quoted blank id as missing', () => {
     const r = check('.csv', 't,a\n"T1 ",5\nT1,-5\n"   ",1\n', { columns: { transaction_id: 't', amount: 'a' } });
     expect(r.transactions_found).toBe(1);

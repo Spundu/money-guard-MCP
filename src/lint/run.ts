@@ -94,6 +94,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     timeoutMs: (params.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000,
     preset: params.preset !== undefined,
     filesGiven: params.files !== undefined,
+    single: sources.single,
     signal,
   });
 
@@ -166,7 +167,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const applied = sources.files.map((f) => clipPath(f.rel));
 
   const result: LintResult = {
-    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length }),
+    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }),
     migrations: clipPath(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -211,6 +212,8 @@ interface Counts {
   setupTables: boolean;
   floats: number;
   files: number;
+  /** Whether migrations is one file: files cannot pick from it. */
+  single: boolean;
 }
 
 function summarise(c: Counts): string {
@@ -222,7 +225,8 @@ function summarise(c: Counts): string {
     // down step in a format money-guard does not know would have dropped what it created.
     const ran = c.files === 1 ? 'the 1 migration file' : `the ${c.files} migration files`;
     if (c.setupTables) return `Nothing was checked: every table that exists after ${ran} comes from setup or the preset (a partition counts as part of its parent).`;
-    return `No tables exist after ${c.files === 1 ? 'the 1 migration file' : `the ${c.files} migration files`}, so nothing was checked. If a file also holds its down step, that step dropped what the file created: pass files, or lint a copy without the down steps.`;
+    if (c.single) return 'No tables exist after the migration file, so nothing was checked. If it also holds its down step, that step dropped what the file created: lint a copy without the down step.';
+    return `No tables exist after ${ran}, so nothing was checked. If a file also holds its down step, that step dropped what the file created: pass files, or lint a copy without the down steps.`;
   }
   // Float columns the name rule did not take for money are where money it misses would be: say so
   // wherever the summary would otherwise read as all clear.

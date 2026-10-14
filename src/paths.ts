@@ -139,10 +139,13 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
 
   const lexical = path.resolve(root.real, input);
   if (!isInside(root.real, lexical)) {
+    // On Windows, a path that starts with one "/" begins at the root of the current drive, so a Git
+    // Bash path (/c/Users/..., /tmp/...) lands outside the project even when it means a place inside.
+    const gitBash = process.platform === 'win32' && input.startsWith('/') && !input.startsWith('//');
     throw new ToolError(
       'PATH_OUTSIDE_ROOT',
       `${shown(input)} is outside the project folder (${root.name}).`,
-      'Pass a path inside the project, relative to its root.',
+      `Pass a path inside the project, relative to its root.${gitBash ? ' On Windows a path that starts with "/" begins at the root of the drive: Git Bash paths such as /c/Users/... are not understood.' : ''}`,
     );
   }
   const lexRel = path.relative(root.real, lexical);

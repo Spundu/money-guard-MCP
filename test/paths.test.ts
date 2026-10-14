@@ -82,6 +82,14 @@ describe('resolveInRoot', () => {
     }
   });
 
+  it.skipIf(process.platform !== 'win32')('says on Windows that a Git Bash path (/c/Users/...) is not understood', () => {
+    const gitBash = `/${root.real.slice(0, 1).toLowerCase()}${root.real.slice(2).split(path.sep).join('/')}/exports/ledger.csv`;
+    const text = messageOf(() => resolveInRoot(root, gitBash, CSV));
+    expect(text).toMatch(/^PATH_OUTSIDE_ROOT: /);
+    expect(text).toContain('Git Bash paths such as /c/Users/... are not understood.');
+    expect(messageOf(() => resolveInRoot(root, path.join(base, 'outside', 'secret.csv'), CSV))).not.toContain('Git Bash');
+  });
+
   it('refuses empty, over-long, NUL, network and device paths', () => {
     expect(codeOf(() => resolveInRoot(root, '', CSV))).toBe('PATH_INVALID');
     expect(codeOf(() => resolveInRoot(root, `${'a/'.repeat(600)}x.csv`, CSV))).toBe('PATH_INVALID');
