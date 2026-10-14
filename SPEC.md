@@ -232,7 +232,7 @@ Shared error codes:
 | `zod` ^4.2 | Schemas (required by SDK v2) | MIT |
 | `@electric-sql/pglite` **0.5.9 exactly** | PostgreSQL 18.6 in WebAssembly for tool 1 (its version appears in results) | Apache-2.0 |
 | `@electric-sql/pglite-pgvector` **0.0.10 exactly** | `CREATE EXTENSION vector` (common in AI apps) | Apache-2.0 |
-| `sealed-audit-chain` | Tool 3, and `parseJson` for tool 2. Comes from npm once published; until then `github:Spundu/audit-chain#5fd1fec` | MIT (same author) |
+| `sealed-audit-chain` | Tool 3. Comes from npm once published; until then `github:Spundu/audit-chain#5fd1fec` | MIT (same author) |
 | `csv-parse` ^7 | RFC 4180 CSV with line numbers | MIT |
 
 Dev only: `@modelcontextprotocol/client` (tests), typescript, vitest, eslint, typescript-eslint, the
@@ -606,19 +606,27 @@ Those functions throw at the first problem. This tool returns **every** problem.
 
 ### 4.3 Reading the file
 - **CSV:**
-  - RFC 4180 via `csv-parse`. The first row is the header. UTF-8; a BOM is ignored. `\n` or `\r\n`.
+  - RFC 4180 via `csv-parse`. The first row is the header. UTF-8; a BOM is ignored. Lines end with
+    `\n`, `\r\n` or a lone `\r` (old Mac Excel); line numbers count all three.
   - Quoted fields may hold delimiters, `""` and line breaks.
   - Every row must have as many fields as the header (else `PARSE_ERROR` with the line). Blank lines
     are skipped.
-  - Spaces around every value are ignored.
+  - Spaces around every value are ignored, and around a transaction id even inside quotes (`"T1 "` is
+    `T1`; a quoted blank id is missing).
 - **JSON:** the value at `records_pointer` must be an array. An element that is not an object is a
   `BAD_ROW` finding.
 - **JSONL:** one JSON object per line. Blank lines are skipped. A line that is not a JSON object is a
   `BAD_ROW` finding, and the check goes on.
-- **JSON parsing:** JSON is parsed with sealed-audit-chain's `parseJson` (strict RFC 8259, depth ≤ 100),
-  **never `JSON.parse`**. V8 12.9 and later misparse escaped one-character keys; the author found that bug while building
-  sealed-audit-chain.
-- **Transaction ids** are compared exactly. A JSON number id becomes its text.
+- **JSON parsing:** money-guard's own strict RFC 8259 parser (`src/ledger/json.ts`, adapted from
+  sealed-audit-chain's; depth ≤ 100), **never `JSON.parse`**: V8 12.9 and later misparse escaped
+  one-character keys, a bug the author found while building sealed-audit-chain. It keeps every
+  **number as the exact text the file wrote**, never a 64-bit float, which would round
+  4503599627370496.5 to a whole number and 1234567890123456789 to 1234567890123456800.
+- **A mapped field that no record has** is `COLUMN_NOT_FOUND`, listing the first record's fields (as a
+  missing CSV column lists the header). A field that only some records lack is `MISSING_VALUE` on
+  those rows.
+- **Transaction ids** are compared exactly. A JSON number id is its exact value as text: `1e3` is
+  `1000`, and 1234567890123456789 stays itself.
 - **Currency** is trimmed and upper-cased.
 - **Locations:** CSV and JSONL findings give **line numbers**: 1-based, the header is line 1, and a
   multi-line CSV record is reported at the line where it starts. JSON findings give **JSON Pointers**
@@ -626,21 +634,23 @@ Those functions throw at the first problem. This tool returns **every** problem.
 
 ### 4.4 Amounts (exact: no floating point anywhere)
 - **`minor_units`:** an integer.
-  - Accepted: a JSON number with no fractional part, or a string `-?[0-9]+`.
+  - Accepted: a JSON number whose exact value is whole (`1000`, `1000.0`, `1e3`), or a string
+    `-?[0-9]+`.
   - A fraction (`10.5`) is `FRACTIONAL_MINOR_UNITS`. So is text with a decimal point even when the
     fraction is zero (`12.00`): it usually means the column holds pounds, so use `decimal`.
 - **`decimal`:** a string or number of the form `-?[0-9]+(\.[0-9]+)?`.
   - Digits past `decimal_places` must be zeros: with 2 places `12.340` is 1234, and `12.345` is
     `FRACTIONAL_MINOR_UNITS`.
   - Converted to integer minor units with exact string arithmetic: `12.3` with 2 places is `1230`.
-  - A JSON number is read through its shortest round-trip text. One that needs more than 15
-    significant digits is `BAD_AMOUNT` ("write it as a string").
-- **Refused as `BAD_AMOUNT` in text values:** thousands separators, currency symbols, `+`, brackets,
-  exponents and empty text (the value is shown, ≤ 40 characters).
-- A JSON number is judged by its value: `parseJson` keeps no number text, so `1000`, `1000.0` and
-  `1e3` are the same amount.
-- **Range:** every amount must fit ±(2^53 − 1) minor units (`AMOUNT_TOO_LARGE`). Sums use `BigInt`, so
-  they are exact for any number of rows.
+  - A JSON number is read from its exact text, at any length and with any exponent: `1.234e1` is
+    `1234`, and `12.340000000000000001` has more than 2 decimal places.
+- **Refused as `BAD_AMOUNT` in text values:** thousands separators, currency symbols, `+`, brackets
+  and exponents (the value is shown, ≤ 40 characters). Empty text and `null` are `MISSING_VALUE`.
+- A JSON number is judged by its exact value: `1000`, `1000.0` and `1e3` are the same amount, and
+  `4503599627370496.5` is not whole.
+- **Range:** every amount must fit ±(2^53 − 1) minor units (`AMOUNT_TOO_LARGE`). More than 20 whole
+  digits (after leading zeros), or an exponent that moves the decimal point more than 400 places, is
+  refused at once, before any arithmetic. Sums use `BigInt`, so they are exact for any number of rows.
 
 ### 4.5 Findings
 | Code | Severity | Level | Rule |
@@ -693,8 +703,8 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.7 Errors (besides §2.5)
 | Code | When |
 |---|---|
-| `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields) or invalid JSON (`json` format). Gives the line and column. |
-| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header. Lists up to 30 header names (each ≤ 40 characters) and the closest match. |
+| `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). |
+| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match. |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. |
 | `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. "an object with keys data, meta" (≤ 20 keys, ≤ 40 characters each). |

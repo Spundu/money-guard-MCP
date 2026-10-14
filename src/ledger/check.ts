@@ -5,6 +5,7 @@
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { parseAmount, type AmountFormat } from '../money.js';
+import { JsonNumber, plainDecimal } from './json.js';
 import type { ColumnMap, LedgerRow, MappedField } from './read.js';
 
 export type Mode = 'signed' | 'side' | 'debit_credit';
@@ -183,10 +184,21 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
   return { leg: { minor, currency }, findings };
 }
 
-function idOf(raw: unknown): string | null | 'not text' {
-  if (typeof raw === 'string') return raw === '' ? null : raw;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
-  return raw === undefined || raw === null ? null : 'not text';
+/** An id that is there but cannot be read: a symbol, so no real id (even "not text") can be mistaken for it. */
+const UNREADABLE = Symbol('unreadable id');
+
+/**
+ * The transaction id a row is grouped by: text without spaces around it (a quoted CSV value keeps
+ * them otherwise), or a JSON number's exact value as text, so 1234567890123456789 and
+ * 1234567890123456790 stay two ids (a 64-bit float would merge them).
+ */
+function idOf(raw: unknown): string | null | typeof UNREADABLE {
+  if (typeof raw === 'string') return raw.trim() === '' ? null : raw.trim();
+  if (raw instanceof JsonNumber) {
+    const plain = plainDecimal(raw);
+    return plain === 'too large' || plain === 'too small' ? UNREADABLE : plain;
+  }
+  return raw === undefined || raw === null ? null : UNREADABLE;
 }
 
 function netsText(nets: Net[]): string {
@@ -203,7 +215,7 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
       continue;
     }
     const id = idOf(row.values.transaction_id);
-    if (id === null || id === 'not text') {
+    if (id === null || id === UNREADABLE) {
       const message = id === null ? 'no transaction_id' : 'transaction_id is not text or a number';
       findings.push({ order: row.seq, code: 'MISSING_VALUE', severity: 'error', transaction_id: null, ...refs([row]), field: 'transaction_id', message });
       continue;

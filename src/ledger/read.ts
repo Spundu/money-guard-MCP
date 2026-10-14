@@ -3,10 +3,10 @@
 // the check carries on and reports it with the rest.
 
 import { CsvError, parse } from 'csv-parse/sync';
-import { JsonSyntaxError, parseJson } from 'sealed-audit-chain';
 import { closest } from '../closest.js';
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
+import { JsonNumber, JsonSyntaxError, parseLedgerJson } from './json.js';
 
 export type LedgerFormat = 'csv' | 'json' | 'jsonl';
 
@@ -98,20 +98,21 @@ const CSV_PROBLEMS: Readonly<Record<string, string>> = {
  * are counted here: line feeds before the record's first character, blank lines skipped.
  */
 function startLines(bytes: Uint8Array, ends: readonly number[]): number[] {
+  // A line ends at LF, or at a CR that no LF follows (CR-only files, as old Mac Excel writes them).
+  const endsLine = (i: number) => bytes[i] === 0x0a || (bytes[i] === 0x0d && bytes[i + 1] !== 0x0a);
   const lines: number[] = [];
   let pos = 0;
   let line = 1;
   const advance = (to: number) => {
-    for (let i = pos; i < to; i += 1) if (bytes[i] === 0x0a) line += 1;
+    for (let i = pos; i < to; i += 1) if (endsLine(i)) line += 1;
     pos = to;
   };
   for (const end of ends) {
+    // The record starts on the first line with something other than spaces and tabs.
     let start = pos;
-    for (;;) {
-      let j = start;
-      while (j < end && (bytes[j] === 0x20 || bytes[j] === 0x09 || bytes[j] === 0x0d)) j += 1;
-      if (j < end && bytes[j] === 0x0a) start = j + 1;
-      else break;
+    for (let j = pos; j < end; j += 1) {
+      if (endsLine(j)) start = j + 1;
+      else if (bytes[j] !== 0x20 && bytes[j] !== 0x09 && bytes[j] !== 0x0d) break;
     }
     advance(start);
     lines.push(line);
@@ -167,7 +168,7 @@ export function resolvePointer(doc: unknown, pointer: string): unknown {
     if (Array.isArray(node)) {
       if (!/^(?:0|[1-9]\d*)$/.test(token)) return undefined;
       node = node[Number(token)];
-    } else if (node !== null && typeof node === 'object' && Object.hasOwn(node, token)) {
+    } else if (isRecord(node) && Object.hasOwn(node, token)) {
       node = (node as Record<string, unknown>)[token];
     } else {
       return undefined;
@@ -177,7 +178,7 @@ export function resolvePointer(doc: unknown, pointer: string): unknown {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof JsonNumber);
 }
 
 function valuesOf(record: Record<string, unknown>, columns: ColumnMap): Partial<Record<MappedField, unknown>> {
@@ -196,12 +197,34 @@ function describe(value: unknown): string {
     const shown = keys.slice(0, 20).map((k) => clip(k)).join(', ');
     return keys.length === 0 ? 'an empty object' : `an object with keys ${shown}${keys.length > 20 ? ', …' : ''}`;
   }
-  return `a ${typeof value}`;
+  return value instanceof JsonNumber ? 'a number' : Array.isArray(value) ? 'an array' : `a ${typeof value}`;
+}
+
+/**
+ * JSON and JSONL: a mapped field that no record has is a wrong mapping, not a problem in every row.
+ * Report it once, with the first record's fields, as a missing CSV column is reported.
+ */
+function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, first: Record<string, unknown> | undefined): void {
+  if (first === undefined) return; // no record is an object: each row says so already
+  const good = rows.filter((row) => row.bad === undefined);
+  for (const [field, name] of mappedEntries(columns)) {
+    if (good.some((row) => row.values[field] !== undefined)) continue;
+    const keys = Object.keys(first);
+    const near = name.startsWith('/') ? undefined : closest(name, keys);
+    const hint = near === undefined ? '' : ` Did you mean "${clip(near)}"?`;
+    const shown = keys.slice(0, 30).map((k) => `"${clip(k)}"`).join(', ');
+    const fields = keys.length === 0 ? 'The first record has no fields.' : `The first record's fields are: ${shown}${keys.length > 30 ? ` and ${keys.length - 30} more` : ''}.`;
+    throw new ToolError(
+      'COLUMN_NOT_FOUND',
+      `No record has the field "${clip(name)}" (mapped as ${field}).${hint} ${fields}`,
+      'Map each field to a field the records have, or to a JSON Pointer such as "/amount/value" for a nested one.',
+    );
+  }
 }
 
 function parseOrThrow(text: string): unknown {
   try {
-    return parseJson(text, MAX_DEPTH);
+    return parseLedgerJson(text, MAX_DEPTH);
   } catch (err) {
     if (!(err instanceof JsonSyntaxError)) throw err;
     const at = /at position (\d+)$/.exec(err.message);
@@ -217,14 +240,17 @@ function readJson(text: string, columns: ColumnMap, recordsPointer: string): Led
     throw new ToolError('RECORDS_NOT_ARRAY', `${where} is ${describe(records)}, not an array of records.`, 'Pass records_pointer: the JSON Pointer of the array of ledger rows, such as "/data/entries".');
   }
   if (records.length > MAX_ROWS) throw tooManyRows();
-  return records.map((record: unknown, seq) => {
+  const rows = records.map((record: unknown, seq): LedgerRow => {
     const pointer = `${recordsPointer}/${seq}`;
     return isRecord(record) ? { seq, pointer, values: valuesOf(record, columns) } : { seq, pointer, values: {}, bad: 'the record is not a JSON object' };
   });
+  requireMappedFields(rows, columns, records.find(isRecord));
+  return rows;
 }
 
 function readJsonl(text: string, columns: ColumnMap): LedgerRow[] {
   const rows: LedgerRow[] = [];
+  let first: Record<string, unknown> | undefined;
   const lines = text.split('\n');
   for (const [i, raw] of lines.entries()) {
     const content = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
@@ -233,14 +259,16 @@ function readJsonl(text: string, columns: ColumnMap): LedgerRow[] {
     const base = { seq: rows.length, line: i + 1 };
     let value: unknown;
     try {
-      value = parseJson(content, MAX_DEPTH);
+      value = parseLedgerJson(content, MAX_DEPTH);
     } catch (err) {
       if (!(err instanceof JsonSyntaxError)) throw err;
       rows.push({ ...base, values: {}, bad: 'the line is not valid JSON' });
       continue;
     }
+    if (isRecord(value)) first ??= value;
     rows.push(isRecord(value) ? { ...base, values: valuesOf(value, columns) } : { ...base, values: {}, bad: 'the line is not a JSON object' });
   }
+  requireMappedFields(rows, columns, first);
   return rows;
 }
 

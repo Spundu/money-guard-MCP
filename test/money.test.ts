@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { JsonNumber } from '../src/ledger/json.js';
 import { parseAmount, type AmountFormat } from '../src/money.js';
+
+const n = (text: string) => new JsonNumber(text);
 
 /** The parsed minor units, or the problem code, or "missing". */
 function parsed(raw: unknown, format: AmountFormat = 'minor_units', places = 2): bigint | string {
@@ -41,14 +44,29 @@ describe('parseAmount, minor_units', () => {
     for (const raw of [undefined, null, '', '   ']) expect(parsed(raw)).toBe('missing');
   });
 
-  it('judges a JSON number by its value', () => {
-    expect(parsed(1234)).toBe(1234n);
-    expect(parsed(-1)).toBe(-1n);
-    expect(parsed(12)).toBe(12n);
-    expect(parsed(1e3)).toBe(1000n);
-    expect(parsed(12.5)).toBe('FRACTIONAL_MINOR_UNITS');
-    expect(parsed(2 ** 53)).toBe('AMOUNT_TOO_LARGE');
-    expect(parsed(Number.POSITIVE_INFINITY)).toBe('AMOUNT_TOO_LARGE');
+  it('judges a JSON number by its exact value, as the file wrote it', () => {
+    expect(parsed(n('1234'))).toBe(1234n);
+    expect(parsed(n('-1'))).toBe(-1n);
+    expect(parsed(n('12.0'))).toBe(12n);
+    expect(parsed(n('1e3'))).toBe(1000n);
+    expect(parsed(n('-0'))).toBe(0n);
+    expect(parsed(n('12.5'))).toBe('FRACTIONAL_MINOR_UNITS');
+    // A 64-bit float rounds both of these to whole numbers.
+    expect(parsed(n('4503599627370496.5'))).toBe('FRACTIONAL_MINOR_UNITS');
+    expect(parsed(n('1.00000000000000001'))).toBe('FRACTIONAL_MINOR_UNITS');
+    expect(parsed(n('9007199254740991'))).toBe(9007199254740991n);
+    expect(parsed(n('9007199254740992'))).toBe('AMOUNT_TOO_LARGE');
+    expect(parsed(n('1e400'))).toBe('AMOUNT_TOO_LARGE');
+    expect(parsed(n('1e-400'))).toBe('FRACTIONAL_MINOR_UNITS');
+    expect(parsed(n('1e99999999999999999999'))).toBe('AMOUNT_TOO_LARGE');
+  });
+
+  it('refuses a huge run of digits at once, without building a BigInt of it', () => {
+    const started = performance.now();
+    expect(parsed('9'.repeat(1_000_000))).toBe('AMOUNT_TOO_LARGE');
+    expect(parsed(n(`1${'0'.repeat(1_000_000)}`))).toBe('AMOUNT_TOO_LARGE');
+    expect(parsed(`000000000000000000000000000000${'1'.repeat(15)}`)).toBe(111111111111111n); // leading zeros are no value
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });
 
@@ -75,12 +93,18 @@ describe('parseAmount, decimal', () => {
     for (const raw of ['1,234.56', '€12.00', '12,50', '1.2e3', '-', '12.']) expect(parsed(raw, 'decimal'), raw).toBe('BAD_AMOUNT');
   });
 
-  it('reads a JSON number through its shortest round-trip text, and refuses one that is not exact', () => {
-    expect(parsed(12.34, 'decimal')).toBe(1234n);
-    expect(parsed(0.1, 'decimal')).toBe(10n);
-    expect(parsed(0.1 + 0.2, 'decimal')).toBe('BAD_AMOUNT'); // 0.30000000000000004: 17 significant digits
-    expect(parsed(1e-7, 'decimal')).toBe('FRACTIONAL_MINOR_UNITS');
-    expect(parsed(1e21, 'decimal')).toBe('AMOUNT_TOO_LARGE');
-    expect(parsed(1e20, 'decimal')).toBe('AMOUNT_TOO_LARGE'); // one significant digit, but 10^22 minor units
+  it('reads a JSON number exactly, at any length', () => {
+    expect(parsed(n('12.34'), 'decimal')).toBe(1234n);
+    expect(parsed(n('0.1'), 'decimal')).toBe(10n);
+    expect(parsed(n('1.234e1'), 'decimal')).toBe(1234n);
+    expect(parsed(n('12.340000000000000000'), 'decimal')).toBe(1234n);
+    expect(parsed(n('12.340000000000000001'), 'decimal')).toBe('FRACTIONAL_MINOR_UNITS'); // a float reads 12.34
+    expect(parsed(n('0.30000000000000004'), 'decimal')).toBe('FRACTIONAL_MINOR_UNITS'); // 0.1 + 0.2 as a float prints
+    expect(parsed(n('1e-7'), 'decimal')).toBe('FRACTIONAL_MINOR_UNITS');
+    expect(parsed(n('1e20'), 'decimal')).toBe('AMOUNT_TOO_LARGE'); // 10^22 minor units
+  });
+
+  it('never takes a JavaScript number: a value from a file is text or a JsonNumber', () => {
+    expect(parsed(1234)).toBe('BAD_AMOUNT');
   });
 });

@@ -13,14 +13,16 @@ Rules:
 - Read-only and offline: no writes, no network, no shell, no child processes. stdout carries only the
   protocol; diagnostics go to stderr, never file content, keys or absolute paths.
 - Never parse SQL text: execute it (PGlite, in `src/lint/worker.js`) and read the catalog. The only text
-  recognised is file-format markers, matched by line (dbmate `-- migrate:down`, pg_dump `\restrict`).
-- Never `JSON.parse` untrusted JSON: use `parseJson` from sealed-audit-chain (V8 12.9+ misparses
-  escaped one-character keys).
+  recognised is file-format markers, matched by line: the down markers of dbmate, goose, sql-migrate,
+  node-pg-migrate and tern, and pg_dump's `\restrict` (an error hint also looks for `COPY ... FROM stdin;`).
+- Never `JSON.parse` untrusted JSON: use `parseLedgerJson` (src/ledger/json.ts; V8 12.9+ misparses
+  escaped one-character keys). It keeps numbers as their exact text: never turn one into a float.
 - Money is integers: `BigInt` for sums; amounts in results are strings of minor units; no floats.
 - Every path argument goes through `resolveInRoot` (src/paths.ts). Every tool failure is a `ToolError`
   with a code from SPEC.md.
-- Results are deterministic and at most 20,000 characters. A value echoed from a file goes through
-  `clip` (src/echo.ts).
+- Results are deterministic and at most 20,000 characters (src/budget.ts). A value echoed from a data
+  file goes through `clip`; a name or path that must stay whole goes through `escapeUnsafe`
+  (src/echo.ts). The server escapes every outgoing string once more, but the tools must not rely on it.
 - HMAC keys come only from `MONEY_GUARD_AUDIT_KEYS`; they never appear in a result, an error or a log.
 - Every new test must fail without the code it covers (stash the source, run, pop).
 - The README shows real things: its example is `examples/demo.mjs`, and `test/readme.test.ts` checks

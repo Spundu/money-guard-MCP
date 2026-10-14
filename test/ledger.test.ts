@@ -265,6 +265,21 @@ describe('money_check_double_entry: reading CSV', () => {
     );
   });
 
+  it('groups a quoted id with spaces around it with the same id, and reads a quoted blank id as missing', () => {
+    const r = check('.csv', 't,a\n"T1 ",5\nT1,-5\n"   ",1\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(r.transactions_found).toBe(1);
+    expect(r.findings.map((f) => [f.code, f.field])).toEqual([['MISSING_VALUE', 'transaction_id']]);
+  });
+
+  it('gives the right line numbers in a file with CR-only line ends (old Mac Excel)', () => {
+    const r = check('.csv', 't,a\rA,1\r\rA,-2\r', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(r.findings[0]).toMatchObject({ code: 'UNBALANCED', lines: [2, 4] });
+  });
+
+  it('treats an id that reads "not text" as an ordinary id', () => {
+    expect(check('.csv', 't,a\nnot text,5\nnot text,-5\n', { columns: { transaction_id: 't', amount: 'a' } }).balanced).toBe(true);
+  });
+
   it('finds the closest column quickly even in a huge hostile header', () => {
     // 2,000 columns of 1,000 characters, and a 200-character mapped name: the distances were computed
     // over whole names, many times each during a sort (seconds); now once per column, over the first 64
@@ -307,6 +322,28 @@ describe('money_check_double_entry: reading JSON and JSONL', () => {
       expect.objectContaining({ code: 'UNBALANCED', transaction_id: '1', pointers: ['/data/entries/0', '/data/entries/1'], nets: [{ currency: null, net: '10' }] }),
       { code: 'BAD_ROW', severity: 'error', transaction_id: null, pointers: ['/data/entries/2'], message: 'the record is not a JSON object' },
     ]);
+  });
+
+  it('keeps JSON number ids and amounts exact, where a 64-bit float would merge ids and round fractions away', () => {
+    const r = check(
+      '.jsonl',
+      '{"t":1234567890123456789,"a":-2500}\n{"t":1234567890123456790,"a":2500}\n{"t":"F","a":4503599627370496.5}\n{"t":"F","a":-4503599627370496}\n',
+      { columns: { transaction_id: 't', amount: 'a' } },
+    );
+    expect(r.balanced).toBe(false);
+    expect(r.findings.map((f) => [f.code, f.transaction_id, f.value ?? null])).toEqual([
+      ['TOO_FEW_LEGS', '1234567890123456789', null],
+      ['TOO_FEW_LEGS', '1234567890123456790', null],
+      ['FRACTIONAL_MINOR_UNITS', 'F', '4503599627370496.5'],
+    ]);
+  });
+
+  it('names the fields the records have when a mapped field is in no record', () => {
+    expect(errorText(() => check('.json', '[{"id":"A","value":5},{"id":"A","value":-5}]', { columns: { transaction_id: 'id', amount: 'amount' } }))).toBe(
+      'COLUMN_NOT_FOUND: No record has the field "amount" (mapped as amount). The first record\'s fields are: "id", "value". Fix: Map each field to a field the records have, or to a JSON Pointer such as "/amount/value" for a nested one.',
+    );
+    // A field that some records have is a problem of the others instead.
+    expect(check('.jsonl', '{"id":"A","amount":5}\n{"id":"A"}\n', { columns: { transaction_id: 'id', amount: 'amount' } }).counts_by_code).toEqual({ MISSING_VALUE: 1 });
   });
 
   it('says what it found when the records are not an array', () => {
