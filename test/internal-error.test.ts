@@ -18,6 +18,8 @@ vi.mock('../src/ledger/run.js', async (importOriginal) => ({
       '    at checkLedgerFile (C:\\Users\\Jo Bloggs\\Payroll (2024) files\\money-guard\\dist\\ledger\\run.js:135:19)',
       '    at /home/jo/Client Payroll/money-guard/dist/server.js:120:7',
       '    at async Promise.all (index 0)',
+      '    at fifth (C:\\Users\\Jo Bloggs\\fifth.js:5:5)',
+      '    at sixth (C:\\Users\\Jo Bloggs\\sixth.js:6:6)',
     ].join('\n');
     throw err;
   },
@@ -33,7 +35,7 @@ describe('a bug inside a tool', () => {
       const r = await client.callTool({ name: 'money_check_double_entry', arguments: { file: 'exports/journal.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence' } } });
       const text = (r.content as Array<{ text: string }>)[0]?.text ?? '';
       expect([r.isError, text]).toEqual([true, 'INTERNAL_ERROR: money-guard failed unexpectedly (TypeError). Fix: This is a bug in money-guard: please report it. The server log has the details.']);
-      expect(log.at(-1)).toMatch(/^money-guard-mcp: money_check_double_entry INTERNAL_ERROR \d+ms TypeError \| run\.js:135:19 \| server\.js:120:7 \| \?$/);
+      expect(log.at(-1)).toMatch(/^money-guard-mcp: money_check_double_entry INTERNAL_ERROR \d+ms TypeError \| run\.js:135:19 \| server\.js:120:7 \| \? \| fifth\.js:5:5$/); // four frames, not the sixth
       for (const leak of ['STRIPE', 'sk_test', 'Bloggs', 'Payroll', 'Client', 'home', 'Users']) expect(log.join('\n')).not.toContain(leak);
       const after = await client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'db/migrations' } });
       expect(after.isError ?? false).toBe(false);

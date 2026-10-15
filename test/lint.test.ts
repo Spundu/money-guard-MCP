@@ -263,6 +263,7 @@ describe('money_lint_schema: judging columns', () => {
     // Fewer than 50, cut only to fit: the summary says so too (review round 9).
     const fewer = await lint({ [`db/migrations/${'d'.repeat(100)}/0001.sql`]: `create table t_${'y'.repeat(61)} (${columns.slice(0, 45).join(', ')});` });
     expect([fewer.findings.length < 45, fewer.findings_truncated, fewer.error_count]).toEqual([true, true, 45]);
+    expect(fewer.summary.split('Not every finding').length).toBe(2); // once, however many were cut to fit (review round 10)
     expect(fewer.summary).toMatch(/ Not every finding is listed \(findings_truncated\), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns\.$/);
     expect(r.findings[0]?.column).toBe(`price_00_${'x'.repeat(54)}`);
   });

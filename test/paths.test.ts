@@ -232,6 +232,16 @@ describe('resolveInRoot', () => {
       ctx.skip();
     }
     expect(codeOf(() => resolveInRoot(root, 'exports/out.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
+    // Review round 10: ".." in a link's text goes up from where the link before it led, so "d/../x"
+    // through d, a link outside, is outside whether x exists there or not.
+    const dir = tempDir();
+    writeTree(dir, { 'project/a.csv': 'a\n', 'outside/sub/x.csv': 'a\n', 'outside/exists.csv': 'a\n' });
+    const project = path.join(dir, 'project');
+    expect(trySymlink(path.join(dir, 'outside', 'sub'), path.join(project, 'd'), 'dir')).toBe(true);
+    symlinkSync('d/../exists.csv', path.join(project, 'yes.csv'), 'file');
+    symlinkSync('d/../missing.csv', path.join(project, 'no.csv'), 'file');
+    const r = rootOf(project);
+    expect(['yes.csv', 'no.csv'].map((p) => codeOf(() => resolveInRoot(r, p, CSV)))).toEqual(['PATH_OUTSIDE_ROOT', 'PATH_OUTSIDE_ROOT']);
   });
 
   it('refuses an innocent-looking link to a secret file inside the project', (ctx) => {

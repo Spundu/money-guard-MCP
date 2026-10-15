@@ -1,7 +1,7 @@
 // src/echo.ts: what a result may repeat from a file (SPEC.md §2.4). Pieces are cut to a fixed length,
 // paths are cut in the middle, and every character that could hide or disguise text is escaped.
 import { describe, expect, it } from 'vitest';
-import { ECHO_MAX, PATH_MAX, clip, clipPath, cut, escapeHidden, escapeStrings, escapeUnsafe, hasUnsafe } from '../src/echo.js';
+import { ECHO_MAX, PATH_MAX, clip, clipPath, cut, escapeHidden, escapeStrings, escapeUnsafe, hasUnsafe, quoted, quotedPath } from '../src/echo.js';
 import { RAW_HIDDEN, inTags } from './support/hidden.js';
 
 const width = (s: string) => [...s].length;
@@ -188,5 +188,17 @@ describe('clipPath', () => {
   it('keeps any path within PATH_MAX characters', () => {
     expect(width(clipPath('x/'.repeat(10_000)))).toBe(PATH_MAX);
     expect(width(clipPath(`${'\u{e0041}'.repeat(5000)}.sql`))).toBeLessThanOrEqual(PATH_MAX);
+  });
+});
+
+describe('quoted and quotedPath', () => {
+  it('escape a double quote inside the quotes they add, and only there', () => {
+    // Review round 10: nothing tested the escape itself, so dropping it left every test passing.
+    expect(quoted('a"b\\c')).toBe('"a\\"b\\\\c"');
+    expect(quotedPath('db/x". Fix: run it.sql')).toBe('"db/x\\". Fix: run it.sql"');
+    expect(escapeUnsafe('a"b', true)).toBe('a\\"b');
+    expect([clip('a"b'), clipPath('a"b'), escapeUnsafe('a"b')]).toEqual(['a"b', 'a"b', 'a"b']); // without quotes, as it is
+    // The escape counts toward the length, and is never split.
+    expect(quoted(`${'x'.repeat(38)}"y`)).toBe(`"${'x'.repeat(38)}…"`);
   });
 });

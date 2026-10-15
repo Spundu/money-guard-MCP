@@ -63,11 +63,20 @@ const MAX_LINK_HOPS = 64; // above Windows' 63 and Linux's 40: a chain realpath 
  * a target that exists and one that does not get the same answer (review round 9).
  */
 export function leadsTo(p: string): string | null {
-  const start = path.parse(path.resolve(p));
-  let resolved = start.root;
-  const parts = path.resolve(p).slice(start.root.length).split(path.sep).filter((part) => part !== '');
+  // A link's text is taken part by part, never tidied first: ".." goes up from where the links before
+  // it led, as Linux and macOS take it ("d/../x" through a link d to a folder outside is outside;
+  // path.resolve would have dropped "d/..", review round 10).
+  const split = (text: string) => text.split(process.platform === 'win32' ? /[\\/]/ : '/').filter((part) => part !== '' && part !== '.');
+  const start = path.resolve(p);
+  let resolved = path.parse(start).root;
+  const parts = split(start.slice(resolved.length));
   for (let hops = 0; parts.length > 0; ) {
-    const next = path.join(resolved, parts.shift() ?? '');
+    const part = parts.shift() ?? '';
+    if (part === '..') {
+      resolved = path.dirname(resolved);
+      continue;
+    }
+    const next = path.join(resolved, part);
     let link: string;
     try {
       if (!lstatSync(next).isSymbolicLink()) {
@@ -80,9 +89,9 @@ export function leadsTo(p: string): string | null {
     }
     hops += 1;
     if (hops > MAX_LINK_HOPS) return null;
-    const target = path.resolve(resolved, link); // relative to the folder that holds the link
-    resolved = path.parse(target).root;
-    parts.unshift(...target.slice(resolved.length).split(path.sep).filter((part) => part !== ''));
+    // An absolute target starts again from its root; a relative one from the folder that holds the link.
+    if (path.isAbsolute(link)) resolved = path.parse(link).root;
+    parts.unshift(...split(path.isAbsolute(link) ? link.slice(path.parse(link).root.length) : link));
   }
   return resolved;
 }

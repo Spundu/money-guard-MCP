@@ -122,6 +122,15 @@ export interface RunOptions {
  */
 let lastThread: Promise<unknown> = Promise.resolve();
 
+/**
+ * The environment of the database thread. The thread that runs the migrations' SQL needs none of the
+ * server's settings (the audit keys among them): no way from SQL to them is known, but none is left to
+ * find (review round 9). A test's own worker takes its part from the environment.
+ */
+export function workerEnv(worker: RunOptions['worker']): NodeJS.ProcessEnv {
+  return worker === undefined ? {} : process.env;
+}
+
 export function runScripts(scripts: readonly Script[], options: RunOptions): Promise<DatabaseOutcome> {
   const previous = lastThread;
   let ended = () => {};
@@ -177,10 +186,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
         stdout: true,
         stderr: true,
         resourceLimits: { maxOldGenerationSizeMb: 1024 },
-        // The thread that runs the migrations' SQL needs none of the server's settings (the audit keys
-        // among them): no way from SQL to them is known, but none is left to find (review round 9). A
-        // test's own worker takes its part from the environment.
-        env: options.worker === undefined ? {} : process.env,
+        env: workerEnv(options.worker),
       });
     } catch (err) {
       ended(); // no thread started

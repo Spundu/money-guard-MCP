@@ -6,7 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MEMORY_LIMIT_BYTES, runScripts } from '../src/lint/database.js';
+import { MEMORY_LIMIT_BYTES, runScripts, workerEnv } from '../src/lint/database.js';
 import { lintWhileTaking } from './support/memory.js';
 import { tempDir } from './support/tmp.js';
 
@@ -17,6 +17,14 @@ const MIB = 1024 * 1024;
 afterEach(() => {
   delete process.env.MONEY_GUARD_TEST_WORKER;
   delete process.env.MONEY_GUARD_TEST_HEARTBEAT;
+});
+
+describe('the database thread\'s environment', () => {
+  it('is empty for the real database thread, so the audit keys never reach the thread that runs the SQL', () => {
+    // Review round 10: nothing tested it; a test's own worker still takes its part from the environment.
+    expect(workerEnv(undefined)).toEqual({});
+    expect(workerEnv(new URL('file:///fake-worker.mjs'))).toBe(process.env);
+  });
 });
 
 describe('runScripts, one database thread at a time', () => {

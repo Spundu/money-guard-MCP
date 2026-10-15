@@ -218,8 +218,9 @@ already read the files).
   U+13440, U+1D159). Each appears as `\uXXXX`, or `\u{XXXXX}` above U+FFFF, in every result and
   error money-guard writes: each tool escapes what it copies, and the server escapes every result and
   error once more on the way out. In text copied from a project or a file, every backslash appears
-  doubled and every double quote as `\"`, as JSON shows them: a single backslash always starts an
-  escape, so no two texts look alike, and copied text cannot close the quotes around it.
+  doubled, as JSON shows one: a single backslash always starts an escape, so no two texts look alike.
+  Where a result or an error puts copied text in double quotes, a double quote inside it appears as
+  `\"`, so the text cannot close them (a value shown without quotes keeps its own).
   The six characters `\u200b` show as `\\u200b`, a backslash followed by a real U+200B as `\\\u200b`,
   and `\\u200b` typed as text as `\\\\u200b`. Other
   blank-looking characters, such as wide spaces, are ordinary text and appear as they are. (Text the SDK writes itself, such as an input validation error that
@@ -1252,7 +1253,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 930); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 940); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
