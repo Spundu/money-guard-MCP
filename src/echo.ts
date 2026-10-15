@@ -25,9 +25,6 @@ const ELLIPSIS = '…';
 const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u{2800}\u{1d159}]|\u{16fe4}|\u{13440}/u;
 const EVERY_UNSAFE = new RegExp(UNSAFE.source, 'gu');
 
-/** A backslash before "u" in raw text, shown doubled: text that looks like an escape cannot pass for one. */
-const BACKSLASH_U = /\\(?=u)/g;
-
 /** What the model sees for an unsafe character: `\u200b`, or `\u{e0041}` above U+FFFF. Plain ASCII. */
 function escapeChar(char: string): string {
   const cp = char.codePointAt(0) ?? 0;
@@ -41,12 +38,18 @@ function shown(char: string): [piece: string, width: number] {
   return [escape, escape.length];
 }
 
-/** Raw text as the model may see it, one character at a time: `shown`, and a backslash before "u" doubled. */
+/**
+ * Raw text as the model may see it, one character at a time: `shown`, and a backslash doubled where it
+ * stands before "u" or before a character that is escaped, so text that looks like an escape and an
+ * escape after a backslash always show differently: the six characters `\u200b` show as `\\u200b`, and a
+ * backslash followed by a real U+200B as `\\\u200b`.
+ */
 function* piecesOf(text: string): Generator<[piece: string, width: number]> {
   for (let i = 0; i < text.length; ) {
     const char = String.fromCodePoint(text.codePointAt(i) ?? 0);
     i += char.length;
-    yield char === '\\' && text.charCodeAt(i) === 117 /* u */ ? ['\\\\', 2] : shown(char);
+    const next = String.fromCodePoint(text.codePointAt(i) ?? 0);
+    yield char === '\\' && i < text.length && (next === 'u' || UNSAFE.test(next)) ? ['\\\\', 2] : shown(char);
   }
 }
 
@@ -56,13 +59,15 @@ export function hasUnsafe(text: string): boolean {
 }
 
 /**
- * Raw `text` with every character that must not reach the model raw escaped, a backslash before "u"
- * doubled, and nothing cut. For names a result must show whole so the model can act on them: database
+ * Raw `text` with every character that must not reach the model raw escaped, a backslash before "u" or
+ * before an escaped character doubled (`piecesOf`), and nothing cut. For names a result must show whole so the model can act on them: database
  * identifiers (PostgreSQL caps them at 63 bytes). Apply it once, to raw text: a second pass would double
  * the backslashes of its own escapes.
  */
 export function escapeUnsafe(text: string): string {
-  return text.replace(BACKSLASH_U, '\\\\').replace(EVERY_UNSAFE, escapeChar);
+  let out = '';
+  for (const [piece] of piecesOf(text)) out += piece;
+  return out;
 }
 
 /**

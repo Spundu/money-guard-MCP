@@ -1,6 +1,8 @@
 // money_lint_schema (SPEC.md §3): failures and their hints, platforms (Supabase, setup, pgvector) and
 // safety (time limits, cancellation, BUSY). Which files run is in lint-files.test.ts.
+import { existsSync } from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 import { describe, expect, it } from 'vitest';
 import { lintSchema } from '../src/lint/run.js';
 import { SPEC_FILES, codeOf, failure, lastDir, lint, newDir, projectRoot } from './support/lint.js';
@@ -187,21 +189,25 @@ describe('money_lint_schema: safety', () => {
     }
   });
 
-  it('reports a statement that leaves the database unusable (COPY ... PROGRAM) against its file', async () => {
-    const e = await failure({ 'db/migrations/0001.sql': 'create table p (line text);', 'db/migrations/0002.sql': "copy p from program 'echo hi';" });
+  it('runs no program for COPY ... PROGRAM, and reports the statement, which leaves the database unusable, against its file', async () => {
+    // The program would write a marker file with this very Node.js, on any system.
+    const marker = path.join(tempDir(), 'program-ran').replaceAll('\\', '/');
+    const program = `"${process.execPath}" -e "require('fs').writeFileSync('${marker}', 'ran')"`;
+    const e = await failure({ 'db/migrations/0001.sql': 'create table p (line text);', 'db/migrations/0002.sql': `copy (select 1) to program '${program.replaceAll("'", "''")}';` });
     expect(e.code).toBe('MIGRATION_FAILED');
     expect(e.message).toMatch(/0002\.sql: after this file the database (no longer answers correctly|stopped answering)/);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it('stops an endless migration at the time limit', async () => {
-    // 10 s leaves the database's start-up (about 1.5 s, more on a loaded machine) well inside the limit.
+    // 20 s leaves the database's start-up (about 1.5 s; 14 s was seen on a loaded machine) inside the limit.
     // That the thread itself is killed is proven in test/database.test.ts (its heartbeat stops).
     const started = Date.now();
-    const e = await failure({ 'db/migrations/0001.sql': 'select 1;', 'db/migrations/0002_loop.sql': 'do $$ begin loop end loop; end $$;' }, { timeout_seconds: 10 });
+    const e = await failure({ 'db/migrations/0001.sql': 'select 1;', 'db/migrations/0002_loop.sql': 'do $$ begin loop end loop; end $$;' }, { timeout_seconds: 20 });
     expect(e.code).toBe('TIMEOUT');
-    expect(e.message).toMatch(/ran out of time \(10 s\) while running p\d+\/db\/migrations\/0002_loop\.sql/);
+    expect(e.message).toMatch(/ran out of time \(20 s\) while running p\d+\/db\/migrations\/0002_loop\.sql/);
     expect(e.fix).toBe('Leave slow data-loading files out with files. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.');
-    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(Date.now() - started).toBeLessThan(35_000);
   });
 
   it('says the catalog could not be read after the last file, not that the file failed while it ran', async () => {

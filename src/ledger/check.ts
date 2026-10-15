@@ -50,14 +50,75 @@ export interface CheckOptions {
 }
 
 export interface CheckOutcome {
-  /** Every finding, sorted by first location, then code. */
+  /** The first MAX_LISTED_FINDINGS findings, sorted by first location, then code. */
   findings: Finding[];
+  /** Every finding counted: in all, by severity, by code, and those without a transaction. */
+  counts: { total: number; errors: number; warnings: number; byCode: Partial<Record<FindingCode, number>>; withoutTransaction: number };
   /** Amounts written with a decimal point, and non-zero amounts written without one: together they show a file of pounds read as pence. */
   amounts: { decimalPoint: number; plain: number };
   rowsRead: number;
   transactionsFound: number;
   transactionsNotChecked: number;
   transactionsBalanced: number;
+}
+
+/**
+ * At most this many findings are kept, the first in order, for the result's pages (SPEC.md §4.8); every
+ * finding is still counted. A hostile file can make three findings a row: keeping all three million
+ * took 1.7 GB.
+ */
+export const MAX_LISTED_FINDINGS = 10_000;
+
+type Ordered = Finding & { order: number };
+
+/** A finding's place in the sort: its first row, then the SPEC.md §4.5 code order. */
+function rank(f: Ordered): number {
+  return f.order * CODE_ORDER.length + CODE_ORDER.indexOf(f.code);
+}
+
+/**
+ * The first `max` findings in sort order, kept while findings arrive in any order, in memory bounded by
+ * twice `max`; and a count of every finding. A finding that ranks after the last of a full list is only
+ * counted. Ties keep their arrival order, as the stable sort did.
+ */
+class FirstFindings {
+  readonly counts: CheckOutcome['counts'] = { total: 0, errors: 0, warnings: 0, byCode: {}, withoutTransaction: 0 };
+  #kept: Ordered[] = [];
+  #after = Number.POSITIVE_INFINITY; // a full list holds nothing that ranks after this
+  #firstRank = new Map<FindingCode, number>(); // where each code first appears in the sort
+
+  constructor(private readonly max: number) {}
+
+  add(f: Ordered): void {
+    const c = this.counts;
+    c.total += 1;
+    if (f.severity === 'error') c.errors += 1;
+    else c.warnings += 1;
+    c.byCode[f.code] = (c.byCode[f.code] ?? 0) + 1;
+    if (f.transaction_id === null) c.withoutTransaction += 1;
+    const r = rank(f);
+    if (r < (this.#firstRank.get(f.code) ?? Number.POSITIVE_INFINITY)) this.#firstRank.set(f.code, r);
+    if (r >= this.#after) return;
+    this.#kept.push(f);
+    if (this.#kept.length >= 2 * this.max) this.#trim();
+  }
+
+  #trim(): void {
+    this.#kept.sort((a, b) => rank(a) - rank(b));
+    this.#kept.length = Math.min(this.#kept.length, this.max);
+    if (this.#kept.length === this.max) this.#after = rank(this.#kept[this.max - 1] as Ordered);
+  }
+
+  first(): Ordered[] {
+    this.#trim();
+    return this.#kept;
+  }
+
+  /** The counts, each code in the order its first finding sorts (as the findings list them). */
+  tally(): CheckOutcome['counts'] {
+    const codes = [...this.#firstRank].sort((a, b) => a[1] - b[1]).map(([code]) => code);
+    return { ...this.counts, byCode: Object.fromEntries(codes.map((code) => [code, this.counts.byCode[code] ?? 0])) };
+  }
 }
 
 /** At most this many row locations per finding (SPEC.md §4.8). */
@@ -185,7 +246,11 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
   if (hasCurrency) {
     const raw = row.values.currency;
     if (typeof raw === 'string' && raw.trim() !== '') currency = raw.trim().toUpperCase();
-    else if (raw instanceof JsonNumber) currency = raw.text; // an ISO 4217 numeric code, such as 826
+    else if (raw instanceof JsonNumber) {
+      // An ISO 4217 numeric code, such as 826, grouped by its value: 826 and 826.0 are one currency.
+      const plain = plainDecimal(raw);
+      currency = plain === 'too large' || plain === 'too small' ? raw.text : plain;
+    }
     else problem('MISSING_VALUE', 'currency', typeof raw === 'string' || raw === undefined || raw === null ? 'no currency' : 'the currency is not text');
   }
   if (findings.length > 0 || minor === undefined) return { findings };
@@ -222,19 +287,19 @@ function netsText(nets: Net[]): string {
 }
 
 export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckOptions, hasCurrency: boolean): CheckOutcome {
-  const findings: Array<Finding & { order: number }> = [];
+  const findings = new FirstFindings(MAX_LISTED_FINDINGS);
   const txs = new Map<string, Tx>();
   const amounts = { decimalPoint: 0, plain: 0 };
 
   for (const row of rows) {
     if (row.bad !== undefined) {
-      findings.push({ order: row.seq, code: 'BAD_ROW', severity: 'error', transaction_id: null, ...refs([row]), message: row.bad });
+      findings.add({ order: row.seq, code: 'BAD_ROW', severity: 'error', transaction_id: null, ...refs([row]), message: row.bad });
       continue;
     }
     const id = idOf(row.values.transaction_id);
     if (id === null || id === UNREADABLE) {
       const message = id === null ? 'no transaction_id' : unreadableId(row.values.transaction_id);
-      findings.push({ order: row.seq, code: 'MISSING_VALUE', severity: 'error', transaction_id: null, ...refs([row]), field: 'transaction_id', message });
+      findings.add({ order: row.seq, code: 'MISSING_VALUE', severity: 'error', transaction_id: null, ...refs([row]), field: 'transaction_id', message });
       continue;
     }
     let tx = txs.get(id);
@@ -244,7 +309,7 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
     }
     tx.rows.push(row);
     const { leg, findings: rowFindings } = legOf(row, mode, opts, hasCurrency, clip(id), amounts);
-    for (const f of rowFindings) findings.push({ ...f, order: row.seq });
+    for (const f of rowFindings) findings.add({ ...f, order: row.seq });
     if (leg === undefined) tx.hasRowError = true;
     else tx.legs.push(leg);
   }
@@ -261,7 +326,7 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
     const moving = tx.legs.filter((leg) => leg.minor !== 0n).length;
     if (moving < 2) {
       const message = `${moving === 0 ? 'no' : 'only 1'} non-zero leg; a transaction needs at least two`;
-      findings.push({ ...at, code: 'TOO_FEW_LEGS', severity: 'error', message });
+      findings.add({ ...at, code: 'TOO_FEW_LEGS', severity: 'error', message });
       continue;
     }
     const sums = new Map<string | null, bigint>();
@@ -276,15 +341,15 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
       const raw = off.slice(0, MAX_NETS).map(([currency, sum]) => ({ currency: currency === null ? null : cut(currency), net: sum.toString() }));
       const message =
         off.length > MAX_NETS ? `${off.length} currencies do not net to 0; nets lists the first ${MAX_NETS}` : clip(`${netsText(raw)}, not 0`, MAX_MESSAGE);
-      findings.push({ ...at, code: 'UNBALANCED', severity: 'error', nets, message });
+      findings.add({ ...at, code: 'UNBALANCED', severity: 'error', nets, message });
     } else {
       balanced += 1;
     }
   }
 
-  findings.sort((a, b) => a.order - b.order || CODE_ORDER.indexOf(a.code) - CODE_ORDER.indexOf(b.code));
   return {
-    findings: findings.map(({ order: _order, ...f }) => inFieldOrder(f)),
+    findings: findings.first().map(({ order: _order, ...f }) => inFieldOrder(f)),
+    counts: findings.tally(),
     amounts,
     rowsRead: rows.length,
     transactionsFound: txs.size,

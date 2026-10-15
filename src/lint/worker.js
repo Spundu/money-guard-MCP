@@ -47,7 +47,7 @@ import { vector } from '@electric-sql/pglite-pgvector';
 
 /**
  * @typedef {{ name: string, text: string }} Script
- * @typedef {{ scripts: Script[], snapshotSql: string, detailSql: string }} Job
+ * @typedef {{ scripts: Script[], markSql: string, snapshotSql: string, detailSql: string }} Job
  * @typedef {{ message: string, name?: string, code?: string, position?: string, detail?: string, hint?: string, where?: string }} DbError
  */
 
@@ -95,6 +95,7 @@ async function main() {
 
   for (const [step, script] of job.scripts.entries()) {
     send({ type: 'running', step });
+    const mark = /** @type {{ mark: string }} */ ((await db.query(job.markSql)).rows[0]).mark;
     try {
       await db.exec(script.text);
     } catch (err) {
@@ -109,7 +110,7 @@ async function main() {
       send({ type: 'unusable', step });
       return;
     }
-    const rows = (await db.query(job.snapshotSql)).rows.map((r) => {
+    const rows = (await db.query(job.snapshotSql, [mark])).rows.map((r) => {
       const row = /** @type {{ col: string, ty: string }} */ (r);
       return [row.col, row.ty];
     });

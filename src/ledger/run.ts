@@ -81,11 +81,8 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
     params.columns.currency !== undefined,
   );
 
-  const all = outcome.findings;
-  const errors = all.filter((f) => f.severity === 'error').length;
-  const warnings = all.length - errors;
-  const countsByCode: Partial<Record<FindingCode, number>> = {};
-  for (const f of all) countsByCode[f.code] = (countsByCode[f.code] ?? 0) + 1;
+  const all = outcome.findings; // the first MAX_LISTED_FINDINGS; the counts cover every finding
+  const { errors, warnings, byCode: countsByCode, total, withoutTransaction } = outcome.counts;
 
   const offset = params.offset ?? 0;
   const limit = Math.min(params.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
@@ -93,7 +90,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
   const result: LedgerResult = {
-    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, all.filter((f) => f.transaction_id === null).length) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names),
+    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names),
     file: clipPath(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -109,7 +106,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
     findings: page,
     offset,
     limit,
-    total_findings: all.length,
+    total_findings: total,
     next_offset: null,
   };
   const settle = () => {
@@ -135,10 +132,14 @@ function poundsHint(format: AmountFormat, amounts: { decimalPoint: number; plain
 /** A column that looks like a currency but is not mapped: every row then counts as one currency. */
 function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   if (columns.currency !== undefined) return '';
-  // "Currency", "Gross Currency", "Currency ISO Code", "iso_currency_code", "presentment_currency",
-  // "currencyCode", "ccy", "/amount/currency": a currency word last, or before "code" or "ISO code".
-  const looksLikeCurrency = (name: string) =>
-    /(?:^|[^a-z])(?:currency|ccy|cur)(?:[ _-]?(?:iso[ _-]?)?code)?$/i.test(name.trim().replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
+  // "Currency", "Gross Currency", "Currency ISO Code", "Currency (ISO)", "iso_currency_code",
+  // "baseCurrency", "txn_ccy", "curr", "/amount/currency": a currency word anywhere ("cur" only first,
+  // as "balance_cur" may be current), unless the name ends in a word that makes it a rate or an amount.
+  const looksLikeCurrency = (name: string) => {
+    const ws = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w !== '');
+    const currency = ws.some((w) => ['currency', 'currencies', 'ccy', 'curr'].includes(w)) || ws[0] === 'cur';
+    return currency && !['rate', 'rates', 'amount', 'amounts', 'value', 'values', 'factor', 'ratio'].includes(ws.at(-1) ?? '');
+  };
   const name = names.find(looksLikeCurrency);
   return name === undefined ? '' : ` "${clip(name)}" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }

@@ -7,8 +7,9 @@ import process from 'node:process';
 import { Worker } from 'node:worker_threads';
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
+import { failedCode, failure, tooBig, wayPast } from './advice.js';
 import { formatMib } from '../paths.js';
-import { DETAIL_SQL, SNAPSHOT_SQL, type DetailRow } from './catalog.js';
+import { DETAIL_SQL, MARK_SQL, SNAPSHOT_SQL, type DetailRow } from './catalog.js';
 
 export interface Script {
   /** What messages call it, as they may show it: a path relative to the root (through clipPath), or "the Supabase preset". */
@@ -67,29 +68,6 @@ async function lintMemory(worker: Worker): Promise<number> {
   return stats.total_heap_size + stats.external_memory;
 }
 
-/** A setup script (the preset or the setup file) fails as SETUP_FAILED, a migration as MIGRATION_FAILED. */
-function failedCode(script: Script): 'SETUP_FAILED' | 'MIGRATION_FAILED' {
-  return script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
-}
-
-/**
- * The fix's way past a script that went wrong. The setup file is not one of the migrations, and files
- * needs a folder: when migrations is one file, only a copy of it can leave a part out.
- */
-function wayPast(script: Script, single: boolean | undefined, ways: { setup: string; folder: string; single: string }): string {
-  return script.phase === 'setup' ? ways.setup : single === true ? ways.single : ways.folder;
-}
-
-/** The fix for a file that needs more than the database can give. */
-function tooBig(script: Script, single: boolean | undefined): string {
-  const way = wayPast(script, single, {
-    setup: 'Take that part out of the setup file.',
-    folder: 'Leave the file out with files, or lint the migrations in smaller groups.',
-    single: 'Lint a copy without the part that needs it (a large data load, say).',
-  });
-  return `The file needs more than the lint database can give it (memory or a size limit). ${way}`;
-}
-
 type Message =
   | { type: 'ready'; version: string; available: string[]; reserved: string[] }
   | { type: 'running'; step: number }
@@ -100,86 +78,6 @@ type Message =
   | { type: 'unusable'; step: number }
   | { type: 'crashed'; error: DbError }
   | { type: 'done'; detail: DetailRow[] };
-
-/** 1-based line and column of the character at 1-based position `position`, counted in code points as PostgreSQL counts. */
-export function locate(text: string, position: number): { line: number; column: number } {
-  let line = 1;
-  let column = 1;
-  let i = 0;
-  for (const ch of text) {
-    i += 1;
-    if (i >= position) break;
-    if (ch === '\n') {
-      line += 1;
-      column = 1;
-    } else {
-      column += 1;
-    }
-  }
-  return { line, column };
-}
-
-const MISSING_OBJECT = new Set(['42704', '3F000', '42883', '42P01']);
-
-/** The ToolError for a script that PostgreSQL refused, with a hint fitted to the error. `single`: migrations is this one file. */
-export function failure(script: Script, err: DbError, context: { available: readonly string[]; preset: boolean; filesGiven?: boolean; single?: boolean }): ToolError {
-  const code = failedCode(script);
-  // The setup file runs before the migrations and is not one of them: its advice is to change it.
-  const setup = script.phase === 'setup';
-  const past = (ways: { setup: string; folder: string; single: string }) => wayPast(script, context.single, ways);
-  const position = err.position === undefined ? Number.NaN : Number(err.position);
-  const at = Number.isInteger(position) && position > 0 ? locate(script.text, position) : null;
-  const where = at === null ? script.name : `${script.name} line ${at.line}, column ${at.column}`;
-  const detail = err.detail ? ` (${clip(err.detail, 120)})` : '';
-  const state = err.code ? ` (SQLSTATE ${err.code})` : '';
-  const message = `${where}: ${clip(err.message, 300)}${detail}${state}.`;
-
-  const lines = script.text.split('\n');
-  let fix: string;
-  if (/^extension ".*" is not available$/.test(err.message)) {
-    fix =
-      `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, ${past({ setup: 'take that part out of the setup file', folder: 'leave the file out with files', single: 'lint a copy of the file without that part' })}. ` +
-      'A whole-database dump (pg_dump, supabase db dump) also creates the extensions a platform provides: lint the migrations folder instead (supabase/migrations for Supabase).';
-  } else if (err.code === '42883' && err.message.startsWith('operator does not exist')) {
-    fix = 'The two sides of an operator have types that do not go together (uuid and text, say): cast one side, or fix the column type.';
-  } else if (setup && err.code !== undefined && MISSING_OBJECT.has(err.code)) {
-    fix = context.preset
-      ? 'The Supabase preset does not create this: create it earlier in the setup file.'
-      : 'The setup file runs before the migrations: create what it needs earlier in the same file, or, for a Supabase project, call again with preset "supabase".';
-  } else if (err.code !== undefined && MISSING_OBJECT.has(err.code)) {
-    // A missing table or function is often one of the project's own, created by a file that sorts later
-    // (Flyway's R__ files sort before V1__): say that first.
-    const ran = context.filesGiven
-      ? 'the files ran in the order files gives; put the file that creates it first. '
-      : 'money-guard runs them in natural order of their paths; pass files to give the order your tool uses. ';
-    // One migrations file has no order to get wrong.
-    const order = !context.single && (err.code === '42P01' || err.code === '42883') ? `If one of your migrations creates it, the files ran out of order: ${ran}` : '';
-    fix =
-      order +
-      (context.preset
-        ? 'The Supabase preset does not create this. Pass setup: a .sql file that creates it (it runs after the preset).'
-        : 'This file needs objects your platform creates. For a Supabase project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE ROLE ..., CREATE SCHEMA ...).');
-  } else if (err.code === '42601' && at !== null && (lines[at.line - 1] ?? '').startsWith('\\')) {
-    fix = `That line is a psql meta-command, which only psql understands. ${past({ setup: 'Take it out of the setup file.', folder: 'Leave the file out with files, or lint a copy without that line.', single: 'Lint a copy without that line.' })}`;
-  } else if (err.code === '42601' && at !== null && lines.slice(0, at.line - 1).some((line) => /^COPY\s.+\sFROM\s+stdin;/i.test(line))) {
-    // pg_dump writes table rows after "COPY ... FROM stdin;" lines; only psql can feed them in.
-    fix = `The file holds table data after COPY ... FROM stdin (a pg_dump with data), which only psql can load. ${setup ? 'Take the data out of the setup file.' : 'Lint a schema-only dump (pg_dump --schema-only) or the migrations folder instead.'}`;
-  } else if (err.code === '25001') {
-    const statement = /^(.+?) cannot run inside a transaction block$/.exec(err.message)?.[1] ?? 'this statement';
-    fix = `money-guard runs each file as one script, where ${clip(statement, 60)} cannot run (psql, which commits statement by statement, can). ${past({ setup: 'Take it out of the setup file.', folder: 'If the file does nothing else, leave it out with files.', single: 'Lint a copy without it.' })}`;
-  } else if (err.code === '0A000' && /^cannot alter type of a column used (?:by|in) /.test(err.message)) {
-    fix = 'Something else uses this column (a view, a rule, a policy, a trigger or a generated column): in the same migration, drop it before the ALTER and create it again after.';
-  } else if (err.code === '55P04') {
-    fix = `money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). ${past({ setup: 'Take that part out of the setup file.', folder: 'Split the file in two, or leave it out with files.', single: 'Split the file in two, put both in a folder, and lint the folder.' })}`;
-  } else if (err.code !== undefined && /^5[34]/.test(err.code)) {
-    fix = tooBig(script, context.single);
-  } else if (setup) {
-    fix = 'Fix the setup file at that place.';
-  } else {
-    fix = 'If this file runs on your real database, it probably needs objects your platform creates: pass setup or preset. Otherwise fix the SQL at that place.';
-  }
-  return new ToolError(code, message, fix);
-}
 
 /** The worker's error as an Error for the log: its type and code only (its stack stayed in the worker). */
 function workerError(e: DbError): Error {
@@ -223,11 +121,46 @@ export function runScripts(scripts: readonly Script[], options: RunOptions): Pro
   const previous = lastThread;
   let ended = () => {};
   lastThread = new Promise<void>((resolve) => (ended = resolve));
-  return previous.then(() => startScripts(scripts, options, ended));
+  const calledAt = Date.now();
+  return waitForThread(previous, options).then(
+    () => startScripts(scripts, options, ended, calledAt),
+    (err: unknown) => {
+      void previous.then(ended); // no thread of its own: the next lint still waits for the last one
+      throw err;
+    },
+  );
 }
 
-/** Runs the scripts in a new database thread, and calls `ended` once that thread has ended. */
-function startScripts(scripts: readonly Script[], options: RunOptions, ended: () => void): Promise<DatabaseOutcome> {
+/**
+ * Settles when `previous` has ended. The lint's time limit and its cancellation count from the call,
+ * so a thread that never ended would cost the next lint a TIMEOUT, not a hang.
+ */
+function waitForThread(previous: Promise<unknown>, options: RunOptions): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const done = (settle: () => void) => {
+      clearTimeout(limit);
+      options.signal?.removeEventListener('abort', onAbort);
+      settle();
+    };
+    const limit = setTimeout(
+      () =>
+        done(() =>
+          reject(new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while starting the database.`, 'A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.')),
+        ),
+      options.timeoutMs,
+    );
+    const onAbort = () => done(() => reject(options.signal?.reason ?? new Error('cancelled')));
+    if (options.signal?.aborted) return onAbort();
+    options.signal?.addEventListener('abort', onAbort);
+    void previous.then(() => done(resolve));
+  });
+}
+
+/**
+ * Runs the scripts in a new database thread, and calls `ended` once that thread has ended. The time
+ * limit counts from `calledAt`, when the lint asked for its thread.
+ */
+function startScripts(scripts: readonly Script[], options: RunOptions, ended: () => void, calledAt: number): Promise<DatabaseOutcome> {
   const firstMigration = scripts.findIndex((s) => s.phase === 'migration');
   return new Promise<DatabaseOutcome>((resolve, reject) => {
     // stdout and stderr are captured and dropped: a NOTICE a migration raises must never reach the
@@ -235,7 +168,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
     let worker: Worker;
     try {
       worker = new Worker(options.worker ?? WORKER, {
-        workerData: { scripts: scripts.map(({ name, text }) => ({ name, text })), snapshotSql: SNAPSHOT_SQL, detailSql: DETAIL_SQL },
+        workerData: { scripts: scripts.map(({ name, text }) => ({ name, text })), markSql: MARK_SQL, snapshotSql: SNAPSHOT_SQL, detailSql: DETAIL_SQL },
         stdout: true,
         stderr: true,
         resourceLimits: { maxOldGenerationSizeMb: 1024 },
@@ -325,7 +258,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           ? ''
           : `${wayPast(script, options.single, { setup: 'Take slow data loading out of the setup file.', folder: 'Leave slow data-loading files out with files.', single: 'If the file loads data, lint a schema-only copy (pg_dump --schema-only).' })} `;
       finish({ error: new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while ${doing}.`, `${slow}A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.`) });
-    }, options.timeoutMs);
+    }, Math.max(0, options.timeoutMs - (Date.now() - calledAt)));
     const onAbort = () => finish({ error: options.signal?.reason ?? new Error('cancelled') });
     if (options.signal?.aborted) onAbort();
     options.signal?.addEventListener('abort', onAbort);
@@ -359,13 +292,12 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           clearTimeout(sanity);
           answered = m.step;
           const index = m.step - (firstMigration === -1 ? scripts.length : firstMigration);
-          const seen = new Set<string>();
+          // The columns this file created or changed. One it dropped keeps its entry, which nothing
+          // reads: its table oid and column number are never given to another column.
           for (const [col, ty] of m.rows) {
-            seen.add(col);
             const prev = since.get(col);
             if (prev === undefined || prev.ty !== ty) since.set(col, { ty, since: index });
           }
-          for (const col of since.keys()) if (!seen.has(col)) since.delete(col);
           break;
         }
         case 'reading':

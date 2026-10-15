@@ -177,9 +177,11 @@ describe('money_check_double_entry: the rules', () => {
     expect(r.summary).toBe('Balanced: the 1 transaction nets to zero in whole minor units. "Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).');
     // Payment processors' names for it, and a currency beside a nested amount (review round 4).
     const columns = { transaction_id: 't', amount: 'a' };
-    for (const header of ['Gross Currency', 'Currency ISO Code', 'iso_currency_code', 'presentment_currency', 'currencyCode', 'ccy']) {
+    for (const header of ['Gross Currency', 'Currency ISO Code', 'iso_currency_code', 'presentment_currency', 'currencyCode', 'ccy',
+      // Review round 5: the word anywhere, in camelCase too.
+      'currency_iso', 'CurrencyISO', 'Currency (ISO)', 'Currency Code (ISO 4217)', 'curr', 'currencies', 'baseCurrency', 'settlementCurrency', 'presentmentCurrencyCode', 'txnCcy']) {
       const csv = check('.csv', `t,a,${header}\nT1,10000,EUR\nT1,-10000,USD\n`, { columns });
-      expect(csv.summary, header).toMatch(new RegExp(` "${header}" looks like a currency and is not mapped`));
+      expect(csv.summary, header).toContain(` "${header}" looks like a currency and is not mapped`);
     }
     const nested = check('.jsonl', '{"t":"T1","amount":{"value":100,"currency":"EUR"}}\n{"t":"T1","amount":{"value":-100,"currency":"USD"}}\n', { columns: { transaction_id: 't', amount: '/amount/value' } });
     expect(nested.summary).toMatch(/ "\/amount\/currency" looks like a currency and is not mapped/);
@@ -187,6 +189,11 @@ describe('money_check_double_entry: the rules', () => {
     expect(json.summary).toMatch(/ "currency_code" looks like a currency and is not mapped/);
     const jsonl = check('.jsonl', '{"t":"T1","a":10000,"currency":"GBP"}\n{"t":"T1","a":-10000,"currency":"EUR"}\n', { columns });
     expect(jsonl.summary).toMatch(/ "currency" looks like a currency and is not mapped/);
+    // A field the first record lacks still counts.
+    const later = check('.jsonl', '{"t":"T0","a":5}\n{"t":"T0","a":-5}\n{"t":"T1","a":10000,"ccy":"GBP"}\n{"t":"T1","a":-10000,"ccy":"EUR"}\n', { columns });
+    expect(later.summary).toMatch(/ "ccy" looks like a currency and is not mapped/);
+    // "cur" after another word may be current, not a currency.
+    expect(check('.csv', 't,a,balance_cur\nT1,1,5\nT1,-1,5\n', { columns }).summary).not.toMatch(/looks like a currency/);
     // A rate or an amount named after a currency is not one.
     expect(check('.csv', 't,a,currency_rate\nT1,1,1.2\nT1,-1,1.2\n', { columns }).summary).not.toMatch(/looks like a currency/);
     const mapped = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'Currency' } });
@@ -208,6 +215,8 @@ describe('money_check_double_entry: the rules', () => {
     // An ISO 4217 numeric currency code is a currency.
     const iso = check('.jsonl', '{"t":"A","a":5,"c":826}\n{"t":"A","a":-5,"c":826}\n', { columns: { transaction_id: 't', amount: 'a', currency: 'c' } });
     expect(iso.balanced).toBe(true);
+    // ... grouped by its value, as ids are: 826 and 826.0 are one currency.
+    expect(check('.jsonl', '{"t":"A","a":5,"c":826}\n{"t":"A","a":-5,"c":826.0}\n', { columns: { transaction_id: 't', amount: 'a', currency: 'c' } }).balanced).toBe(true);
   });
 
   it('says why a JSON number cannot be an id when it is too large', () => {

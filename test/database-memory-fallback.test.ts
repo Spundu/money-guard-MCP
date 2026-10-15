@@ -20,8 +20,8 @@ afterEach(() => {
 describe('runScripts memory, measured as on Node.js older than 22.16', () => {
   it('does not count the JavaScript heap and buffers the server thread holds against the lint', async () => {
     if (own !== undefined) delete (Worker.prototype as { getHeapStatistics?: unknown }).getHeapStatistics;
-    const { answer, held } = await lintWhileTaking(() => [Array.from({ length: 25 }, () => new Array<number>(1_250_000).fill(1)), Buffer.alloc(64 * MIB, 1)] as const, 64 * MIB);
+    const { answer, held } = await lintWhileTaking(() => [Array.from({ length: 25 }, () => new Array<number>(1_250_000).fill(1)), Buffer.alloc(128 * MIB, 1)] as const, 64 * MIB);
     expect(answer).toBe('PostgreSQL 0 (fake)');
-    expect([held[0].length, held[1].byteLength]).toEqual([25, 64 * MIB]); // about 250 MB of arrays, and the buffer
+    expect([held[0].length, held[1].byteLength]).toEqual([25, 128 * MIB]); // about 250 MB of arrays, and a buffer over the limit
   });
 });

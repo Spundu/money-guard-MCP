@@ -7,7 +7,8 @@ import process from 'node:process';
 import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolError } from '../src/errors.js';
-import { failure, locate, runScripts } from '../src/lint/database.js';
+import { failure, locate } from '../src/lint/advice.js';
+import { runScripts } from '../src/lint/database.js';
 import { trace } from '../src/server.js';
 import { lintWhileTaking } from './support/memory.js';
 import { tempDir } from './support/tmp.js';
@@ -47,6 +48,7 @@ describe('failure', () => {
     failure({ name: 'db/0001.sql', text, phase: 'migration' }, err, context).toText().replace(/^.*? Fix: /s, '');
 
   it('fits the hint to the error', () => {
+    expect(fix('create tabel b (id int);', { message: 'syntax error at or near "tabel"', code: '42601', position: '8' })).toBe('Fix the SQL at that place: PostgreSQL could not read it as written.');
     const dump = 'CREATE TABLE public.t (a integer);\nCOPY public.t (a) FROM stdin;\n1\n\\.\n';
     expect(fix(dump, { message: 'syntax error at or near "1"', code: '42601', position: String(dump.indexOf('\n1\n') + 2) })).toMatch(/^The file holds table data after COPY \.\.\. FROM stdin \(a pg_dump with data\)/);
     expect(fix('alter type s add value \'b\';', { message: 'unsafe use of new value "b" of enum type s', code: '55P04' })).toMatch(/a new enum value cannot be used in the transaction that adds it/);
@@ -256,9 +258,10 @@ describe('runScripts with a database that misbehaves', () => {
 
   it('says when the memory limit was hit while the catalog was read, after every file had run', async () => {
     process.env.MONEY_GUARD_TEST_WORKER = 'reading-grows';
-    await expect(runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, memoryLimitBytes: 64 * 1024 * 1024 })).rejects.toMatchObject({
+    // 256 MiB against 192 MiB: a limit applied loosely (twice over, say) would let it pass.
+    await expect(runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, memoryLimitBytes: 192 * 1024 * 1024 })).rejects.toMatchObject({
       code: 'MIGRATION_FAILED',
-      message: 'db/0001.sql: the lint database grew by more than 64 MiB of memory while reading the catalog after this file, the last one.',
+      message: 'db/0001.sql: the lint database grew by more than 192 MiB of memory while reading the catalog after this file, the last one.',
     });
   });
 

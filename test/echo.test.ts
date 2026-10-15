@@ -74,6 +74,13 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
     expect(escapeUnsafe(`C:${'\\'}x`)).toBe(`C:${'\\'}x`); // a backslash before anything else stays one
   });
 
+  it('doubles a backslash before a hidden character too, so it never shows like text that looks like an escape', () => {
+    const fake = `pay${'\\'}u200b`; // six plain characters
+    const real = `pay${'\\'}\u{200b}`; // a backslash, then a real U+200B
+    expect(escapeUnsafe(real)).toBe(`pay${'\\\\'}${'\\'}u200b`);
+    for (const show of [escapeUnsafe, (t: string) => clip(t), (t: string) => clipPath(t)]) expect(show(real)).not.toBe(show(fake));
+  });
+
   it('cuts raw text without escaping it, for a value that becomes part of a longer text clipped as a whole', () => {
     expect(cut('GBP')).toBe('GBP');
     expect(cut('x'.repeat(41))).toBe(`${'x'.repeat(39)}…`);

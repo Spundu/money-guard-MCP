@@ -146,6 +146,10 @@ describe('resolveInRoot', () => {
     expect(trySymlink(path.join(base, 'outside'), path.join(root.real, 'outdir'), 'dir')).toBe(true);
     expect(codeOf(() => resolveInRoot(root, 'outdir/secret.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
     expect(codeOf(() => resolveInRoot(root, 'outdir', ANY))).toBe('PATH_OUTSIDE_ROOT');
+    // Whether a path behind the link exists must not show: missing files and folders get the same answer.
+    for (const missing of ['outdir/missing.csv', 'outdir/no/such/folder/x.csv', 'outdir/nope']) {
+      expect(codeOf(() => resolveInRoot(root, missing, missing.endsWith('.csv') ? CSV : ANY)), missing).toBe('PATH_OUTSIDE_ROOT');
+    }
   });
 
   it('refuses a file link that leads outside the project', (ctx) => {
@@ -244,14 +248,16 @@ describe('isSensitive', () => {
       'credentials.csv', 'exports/credentials.json', 'secrets.json', 'alice_accessKeys.csv', 'rootkey.csv', 'client_secret_123.apps.json', 'my-project-service-account.json',
       // review round 4: AWS console sign-in, Firebase and Google Cloud key downloads, OAuth tokens
       'alice_credentials.csv', 'application_default_credentials.json', 'serviceAccountKey.json', 'myapp-firebase-adminsdk-x1y2z-0123456789.json',
-      'my-project-1a2b3c4d5e6f.json', 'token.json']) {
+      'my-project-1a2b3c4d5e6f.json', 'token.json',
+      // review round 5: key files, a secrets file with a dot, access tokens, auth.json
+      'key.json', 'sa-key.json', 'firebase-key.json', '.secrets.json', 'accessTokens.json', 'auth.json']) {
       expect(isSensitive(p), p).toBe(true);
     }
     for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv',
       // credential words in a migration or a folder name: not a credential download
       'db/migrations/0002_create_access_keys.sql', 'db/migrations/0003_client_secrets.sql', 'db/migrations/20240202_add_service_accounts', 'credentials',
       // an export stamped with a date and time, and words that only contain "token"
-      'export-202401011230.json', 'tokenizer.json', 'tokens_used.csv']) {
+      'export-202401011230.json', 'tokenizer.json', 'tokens_used.csv', 'monkey_keys.json', 'keyboard.json', 'author.json']) {
       expect(isSensitive(p), p).toBe(false);
     }
   });

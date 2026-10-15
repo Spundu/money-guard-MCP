@@ -6,7 +6,7 @@ import { CsvError, parse } from 'csv-parse/sync';
 import { closest } from '../closest.js';
 import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { JsonLimitError, JsonNumber, JsonSyntaxError, parseLedgerJson } from './json.js';
+import { JsonLimitError, JsonNumber, JsonSyntaxError, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
 
 export type LedgerFormat = 'csv' | 'json' | 'jsonl';
 
@@ -46,12 +46,25 @@ const MAX_DEPTH = 100;
  */
 export const MAX_CONTAINERS = 2_500_000;
 
-function tooManyContainers(): ToolError {
-  return new ToolError(
-    'FILE_TOO_LARGE',
-    `The file holds more than ${MAX_CONTAINERS.toLocaleString('en-GB')} JSON objects and arrays; this tool reads at most that many.`,
-    'Export a smaller file (a date range, say) and check the parts one by one.',
-  );
+/**
+ * Most JSON values of any kind one file may hold. A record costs at least 5 characters a field
+ * ("a":1,), so a 25 MiB file of records holds about 5 million at most; an array of bare numbers (2
+ * characters each) could hold 13 million, at about 60 bytes of memory each.
+ */
+export const MAX_VALUES = 7_000_000;
+
+function jsonBudget(): JsonBudget {
+  return { containers: MAX_CONTAINERS, values: MAX_VALUES };
+}
+
+function tooLarge(err: JsonLimitError): ToolError {
+  const what =
+    err.kind === 'keys'
+      ? `an object with more than ${MAX_OBJECT_KEYS.toLocaleString('en-GB')} keys`
+      : err.kind === 'values'
+        ? `more than ${MAX_VALUES.toLocaleString('en-GB')} JSON values`
+        : `more than ${MAX_CONTAINERS.toLocaleString('en-GB')} JSON objects and arrays`;
+  return new ToolError('FILE_TOO_LARGE', `The file holds ${what}; this tool reads at most that many.`, 'Export a smaller file (a date range, say) and check the parts one by one.');
 }
 
 const MAPPED_FIELDS: readonly MappedField[] = ['transaction_id', 'amount', 'side', 'debit', 'credit', 'currency'];
@@ -100,7 +113,9 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   const near = closest(name, header);
   const hint = near === undefined ? '' : ` Did you mean "${clip(near)}"?`;
   // A header read as one column that holds another delimiter: the file is separated by that one.
-  const other = header.length === 1 ? DELIMITERS.find((d) => d !== delimiter && (header[0] ?? '').includes(d)) : undefined;
+  // The one that occurs most in the header, read as one column, is the likeliest delimiter.
+  const count = (d: string) => (header[0] ?? '').split(d).length - 1;
+  const other = header.length === 1 ? DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0] : undefined;
   throw new ToolError(
     'COLUMN_NOT_FOUND',
     `The CSV header has no column "${clip(name)}" (mapped as ${field}).${hint} The columns are: ${shown.join(', ')}${more}.`,
@@ -116,7 +131,14 @@ const CSV_PROBLEMS: Readonly<Record<string, string>> = {
   CSV_INVALID_CLOSING_QUOTE: 'a quote closes in the middle of a field',
   CSV_NON_TRIMABLE_CHAR_AFTER_CLOSING_QUOTE: 'text follows a closing quote',
   INVALID_OPENING_QUOTE: 'a quote opens in the middle of a field',
+  CSV_MAX_RECORD_SIZE: 'a row holds more than 1 MiB of values',
 };
+
+/**
+ * The most characters of values one CSV row may hold (delimiters aside). A ledger row holds a few hundred;
+ * a row of 25 MiB (13 million one-character fields) took 15 seconds to read on a busy machine.
+ */
+const MAX_ROW_CHARS = 1024 * 1024;
 
 /**
  * The 1-based line each record starts on. csv-parse's own line count is wrong for a quoted field that
@@ -157,6 +179,7 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledg
       bom: true,
       delimiter,
       relax_column_count: false,
+      max_record_size: MAX_ROW_CHARS,
       skip_empty_lines: true,
       trim: true,
       to: MAX_ROWS + 2, // the header, the limit, and one more to detect "too many"
@@ -208,20 +231,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof JsonNumber);
 }
 
+/** How many records the field names for hints are gathered from: a field the first record lacks still counts. */
+const NAMED_RECORDS = 1000;
+
 /**
- * The field names of a JSON record, for hints: its own fields, and those beside each field a JSON
- * Pointer maps (with "/amount/value" mapped, "/amount/currency" is named too).
+ * The field names of the first NAMED_RECORDS JSON records, for hints, each once: their own fields, and
+ * those beside each field a JSON Pointer maps (with "/amount/value" mapped, "/amount/currency" is named
+ * too).
  */
-function namesOf(record: Record<string, unknown> | undefined, columns: ColumnMap): string[] {
-  if (record === undefined) return [];
-  const names = Object.keys(record);
-  for (const [, name] of mappedEntries(columns)) {
-    if (!name.startsWith('/') || name.lastIndexOf('/') === 0) continue;
-    const parent = name.slice(0, name.lastIndexOf('/'));
-    const node = resolvePointer(record, parent);
-    if (isRecord(node)) names.push(...Object.keys(node).map((key) => `${parent}/${key.replaceAll('~', '~0').replaceAll('/', '~1')}`));
+function namesOf(records: readonly Record<string, unknown>[], columns: ColumnMap): string[] {
+  const names = new Set<string>();
+  for (const record of records) {
+    for (const key of Object.keys(record)) names.add(key);
+    for (const [, name] of mappedEntries(columns)) {
+      if (!name.startsWith('/') || name.lastIndexOf('/') === 0) continue;
+      const parent = name.slice(0, name.lastIndexOf('/'));
+      const node = resolvePointer(record, parent);
+      if (isRecord(node)) for (const key of Object.keys(node)) names.add(`${parent}/${key.replaceAll('~', '~0').replaceAll('/', '~1')}`);
+    }
   }
-  return names;
+  return [...names];
 }
 
 function valuesOf(record: Record<string, unknown>, columns: ColumnMap): Partial<Record<MappedField, unknown>> {
@@ -267,9 +296,9 @@ function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, fir
 
 function parseOrThrow(text: string): unknown {
   try {
-    return parseLedgerJson(text, MAX_DEPTH, { containers: MAX_CONTAINERS });
+    return parseLedgerJson(text, MAX_DEPTH, jsonBudget());
   } catch (err) {
-    if (err instanceof JsonLimitError) throw tooManyContainers();
+    if (err instanceof JsonLimitError) throw tooLarge(err);
     if (!(err instanceof JsonSyntaxError)) throw err;
     const at = /at position (\d+)$/.exec(err.message);
     const where = at?.[1] === undefined ? '' : (({ line, column }) => `Line ${line}, column ${column}: `)(lineColumn(text, Number(at[1])));
@@ -290,14 +319,14 @@ function readJson(text: string, columns: ColumnMap, recordsPointer: string): Led
   });
   const first = records.find(isRecord);
   requireMappedFields(rows, columns, first);
-  return { rows, names: namesOf(first, columns) };
+  return { rows, names: namesOf(records.filter(isRecord).slice(0, NAMED_RECORDS), columns) };
 }
 
 function readJsonl(text: string, columns: ColumnMap): Ledger {
   const rows: LedgerRow[] = [];
-  let first: Record<string, unknown> | undefined;
+  const named: Array<Record<string, unknown>> = []; // the first NAMED_RECORDS records, for hints
   const lines = text.split('\n');
-  const budget = { containers: MAX_CONTAINERS }; // for the whole file, not each line
+  const budget = jsonBudget(); // for the whole file, not each line
   for (const [i, raw] of lines.entries()) {
     const content = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
     if (content.trim() === '') continue;
@@ -307,16 +336,16 @@ function readJsonl(text: string, columns: ColumnMap): Ledger {
     try {
       value = parseLedgerJson(content, MAX_DEPTH, budget);
     } catch (err) {
-      if (err instanceof JsonLimitError) throw tooManyContainers();
+      if (err instanceof JsonLimitError) throw tooLarge(err);
       if (!(err instanceof JsonSyntaxError)) throw err;
       rows.push({ ...base, values: {}, bad: 'the line is not valid JSON' });
       continue;
     }
-    if (isRecord(value)) first ??= value;
+    if (isRecord(value) && named.length < NAMED_RECORDS) named.push(value);
     rows.push(isRecord(value) ? { ...base, values: valuesOf(value, columns) } : { ...base, values: {}, bad: 'the line is not a JSON object' });
   }
-  requireMappedFields(rows, columns, first);
-  return { rows, names: namesOf(first, columns) };
+  requireMappedFields(rows, columns, named[0]);
+  return { rows, names: namesOf(named, columns) };
 }
 
 /** The rows of a ledger export, and the column or field names it has (the CSV header, or the first record's fields). */

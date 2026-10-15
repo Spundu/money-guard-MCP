@@ -223,8 +223,9 @@ function describeOtherFiles(seen: Seen): string {
   // Most common first; ties by name, so the text is the same on every machine (readdir order is not).
   const top = [...seen.others].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, 5);
   if (top.length === 0) return seen.entries === 0 ? 'It is empty.' : 'It holds folders but no files.';
-  const shown = top.reduce((sum, [, n]) => sum + n, 0);
-  return `It holds ${top.map(([ext, n]) => `${n} ${clip(ext, 20)}`).join(', ')} ${shown === 1 ? 'file' : 'files'}.`;
+  const kinds = top.map(([ext, n]) => `${n} ${clip(ext, 20)} ${n === 1 ? 'file' : 'files'}`);
+  const last = kinds.pop() ?? '';
+  return `It holds ${kinds.length === 0 ? last : `${kinds.join(', ')} and ${last}`}.`;
 }
 
 /**

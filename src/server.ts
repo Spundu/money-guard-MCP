@@ -65,6 +65,10 @@ async function answer(tool: string, log: Log, signal: AbortSignal | undefined, w
   const started = performance.now();
   const ms = () => `${Math.round(performance.now() - started)}ms`;
   try {
+    // Messages that came with this call are read first, so a cancel sent right behind it stops it before
+    // it runs: a ledger or audit check cannot be stopped once it has started (SPEC.md §2.6).
+    await new Promise((resolve) => setImmediate(resolve));
+    if (signal?.aborted) throw signal.reason;
     // Every string escaped once more on the way out (SPEC.md §2.4): a field a tool forgot cannot arrive raw.
     const result = escapeStrings(await work());
     const text = JSON.stringify(result);

@@ -1,7 +1,7 @@
 // The ledger's JSON parser (src/ledger/json.ts): strict RFC 8259, never JSON.parse, and numbers kept as
 // the exact text the file wrote.
 import { describe, expect, it } from 'vitest';
-import { JsonLimitError, JsonNumber, JsonSyntaxError, parseLedgerJson, plainDecimal } from '../src/ledger/json.js';
+import { JsonLimitError, JsonNumber, JsonSyntaxError, MAX_OBJECT_KEYS, parseLedgerJson, plainDecimal } from '../src/ledger/json.js';
 
 const parse = (text: string) => parseLedgerJson(text, 100);
 const n = (text: string) => new JsonNumber(text);
@@ -29,11 +29,19 @@ describe('parseLedgerJson', () => {
 
   it('stops past the objects and arrays its budget allows, counting across calls that share one', () => {
     expect(parse('[[],{},[[]]]')).toEqual([[], {}, [[]]]); // five containers, no budget given
-    expect(parseLedgerJson('[[],{},[[]]]', 100, { containers: 5 })).toEqual([[], {}, [[]]]);
-    expect(() => parseLedgerJson('[[],{},[[]]]', 100, { containers: 4 })).toThrow(JsonLimitError);
-    const shared = { containers: 3 };
+    expect(parseLedgerJson('[[],{},[[]]]', 100, { containers: 5, values: Infinity })).toEqual([[], {}, [[]]]);
+    expect(() => parseLedgerJson('[[],{},[[]]]', 100, { containers: 4, values: Infinity })).toThrow(JsonLimitError);
+    const shared = { containers: 3, values: Infinity };
     parseLedgerJson('{"a":[]}', 100, shared);
     expect(() => parseLedgerJson('{"b":[]}', 100, shared)).toThrow(JsonLimitError);
+  });
+
+  it('stops past the values of any kind its budget allows, and at an object with too many keys', () => {
+    expect(parseLedgerJson('[1,"a",null,true]', 100, { containers: Infinity, values: 5 })).toEqual([expect.anything(), 'a', null, true]);
+    expect(() => parseLedgerJson('[1,"a",null,true]', 100, { containers: Infinity, values: 4 })).toThrow(expect.objectContaining({ kind: 'values' }));
+    const keys = (n: number) => `{${Array.from({ length: n }, (_, i) => `"k${i}":1`).join(',')}}`;
+    expect(Object.keys(parse(keys(MAX_OBJECT_KEYS)) as object)).toHaveLength(MAX_OBJECT_KEYS);
+    expect(() => parse(keys(MAX_OBJECT_KEYS + 1))).toThrow(expect.objectContaining({ kind: 'keys' }));
   });
 
   it('keeps "__proto__" as an ordinary key, and the last of duplicate keys', () => {

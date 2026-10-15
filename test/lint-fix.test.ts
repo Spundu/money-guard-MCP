@@ -123,9 +123,13 @@ describe('money_lint_schema: fix_sql', () => {
       // review round 4: digits in a name or a type's size; two-decimal guards; a soft-delete condition
       '(q1_revenue >= (0)::numeric)', '("Q2 total" >= 0)', '(total >= (0)::numeric(10,2))', '(total = round(total, 2))',
       '(total = round((total)::numeric, 2))', '(scale(fee) <= 2)', '(deleted_at IS NULL)',
+      // review round 5: trunc's places and "scale below 3" guard two decimals too; a text literal holds no amount
+      '(total = trunc(total, 2))', '(scale(total) < 3)', "((total >= (0)::numeric) AND (note <> 'x\"y'::text))",
     ];
     for (const expr of safe) expect(holdsNoAmount(expr), expr).toBe(true);
-    const amounts = ['((fee > (0)::numeric) AND (fee <= 99.99))', '(cap <= max_total())', '(amount <= (1000)::numeric)', '(round(amount) = amount)', '(amount > (100)::numeric(10,2))', "(code <> '840'::text)"];
+    const amounts = ['((fee > (0)::numeric) AND (fee <= 99.99))', '(cap <= max_total())', '(amount <= (1000)::numeric)', '(round(amount) = amount)', '(amount > (100)::numeric(10,2))', "(code <> '840'::text)",
+      // review round 5: a quote inside a text literal must not hide the amount after it; an amount in quotes
+      "(((total)::text <> 'x\"'::text) AND (total < 500) AND ('\"'::text <> 'y'::text))", "(total <= '1000.00'::numeric)"];
     for (const expr of amounts) expect(holdsNoAmount(expr), expr).toBe(false);
   });
 
@@ -164,6 +168,14 @@ describe('money_lint_schema: fix_sql', () => {
     // The statements run as written: a keyword and a double quote are quoted as PostgreSQL quotes them.
     const created = 'create table "user" (total double precision, "q""price" double precision); insert into "user" values (1.5, 2.25);';
     expect(await sql([created, ...r.findings.map((f) => f.fix_sql ?? 'fix_sql missing')], 'select total::text, "q""price"::text as q from "user"')).toEqual([{ total: '150', q: '225' }]);
+  });
+
+  it('gives no fix_sql for a name holding a backslash before "u": in the SQL it would read as an escape', async () => {
+    const r = await lint({ 'db/migrations/0001.sql': 'create table t ("price_\\u202e_total" double precision, total double precision);' });
+    expect(r.findings.map((f) => [f.column, f.fix_sql === null])).toEqual([
+      ['price_\\\\u202e_total', true],
+      ['total', false],
+    ]);
   });
 
   it('quotes every keyword quote_ident quotes, not only the fully reserved ones', async () => {

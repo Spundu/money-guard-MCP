@@ -321,12 +321,12 @@ describe('money_lint_schema: which files run', () => {
   it('explains a folder with no SQL in it', async () => {
     const e = await failure({ 'db/migrations/001_init.ts': 'export {}', 'db/migrations/002.ts': '', 'db/migrations/readme.md': '' });
     expect(e.code).toBe('NO_SQL_FILES');
-    expect(e.message).toMatch(/holds no \.sql files\. It holds 2 \.ts, 1 \.md files\./);
+    expect(e.message).toMatch(/holds no \.sql files\. It holds 2 \.ts files and 1 \.md file\./);
   });
 
   it('counts the files in subfolders too when a folder has no SQL, and says "file" for one', async () => {
     const knex = await failure({ 'db/migrations/knex/001_init.js': '', 'db/migrations/knex/002.js': '', 'db/migrations/seeds/s.js': '', 'db/migrations/knexfile.ts': '' });
-    expect(knex.message).toMatch(/holds no \.sql files\. It holds 3 \.js, 1 \.ts files\.$/);
+    expect(knex.message).toMatch(/holds no \.sql files\. It holds 3 \.js files and 1 \.ts file\.$/);
     expect((await failure({ 'db/migrations/prisma/schema.prisma': '' })).message).toMatch(/holds no \.sql files\. It holds 1 \.prisma file\.$/);
     for (const [inside, holds] of [['db/migrations/empty', 'It holds folders but no files.'], ['db/migrations', 'It is empty.']] as const) {
       const dir = newDir();

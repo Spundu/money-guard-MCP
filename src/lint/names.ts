@@ -5,8 +5,10 @@
 // ("fee_per_txn_bps"); a pay rate or a priced rate is money ("hourly_rate", "rate_per_hour"); so is
 // what an order or a cart is worth ("order_value"). A one-word name that PostgreSQL folded to
 // lowercase ("TotalAmount" became "totalamount") is split into known words first ("total", "amount"),
-// so it gets the answer its snake_case form gets; one that cannot be split is money when it ends in a
-// long money word, or starts with one and does not end in a long non-money word.
+// so it gets the answer its snake_case form gets, and so is a folded word inside a longer name
+// ("totalamount_old"), for both rules here; a one-word name that cannot be split is money when it ends
+// in a long money word, or starts with one and does not end in a long non-money word. A number at the
+// end is dropped ("price2", "credit_card_last4").
 
 const MONEY_WORDS: ReadonlySet<string> = new Set([
   'amount', 'amounts', 'amt', 'balance', 'balances', 'charge', 'charges', 'cost', 'costs', 'discount',
@@ -21,7 +23,9 @@ const MONEY_WORDS: ReadonlySet<string> = new Set([
   // pay, commerce and insurance
   'bonus', 'bonuses', 'allowance', 'allowances', 'stipend', 'stipends', 'diem', 'rent', 'rents', 'fare',
   'fares', 'spend', 'premium', 'premiums', 'deductible', 'deductibles', 'donation', 'donations', 'penalty',
-  'penalties', 'pnl', 'cogs', 'shipping', 'tip', 'tips',
+  'penalties', 'pnl', 'cogs', 'shipping', 'tip', 'tips', 'pay', 'cashback', 'copay', 'copays', 'reimbursement',
+  'reimbursements', 'installment', 'installments', 'instalment', 'instalments', 'dividend', 'dividends', 'royalty',
+  'royalties', 'arrears', 'overdraft', 'overdrafts', 'payable', 'payables', 'receivable', 'receivables', 'spending',
   // minor units of other currencies
   'paisa', 'kobo', 'sats', 'satoshi', 'satoshis', 'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck',
   'kopecks', 'wei', 'lamport', 'lamports',
@@ -39,12 +43,13 @@ const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   'count', 'number', 'num', 'no', 'qty', 'quantity', 'items', 'attempts', 'retries', 'rank', 'ranks', 'tier',
   'tiers', 'level', 'levels', 'band', 'position', 'priority', 'index', 'seq', 'sequence', 'step', 'steps',
   'stage', 'stages', 'unit', 'units', 'orders', 'rooms', 'seats', 'shares', 'guests', 'users', 'members',
-  'customers', 'people', 'persons', 'visits', 'views', 'clicks', 'impressions', 'sessions',
+  'customers', 'people', 'persons', 'visits', 'views', 'clicks', 'impressions', 'sessions', 'bytes', 'pages', 'rows',
+  'hits', 'records', 'lines', 'last', 'first', 'frequency', 'grade', 'schedule', 'cycle',
   // rates and measures
   'percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'weight', 'score', 'share',
   'split', 'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
   'elasticity', 'calories', 'kcal', 'energy', 'lb', 'lbs', 'rating', 'ratings', 'tonnage', 'area', 'size',
-  'length', 'width', 'height', 'depth', 'power', 'usage', 'capacity', 'speed', 'temperature',
+  'length', 'width', 'height', 'depth', 'power', 'usage', 'capacity', 'speed', 'temperature', 'precision', 'scale',
   // groupings and terms
   'category', 'categories', 'list', 'lists', 'center', 'centre', 'terms', 'period',
 ]);
@@ -70,6 +75,7 @@ const PRICED_UNITS: ReadonlySet<string> = new Set(['hour', 'day', 'night', 'week
 const VALUE_WORDS: ReadonlySet<string> = new Set([
   'order', 'orders', 'cart', 'basket', 'invoice', 'contract', 'deal', 'transaction', 'purchase', 'sale', 'sales', 'voucher', 'coupon',
   'gift', 'card', 'item', 'lifetime', 'portfolio', 'inventory', 'stock', 'trade', 'loan', 'asset', 'assets', 'claim', 'policy',
+  'market', 'book', 'fair', 'face', 'par', 'line', 'net', 'gross', 'total',
 ]);
 
 /**
@@ -82,6 +88,7 @@ const OTHER_WORDS: ReadonlySet<string> = new Set([
   'cancellation', 'setup', 'transfer', 'exchange', 'monthly', 'annual', 'yearly', 'initial', 'final', 'original', 'max', 'min',
   'limit', 'due', 'paid', 'owed', 'outstanding', 'remaining', 'pending', 'grand', 'line', 'item', 'order', 'invoice', 'account',
   'opening', 'closing', 'current', 'available', 'card', 'cash', 'per', 'in', 'value', 'after', 'before', 'smallest',
+  'unit', 'old', 'new', 'prev', 'previous', 'holiday', 'sick', 'overtime', 'take', 'home',
 ]);
 
 /**
@@ -142,11 +149,19 @@ export function words(name: string): string[] {
     .map((w) => w.toLowerCase());
 }
 
+/**
+ * The words of a name as the rules read them: each word the rule does not know is split into known
+ * words where it can be ("totalamount_old": total, amount, old; "amountminorunits": amount, minor,
+ * units), and a number at the end is dropped ("price2", "credit_card_last4": a version or a label).
+ */
+function knownWords(name: string): string[] {
+  const out = words(name).flatMap((w) => (VOCABULARY.has(w) || /^\d+$/.test(w) ? [w] : (split(w) ?? [w])));
+  while (out.length > 1 && /^\d+$/.test(out.at(-1) ?? '')) out.pop();
+  return out;
+}
+
 export function looksLikeMoney(name: string): boolean {
-  const all = words(name);
-  const only = all.length === 1 ? all[0] : undefined;
-  const parts = only === undefined ? undefined : split(only); // "totaldiscount": total, discount
-  return judgeWords(parts !== undefined && parts.length > 1 ? parts : all);
+  return judgeWords(knownWords(name));
 }
 
 function judgeWords(all: readonly string[]): boolean {
@@ -183,7 +198,7 @@ function judgeWords(all: readonly string[]): boolean {
  * ("amountminor").
  */
 export function namesMinorUnits(name: string): boolean {
-  const ws = words(name);
+  const ws = knownWords(name);
   if (ws.some((w) => MINOR_UNIT_WORDS.has(w))) return true;
   if (ws.includes('smallest') && (ws.includes('unit') || ws.includes('units'))) return true; // "amount_in_smallest_unit"
   const only = ws.length === 1 ? ws[0] : undefined;

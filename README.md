@@ -13,7 +13,7 @@ network.
 **Status:** 0.1.0. Not on npm yet: run it from a clone (below). It speaks MCP 2026-07-28, and the 2025
 protocol versions for older clients. [SPEC.md](SPEC.md) fixes every parameter, result field, code and
 limit. Its CI has not run yet; the tests pass on Windows and Linux machines ([How it is
-tested](#how-it-is-tested)).
+tested](#how-it-is-tested)). macOS is untested.
 
 ## What it checks
 
@@ -25,7 +25,12 @@ tested](#how-it-is-tested)).
 
 Why run the migrations instead of reading them? Patterns over SQL text easily miss a later `ALTER
 COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database that ran the migrations
-does not.
+does not. (Only to decide whether to offer `fix_sql` does it read text: the defaults, CHECK
+constraints and index conditions as PostgreSQL writes them back, with simple, cautious patterns that
+withhold the fix when in doubt.)
+
+Limits: a ledger file of 25 MiB and 1,000,000 rows, an audit log of 100 MiB, migrations of 5 MiB a
+file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it works
 
@@ -74,8 +79,8 @@ take is relative to that folder. Then ask, for example:
   currency is in currency." (Without a currency column, every row counts as one currency.)
 - "Verify logs/audit.jsonl."
 
-The server tells Claude when each tool helps, to fix a schema finding with a new migration, and never
-to repair an audit log that fails.
+The server tells Claude when to use each tool. It also says to fix a schema finding with a new
+migration, and never to repair an audit log that fails.
 
 ## Try it without an agent
 
@@ -204,7 +209,9 @@ where the unit needs a decision (a column with four decimal places), where a def
 constraint or a unique index condition may hold amounts in pounds, in the table or in a partition or
 child table (Postgres's type change would leave those unconverted, so the agent writes that migration
 by hand; a CHECK such as `amount >= 0` is fine), and in the other cases SPEC.md §3.6 lists (domains,
-arrays, generated and inherited columns, names with hidden characters). The agent adds it as a new
+arrays, generated and inherited columns, names with hidden characters). A trigger or function that
+compares the column with an amount in its body is not seen (PostgreSQL records no link to it), so
+check those before running a fix that multiplies by 100. The agent adds it as a new
 migration and runs the check again, and the check runs that migration too. [SPEC.md](SPEC.md) shows
 full results of the other two tools (§4.9, §5.8).
 
@@ -315,7 +322,8 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
   look like secrets (`.env`, private keys, `.npmrc`, cloud credential downloads, anything in `.git`)
   are refused even inside the project.
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
-  cut to 40 characters. Table and column names stay whole, so the agent can act on them; a path over
+  cut to 40 characters (a few longer texts, such as a Postgres error, have their own limits: SPEC.md
+  §2.4). Table and column names stay whole, so the agent can act on them; a path over
   400 characters is cut in the middle. Characters that can hide text are escaped in money-guard's
   results and errors, by Unicode category: control characters, the zero-width and direction
   characters of the "Trojan Source" trick, and the invisible TAG characters that can spell out
@@ -352,7 +360,7 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
 
 ## How it is tested
 
-- `npm test` runs about 650 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 700 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.
@@ -403,9 +411,9 @@ problems, round 2 about 50, round 3 about 40 and round 4 about 50, among them hi
 reaching the model, a `fix_sql` that broke column defaults, a server that spun when its host closed
 stderr, migrations that a security fix had quietly skipped, a catalog query that grew with the square
 of the schema, and a Node.js 24 crash that two overlapping database threads can set off. Every finding
-was reproduced before it was fixed, with two exceptions: one that could not be was answered instead,
-and that crash, which the reviewer saw twice but this machine never did, was matched to its upstream
-bug report. Fixes came with tests shown to fail without them. The tests reviewer also plants bugs to
+was reproduced before it was fixed, with two exceptions: one finding that could not be reproduced
+was answered instead, and that crash, which the reviewer saw twice but this machine never did, was
+matched to its upstream bug report. Fixes came with tests shown to fail without them. The tests reviewer also plants bugs to
 test the tests: 29 of 115 went uncaught in round 3, and 40 of 121 in round 4; tests now catch each of
 them that changes an answer (two change nothing a test can see, and 10 are caught only where the tests
 run on Linux). The rounds go on until one finds no high-severity problem. It has had no independent

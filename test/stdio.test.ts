@@ -150,21 +150,26 @@ describe('the stdio process', () => {
     }
   }, 60_000);
 
-  it('logs a call the client cancelled before it ran as CANCELLED, not ok, and sends no answer for it', async () => {
-    const server = raw({ MONEY_GUARD_ROOT: SHOP });
+  it('does not run a call the client cancelled before it ran, logs it CANCELLED, and sends no answer for it', async () => {
+    // A million rows take seconds to check; cancelled before it ran, the call is not run at all.
+    const project = tempDir();
+    const rows = Array.from({ length: 1_000_000 }, (_, i) => `T${i >> 1},${i % 2 === 0 ? 100 : -100}`);
+    writeTree(project, { 'exports/big.csv': `txn_id,amount_pence\n${rows.join('\n')}\n` });
+    const server = raw({ MONEY_GUARD_ROOT: project });
     try {
       await server.initialize();
-      const call = { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'money_check_double_entry', arguments: { file: 'exports/journal.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence' } } } };
+      const call = { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'money_check_double_entry', arguments: { file: 'exports/big.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence' } } } };
       const cancel = { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'changed my mind' } };
       server.child.stdin.write(`${JSON.stringify(call)}\n${JSON.stringify(cancel)}\n`);
       server.send({ jsonrpc: '2.0', id: 3, method: 'ping' });
       await server.answered(3);
       await vi.waitFor(() => expect(server.stderr()).toMatch(/money-guard-mcp: money_check_double_entry CANCELLED \d+ms/), { timeout: 5000 });
+      expect(Number(/money_check_double_entry CANCELLED (\d+)ms/.exec(server.stderr())?.[1])).toBeLessThan(500);
       expect(server.stdout()).not.toContain('"id":2');
     } finally {
       server.child.kill();
     }
-  });
+  }, 60_000);
 
   it('answers a ledger call and logs it ok when the cancel comes only while it runs: it cannot be stopped part-way', async () => {
     // SPEC.md §2.6. A million rows take seconds to check; the cancel is read only once the check has ended.

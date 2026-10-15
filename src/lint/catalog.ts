@@ -17,16 +17,27 @@ const USER_TABLES = `
     AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'`;
 
 /**
- * Taken after every file: each column's identity (table oid + column number, which survive renames)
- * and its type (the type oid, without the modifier: widening numeric(10,2) to numeric(12,2) does not
- * introduce a problem the column already had; real and double precision count as one float type, so a
- * change of float precision does not either). Cheap enough to run thousands of times.
+ * A mark taken before each file: the transaction id it returns is older than the file's own, so the
+ * catalog rows the file writes are the ones newer than the mark. Taken modulo 2^32, as a row's xmin is
+ * (a fresh database is far from wrapping around).
+ */
+export const MARK_SQL = `SELECT (pg_catalog.txid_current() % 4294967296)::pg_catalog.text AS mark`;
+
+/**
+ * Taken after every file, with the mark taken before it ($1): each column the file created or changed,
+ * by its identity (table oid + column number, which survive renames) and its type (the type oid,
+ * without the modifier: widening numeric(10,2) to numeric(12,2) does not introduce a problem the column
+ * already had; real and double precision count as one float type, so a change of float precision does
+ * not either). Any change to a column rewrites its pg_attribute row, which then carries the file's
+ * transaction id. Reading only those rows keeps a folder of 2,000 files from reading every column 2,000
+ * times (review round 5: 802 files of an 800-table schema ran out of time).
  */
 export const SNAPSHOT_SQL = `
   SELECT a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
          CASE WHEN a.atttypid IN ('pg_catalog.float4'::pg_catalog.regtype, 'pg_catalog.float8'::pg_catalog.regtype)
               THEN 'float' ELSE a.atttypid::pg_catalog.text END AS ty
-  ${USER_TABLES}`;
+  ${USER_TABLES}
+    AND a.xmin::pg_catalog.text::pg_catalog.int8 > $1::pg_catalog.int8`;
 
 /**
  * Taken once, at the end: everything the findings need. Domains are followed to their base type at any
@@ -236,7 +247,9 @@ export function isZeroOrNullDefault(expr: string): boolean {
  */
 export function holdsNoAmount(expr: string): boolean {
   const rest = expr
-    .replace(/"(?:[^"]|"")*"/g, 'x') // a quoted name
+    // A quoted name, or a string literal, read left to right, so a quote inside one cannot start the
+    // other. A literal that holds digits ('1000.00'::numeric, a date) keeps them: it may be an amount.
+    .replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, (token) => (token.startsWith("'") && /\d/.test(token) ? token.slice(1, -1) : 'x'))
     .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?(?:\[\])?/g, '') // a cast and its type's size
     .replace(/\b(?:round|trunc)\(((?:[^()]|\([^()]*\))*),\s*\d+\)/g, '($1)') // round(x, 2): places
     .replace(/\bscale\(((?:[^()]|\([^()]*\))*)\)\s*(?:<=|<|=)\s*\d+/g, '($1)') // scale(x) <= 2: places
@@ -269,7 +282,9 @@ export function quoteIdent(name: string, reserved: ReadonlySet<string>): string 
 export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>): string | null {
   // A column a child inherits changes with its parent: ALTER refuses it on the child.
   if (row.domain_name !== null || row.via_array || row.generated !== '' || row.inherited) return null;
-  if ([row.schema_name, row.table_name, row.column_name].some(hasUnsafe)) return null;
+  // fix_sql is SQL to run, so it holds the name as it is: a backslash before "u" there would read as
+  // an escape in a result where every other backslash is shown doubled.
+  if ([row.schema_name, row.table_name, row.column_name].some((name) => hasUnsafe(name) || name.includes('\\u'))) return null;
   const c = quoteIdent(row.column_name, reserved);
   const head = `ALTER TABLE ${quoteIdent(row.schema_name, reserved)}.${quoteIdent(row.table_name, reserved)} ALTER COLUMN ${c} TYPE bigint`;
   const minor = namesMinorUnits(row.column_name);

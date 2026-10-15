@@ -2,7 +2,8 @@
 // migration-folder walk (lint/files.ts) uses the same checks for every file it finds.
 //
 // The order of the checks matters: a path that is outside the project is refused BEFORE the file system
-// is touched, so the answer never reveals whether something outside the project exists.
+// is touched, so the answer never reveals whether something outside the project exists; through a link
+// that leads outside, a path that exists and one that does not get the same answer.
 
 import { readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
 import path from 'node:path';
@@ -54,7 +55,8 @@ export function isInside(root: string, candidate: string): boolean {
 /**
  * Names the tools refuse at any depth: environment files, private keys and certificates, package-manager
  * and git credentials, cloud credential downloads (.csv and .json files: AWS access-key CSVs, Google
- * client secrets and service-account keys, credentials and secrets files), and anything inside .git
+ * client secrets and service-account keys, key.json and *-key.json, auth.json, access tokens, credentials
+ * and secrets files), and anything inside .git
  * (SPEC.md §2.3). Compared in lower case. The credential words only count in .csv and .json names: a
  * migration such as 0002_create_access_keys.sql, or a folder add_service_accounts, is not a secret.
  */
@@ -70,7 +72,7 @@ export function isSensitive(rel: string): boolean {
     base.startsWith('id_ed25519') ||
     ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext)) ||
     (/\.(?:csv|json)$/.test(base) &&
-      (/credentials|^secrets[._-]|accesskeys|access_keys|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$/.test(base) ||
+      (/credentials|^\.?secrets[._-]|accesskeys|access_keys|accesstokens|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
         // a Google Cloud key as downloaded: the project's name, then 12 hex digits with at least one letter
         /-(?=[0-9a-f]*[a-f])[0-9a-f]{12}\.json$/.test(base)))
   );
@@ -114,12 +116,15 @@ function checkExtension(root: Root, input: string, rel: string, extensions: read
   }
 }
 
-/** The closest folder above `lexical` that exists, relative to the root ("." for the root). */
-function nearestExisting(root: Root, lexical: string): string {
+/**
+ * The closest folder above `lexical` that exists: as it is shown (relative to the root, "." for the
+ * root), and where it really is, which a link on the way may put outside the project.
+ */
+function nearestExisting(root: Root, lexical: string): { shown: string; real: string } {
   let dir = path.dirname(lexical);
   while (isInside(root.real, dir)) {
     try {
-      if (statSync(dir).isDirectory()) return toPosix(path.relative(root.real, dir));
+      if (statSync(dir).isDirectory()) return { shown: toPosix(path.relative(root.real, dir)), real: realpathSync.native(dir) };
     } catch {
       // keep walking up
     }
@@ -127,7 +132,11 @@ function nearestExisting(root: Root, lexical: string): string {
     if (parent === dir) break;
     dir = parent;
   }
-  return '.';
+  return { shown: '.', real: root.real };
+}
+
+function linkOutside(root: Root, input: string): ToolError {
+  return new ToolError('PATH_OUTSIDE_ROOT', `${shown(input)} is a link to a place outside the project folder (${root.name}).`, 'Pass a file or folder that really lives inside the project.');
 }
 
 /**
@@ -157,22 +166,19 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   try {
     real = realpathSync.native(lexical);
   } catch (err) {
-    // The path is inside the project (checked above), so saying it cannot be read reveals nothing outside.
+    // Through a link that leads out of the project, whether the rest of the path exists would say what
+    // is there: the answer is the same either way.
+    const near = nearestExisting(root, lexical);
+    if (!isInside(root.real, near.real)) throw linkOutside(root, input);
     if (deniedOrLocked(err)) throw unreadable(toPosix(lexRel), err);
     throw new ToolError(
       'PATH_NOT_FOUND',
-      `${shown(input)} does not exist. The nearest existing folder is "${clipPath(nearestExisting(root, lexical))}".`,
+      `${shown(input)} does not exist. The nearest existing folder is "${clipPath(near.shown)}".`,
       `Check the spelling. Paths are relative to the project folder (${root.name}).`,
     );
   }
   // A link inside the project may point outside it: the REAL target is what gets read.
-  if (!isInside(root.real, real)) {
-    throw new ToolError(
-      'PATH_OUTSIDE_ROOT',
-      `${shown(input)} is a link to a place outside the project folder (${root.name}).`,
-      'Pass a file or folder that really lives inside the project.',
-    );
-  }
+  if (!isInside(root.real, real)) throw linkOutside(root, input);
   const realRel = path.relative(root.real, real);
   checkSensitive(input, realRel);
 

@@ -37,6 +37,8 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(errorText(() => check('.tsv', 'txn_id,amount_pence\nA,100\n', map))).toMatch(/ Fix: The file looks separated by ",", not "\\t" \(tabs\): pass delimiter ","\.$/);
     expect(errorText(() => check('.csv', 'txn_id,amount_pence\nA,100\n', { ...map, delimiter: '|' }))).toMatch(/ Fix: The file looks separated by ",", not "\|": pass delimiter ","\.$/);
     expect(errorText(() => check('.csv', 'id,value\nA,100\n', map))).toMatch(/ Fix: Map each field to one of the column names in the header\.$/);
+    // Two candidates in one header: the one that occurs most (here tabs, with a ";" inside a name).
+    expect(errorText(() => check('.csv', 'txn_id\tamount_pence\tnet;gross\nA\t1\t2\n', map))).toMatch(/ Fix: The file looks separated by "\\t" \(tabs\)/);
   });
 
   it('groups a quoted id with spaces around it with the same id, and reads a quoted blank id as missing', () => {
@@ -54,9 +56,12 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(check('.csv', 't,a\nnot text,5\nnot text,-5\n', { columns: { transaction_id: 't', amount: 'a' } }).balanced).toBe(true);
   });
 
-  it('answers COLUMN_NOT_FOUND for a huge hostile header', () => {
-    const header = Array.from({ length: 2000 }, (_, i) => `${String(i).padStart(4, '0')}${'c'.repeat(996)}`).join(',');
+  it('answers COLUMN_NOT_FOUND for a huge hostile header, and refuses a row of more than 1 MiB of values before reading on', () => {
+    const header = Array.from({ length: 1000 }, (_, i) => `${String(i).padStart(4, '0')}${'c'.repeat(996)}`).join(',');
     expect(errorText(() => check('.csv', `${header}\n`, { columns: { transaction_id: 'x'.repeat(200), amount: 'a' } }))).toMatch(/^COLUMN_NOT_FOUND: /);
+    // 13 million one-character fields in one row took 15 seconds to read: a row may hold 1 MiB of values.
+    const wide = `${'a,'.repeat(1_100_000)}a\n`;
+    expect(errorText(() => check('.csv', wide, { columns: { transaction_id: 'a', amount: 'b' } }))).toMatch(/^PARSE_ERROR: Line 1: a row holds more than 1 MiB of values\./);
   });
 
   it('compares only the first 64 characters of each name, so the search is bounded however long the header', () => {
@@ -235,5 +240,22 @@ describe('money_check_double_entry: arguments', () => {
     expect([last.findings[0]?.transaction_id, last.next_offset]).toEqual(['T20', null]);
     expect(check('.csv', `t,a\n${rows}\n`, { columns, limit: 500 }).limit).toBe(50);
     expect(first.counts_by_code).toEqual({ TOO_FEW_LEGS: 30 });
+  });
+
+  it('counts every finding but keeps the first 10,000 for its pages, so a hostile file cannot fill memory', () => {
+    // Each row has a bad debit, a bad credit and no currency: three findings a row.
+    const rows = Array.from({ length: 4000 }, (_, i) => `x${i},a,b,`).join('\n');
+    const columns = { transaction_id: 'i', debit: 'd', credit: 'c', currency: 'y' };
+    const r = check('.csv', `i,d,c,y\n${rows}\n`, { columns, offset: 9990, limit: 20 });
+    expect([r.total_findings, r.error_count, r.findings.length, r.next_offset]).toEqual([12_000, 12_000, 10, null]);
+    expect(Object.values(r.counts_by_code).reduce((a, b) => a + b, 0)).toBe(12_000);
+    expect(r.findings.at(-1)?.lines).toEqual([3335]); // the 10,000th finding: on row 3,334, line 3,335
+  });
+
+  it('refuses a JSON file of more than 7,000,000 values, or with an object of more than 10,000 keys', () => {
+    const columns = { transaction_id: 't', amount: 'a' };
+    const keys = `[{${Array.from({ length: 10_001 }, (_, i) => `"k${i}":1`).join(',')}}]`;
+    expect(errorText(() => check('.json', keys, { columns }))).toMatch(/^FILE_TOO_LARGE: The file holds an object with more than 10,000 keys; this tool reads at most that many\./);
+    expect(errorText(() => check('.json', `[${'1,'.repeat(7_000_000)}1]`, { columns }))).toMatch(/^FILE_TOO_LARGE: The file holds more than 7,000,000 JSON values; this tool reads at most that many\./);
   });
 });

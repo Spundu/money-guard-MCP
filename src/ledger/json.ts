@@ -48,12 +48,26 @@ function hexValue(code: number): number {
 }
 
 /**
- * A document with more objects and arrays than the caller allows. Each costs about 180 bytes of memory
- * for 1 or 2 bytes of text, so a 25 MiB file of nested arrays would take over 2 GiB to build.
+ * A document larger in memory than the caller allows: more objects and arrays (each costs about 180
+ * bytes of memory for 1 or 2 bytes of text, so a 25 MiB file of nested arrays would take over 2 GiB),
+ * more values of any kind (a number costs about 60 bytes for 2 bytes of text), or an object with more
+ * than MAX_OBJECT_KEYS keys (2.6 million keys took 8.5 seconds). `kind` says which.
  */
 export class JsonLimitError extends Error {
   override name = 'JsonLimitError';
+  constructor(readonly kind: 'containers' | 'values' | 'keys') {
+    super(`too many ${kind}`);
+  }
 }
+
+/** What one parse, or several sharing it (the lines of a JSONL file), may still build. */
+export interface JsonBudget {
+  containers: number;
+  values: number;
+}
+
+/** The most keys one object may have: a ledger record has a few dozen at most. */
+export const MAX_OBJECT_KEYS = 10_000;
 
 class Parser {
   #pos = 0;
@@ -61,7 +75,7 @@ class Parser {
   constructor(
     private readonly text: string,
     private readonly maxDepth: number,
-    private readonly budget: { containers: number },
+    private readonly budget: JsonBudget,
   ) {}
 
   parse(): unknown {
@@ -90,12 +104,14 @@ class Parser {
   }
 
   #value(depth: number): unknown {
+    this.budget.values -= 1;
+    if (this.budget.values < 0) throw new JsonLimitError('values');
     const c = this.text.charCodeAt(this.#pos);
     if (c === QUOTE) return this.#string();
     if (c === 123 /* { */ || c === 91 /* [ */) {
       if (depth >= this.maxDepth) this.#fail(`nesting deeper than ${this.maxDepth}`);
       this.budget.containers -= 1;
-      if (this.budget.containers < 0) throw new JsonLimitError('too many objects and arrays');
+      if (this.budget.containers < 0) throw new JsonLimitError('containers');
       return c === 123 ? this.#object(depth) : this.#array(depth);
     }
     if (c === 116 /* t */) return this.#expectWord('true'), true;
@@ -195,7 +211,8 @@ class Parser {
       this.#pos += 1;
       return out;
     }
-    for (;;) {
+    for (let keys = 1; ; keys += 1) {
+      if (keys > MAX_OBJECT_KEYS) throw new JsonLimitError('keys');
       this.#skipWhitespace();
       if (this.text.charCodeAt(this.#pos) !== QUOTE) this.#fail('expected a string key');
       const key = this.#string();
@@ -217,10 +234,11 @@ class Parser {
 
 /**
  * Parse JSON text strictly (RFC 8259), numbers as JsonNumber. Throws JsonSyntaxError ("... at position
- * N"), or JsonLimitError once more objects and arrays than `budget.containers` were built; a budget
- * shared by several calls (the lines of a JSONL file) counts them all.
+ * N"), or JsonLimitError once more objects and arrays than `budget.containers`, or more values than
+ * `budget.values`, were built, or an object has more than MAX_OBJECT_KEYS keys; a budget shared by
+ * several calls (the lines of a JSONL file) counts them all.
  */
-export function parseLedgerJson(text: string, maxDepth: number, budget: { containers: number } = { containers: Infinity }): unknown {
+export function parseLedgerJson(text: string, maxDepth: number, budget: JsonBudget = { containers: Infinity, values: Infinity }): unknown {
   return new Parser(text, maxDepth, budget).parse();
 }
 

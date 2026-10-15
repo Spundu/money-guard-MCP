@@ -46,6 +46,12 @@ const MONEY = [
   'platformfee', 'servicefee', 'latefee', 'salestax', 'hourlyrate', 'creditlimit', 'totaldiscount', 'linetotal',
   'openingbalance', 'debit_in_account_currency', 'amount_in_company_currency', 'room_rate', 'overtime_rate',
   'mileage_rate', 'rate_per_hour', 'mrp', 'gst', 'order_value', 'cart_value', 'amount_in_smallest_unit',
+  // Review round 5: a folded word inside a longer name; pay; what a holding is worth; more finance words;
+  // a number at the end.
+  'totalamount_old', 'unitprice_new', 'grossamount_2', 'totalamount2', 'platformfee_old', 'amountdue_original',
+  'base_pay', 'holiday_pay', 'sick_pay', 'overtime_pay', 'take_home_pay', 'basepay', 'market_value', 'book_value',
+  'fair_value', 'face_value', 'par_value', 'line_value', 'cashback', 'copay', 'reimbursement', 'installment',
+  'instalment', 'dividends', 'royalty', 'arrears', 'overdraft_limit', 'payable', 'spending_limit', 'price2',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -72,6 +78,10 @@ const NOT_MONEY = [
   'total_area', 'revenue_share', 'minor_unit', 'minor_units', 'total_users', 'total_weeks', 'net_units', 'gross_area',
   'total_usage', 'total_power', 'rate_per_second', 'metric_value', 'setting_value', 'value', 'price_unit',
   'payment_method_currency', 'network', 'farewell', 'online', 'baseline', 'cashflow', 'creditscore', 'interestrate',
+  // Review round 5: splits and sessions; sizes and counts of rows, pages and bytes; the last digits of a
+  // card; a precision; when and how often pay comes.
+  'revenue_split', 'commission_split', 'fee_split', 'payment_sessions', 'total_bytes', 'total_pages', 'totalhits',
+  'totalrows', 'credit_card_last4', 'amount_precision', 'pay_frequency', 'pay_period', 'pay_date', 'pay_grade',
 ];
 
 describe('looksLikeMoney', () => {
@@ -92,7 +102,9 @@ describe('namesMinorUnits', () => {
   it('spots names that already hold minor units', () => {
     const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence', 'pricecents', 'amount_pennies', 'amount_paise',
       'amount_kobo', 'amount_paisa', 'amount_sats', 'amount_satoshis', 'amount_centavos', 'amount_kopecks', 'amount_wei', 'totalpennies', 'amountinpaise', 'amount_in_smallest_unit',
-      'amount_in_smallest_units'];
+      'amount_in_smallest_units',
+      // Review round 5: folded, inside a longer name or not.
+      'amountminorunits', 'pricecentsusd', 'amountinsmallestunit', 'totalcentsdue', 'amountsat', 'amountwei', 'centsamount'];
     expect(yes.map(namesMinorUnits)).toEqual(yes.map(() => true));
     const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent'];
     expect(no.map(namesMinorUnits)).toEqual(no.map(() => false));

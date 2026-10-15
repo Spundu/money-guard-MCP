@@ -55,6 +55,33 @@ describe('runScripts, one database thread at a time', () => {
   });
 });
 
+describe('runScripts, waiting for the last database thread to end', () => {
+  it('keeps its time limit and its cancel while it waits, so a thread that never ended costs a TIMEOUT, not a hang', async () => {
+    let letGo = () => {};
+    const held = new Promise<void>((resolve) => (letGo = resolve));
+    const terminate = Worker.prototype.terminate;
+    const spy = vi.spyOn(Worker.prototype, 'terminate').mockImplementation(function (this: Worker) {
+      return held.then(() => terminate.call(this));
+    });
+    try {
+      process.env.MONEY_GUARD_TEST_WORKER = 'unusable';
+      await expect(runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE })).rejects.toMatchObject({ code: 'MIGRATION_FAILED' });
+      // Its thread has not ended (held): the next lints wait, but only as long as their limits allow.
+      await expect(runScripts([script], { timeoutMs: 1000, preset: false, worker: FAKE })).rejects.toMatchObject({
+        code: 'TIMEOUT',
+        message: 'The lint ran out of time (1 s) while starting the database.',
+      });
+      const controller = new AbortController();
+      const waiting = runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE, signal: controller.signal });
+      controller.abort(new Error('cancelled while waiting'));
+      await expect(waiting).rejects.toThrow('cancelled while waiting');
+    } finally {
+      letGo();
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('the real database thread', () => {
   it('says when each file runs, has run and has been read, so the 5-second check follows every file', async () => {
     const types: string[] = [];
@@ -69,6 +96,29 @@ describe('the real database thread', () => {
       spy.mockRestore();
     }
     expect(types).toEqual(['ready', 'running', 'executed', 'snapshot', 'running', 'executed', 'snapshot', 'reading', 'done']);
+  });
+});
+
+describe('the check after each file', () => {
+  it('reads only the columns the file created or changed, so many files do not each read the whole schema', async () => {
+    const snapshots: number[] = [];
+    const spy = vi.spyOn(Worker.prototype, 'emit').mockImplementation(function (this: Worker, event: string | symbol, ...args: unknown[]) {
+      const m = args[0] as { type: string; rows?: unknown[] };
+      if (event === 'message' && m.type === 'snapshot') snapshots.push(m.rows?.length ?? -1);
+      return EventEmitter.prototype.emit.call(this, event, ...args);
+    });
+    try {
+      const scripts = [
+        { name: 'db/0001.sql', text: 'create table a (x int, y int, z int); create table b (x int, y int, z int);', phase: 'migration' as const },
+        { name: 'db/0002.sql', text: 'alter table a alter column y type bigint;', phase: 'migration' as const },
+        { name: 'db/0003.sql', text: 'create index on b (x);', phase: 'migration' as const },
+      ];
+      const outcome = await runScripts(scripts, { timeoutMs: 60_000, preset: false });
+      expect([...outcome.since.values()].sort()).toEqual([0, 0, 0, 0, 0, 1]); // y changed in the second file
+    } finally {
+      spy.mockRestore();
+    }
+    expect(snapshots).toEqual([6, 1, 0]);
   });
 });
 
