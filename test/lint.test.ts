@@ -249,6 +249,9 @@ describe('money_lint_schema: judging columns', () => {
     // Review round 12: the last page says which findings these are, not to pass a next_offset that is null.
     expect(second.summary).toMatch(/ These are findings 51-60 of 60, the last\.$/);
     expect((await lint(files, { offset: 999 })).summary).toMatch(/ No findings from offset 999: there are 60\.$/);
+    expect((await lint(files, { offset: 59 })).summary).toMatch(/ This is finding 60 of 60, the last\.$/); // round 13
+    const clean = await lint({ 'db/migrations/0001.sql': 'create table t (price bigint);' }, { offset: 50 });
+    expect([clean.findings_truncated, clean.summary.includes('offset')]).toEqual([false, false]); // nothing to page on a clean schema (round 13)
     expect((await lint(files, { offset: 999 })).findings).toEqual([]);
     // Review round 9: the summary says so, as the ledger's does.
     expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);

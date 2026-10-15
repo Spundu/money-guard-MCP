@@ -208,6 +208,20 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(r.notes).toEqual(['The anchor covers 3 entries, but the log ends inside entry 2: it was cut short, and entries the anchor vouched for are gone.']);
   });
 
+  it('says only the final line end is missing when that is all, not that entries are gone', () => {
+    // Review round 13: an editor that drops the last LF made the anchor note say entries were removed.
+    const FINAL = 'Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one.';
+    const r = run(bytes(FIVE.slice(0, -1)), HEAD);
+    expect(r.break?.code).toBe('TORN_LAST_LINE');
+    expect(r.notes).toEqual(['The entries the anchor covers are intact; the break comes after them.', FINAL]);
+    // An anchor that covers every entry: not "cut short".
+    const all = run(bytes(FIVE.slice(0, -1)), { count: 5, last_hash: (JSON.parse(FIVE.split('\n')[4] ?? '{}') as { entry_hash: string }).entry_hash });
+    expect(all.notes.some((n) => n.includes('cut short'))).toBe(false);
+    expect(all.notes).toContain(FINAL);
+    // A log cut inside a line still is.
+    expect(run(bytes(FIVE.slice(0, -5)), HEAD).notes).not.toContain(FINAL);
+  });
+
   it('asks to check the key setting when a seal fails at the first entry after a change of key', () => {
     // Review round 12: a log that moved from k1 to k2, with k2 set wrong, read as tampered with.
     const keys = { k1: Buffer.from(KEY_HEX, 'hex'), k2: Buffer.from(OTHER_HEX, 'hex') };

@@ -107,8 +107,8 @@ export const DETAIL_SQL = `
     -- An index that reads the whole row ("WHERE t IS NOT NULL", written back as t.*) records no
     -- dependency on it, and one of expressions (lower(sku)) records one on the whole table that reads no
     -- other column: so the whole row is found in the text, not in pg_depend (review round 12).
-    JOIN members m ON m.rel = p.refobjid AND (m.attnum = p.refobjsubid OR pg_catalog.strpos(pg_catalog.concat_ws(' ',
-      pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid)), '.*') > 0)
+    JOIN members m ON m.rel = p.refobjid AND (m.attnum = p.refobjsubid OR pg_catalog.strpos(pg_catalog.regexp_replace(pg_catalog.concat_ws(' ',
+      pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid)), '''([^'']|'''')*''', '', 'g'), '.*') > 0) -- not inside a string literal (round 13)
     WHERE (i.indisunique OR i.indisexclusion) AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
     GROUP BY m.root, m.attname
   ),

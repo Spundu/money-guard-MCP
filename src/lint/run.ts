@@ -27,8 +27,9 @@ const NOT_ALL_LISTED = ' Not every finding is listed (findings_truncated): pass 
  */
 function pageNote(offset: number, shown: number, total: number, next: number | null): string {
   if (next !== null) return NOT_ALL_LISTED;
-  if (offset === 0) return '';
+  if (offset === 0 || total === 0) return '';
   const n = (x: number) => x.toLocaleString('en-GB');
+  if (shown === 1) return ` This is finding ${n(offset + 1)} of ${n(total)}, the last.`;
   return shown > 0 ? ` These are findings ${n(offset + 1)}-${n(offset + shown)} of ${n(total)}, the last.` : ` No findings from offset ${n(offset)}: there are ${n(total)}.`;
 }
 /** Longest column type a finding shows: a schema-qualified domain and its base type fit. */
@@ -218,7 +219,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     warning_count: warnings,
     ignored_count: ignoredCount,
     findings: page,
-    findings_truncated: offset > 0 || findings.length > offset + page.length,
+    findings_truncated: findings.length > 0 && (offset > 0 || findings.length > offset + page.length), // none to cut on a clean schema (round 13)
     next_offset: findings.length > offset + page.length ? offset + page.length : null,
     other_float_columns: otherFloats.slice(0, MAX_LISTED),
     other_float_columns_count: otherFloats.length,

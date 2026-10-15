@@ -127,20 +127,6 @@ export function clip(text: string, max: number = ECHO_MAX, inQuotes = false): st
 }
 
 /**
- * Raw `text` cut to at most `max` characters, `…` marking a cut, and not escaped: for a value that
- * becomes part of a longer text, which `clip` then makes safe as a whole. Clipping text twice would
- * escape it twice.
- */
-export function cut(text: string, max: number = ECHO_MAX): string {
-  const chars: string[] = [];
-  for (const char of text) {
-    chars.push(char);
-    if (chars.length > max) return chars.slice(0, max - 1).join('') + ELLIPSIS;
-  }
-  return text;
-}
-
-/**
  * A path inside the project, made safe to show: escaped and, past `max` characters, cut in the middle
  * with `…`, so it keeps its first folders and its file name. An escape is never split. A path can be
  * far longer than any name (folders nest), so this keeps one finding or one error within bounds.

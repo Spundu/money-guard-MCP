@@ -54,6 +54,9 @@ describe('failure', () => {
     expect(fix(dump, { message: 'syntax error at or near "1"', code: '42601', position: String(dump.indexOf('\n1\n') + 2) })).toMatch(/^The file holds table data after COPY \.\.\. FROM stdin \(a pg_dump with data\)/);
     expect(fix('alter type s add value \'b\';', { message: 'unsafe use of new value "b" of enum type s', code: '55P04' })).toMatch(/a new enum value cannot be used in the transaction that adds it/);
     expect(fix('select 1;', { message: 'out of memory', code: '53200' })).toMatch(/^The file needs more than the lint database can give it/);
+    // Review round 13: the platform hint for an object that does not exist; any other refusal is the SQL's.
+    expect(fix('select x;', { message: 'column "x" does not exist', code: '42703', position: '8' })).toMatch(/probably needs objects your platform creates: pass setup or preset\. Otherwise fix the SQL at that place\.$/);
+    expect(fix('create unique index i on t (f(x));', { message: 'functions in index expression must be marked IMMUTABLE', code: '42P17' })).toBe('PostgreSQL refused this statement: fix the SQL.');
     expect(fix('select 1;', { message: 'stack depth limit exceeded', code: '54001' })).toMatch(/^The file needs more than the lint database can give it/);
     expect(fix('create extension pg_net;', { message: 'extension "pg_net" is not available', code: '0A000' })).toMatch(/It has: citext, pgcrypto\. .* lint the migrations folder instead \(supabase\/migrations for Supabase\)\.$/);
     expect(fix('select x;', { message: 'column "x" does not exist', code: '42703' })).toMatch(/^If this file runs on your real database/);
@@ -76,7 +79,8 @@ describe('failure', () => {
       expect(e.fix, err.message).toMatch(/setup file/);
       expect(e.fix, err.message).not.toMatch(/with files|ran out of order|pass setup/);
     }
-    expect(setup('select x;', { message: 'column "x" does not exist', code: '42703' }).fix).toBe('Fix the setup file at that place.');
+    expect(setup('select x;', { message: 'column "x" does not exist', code: '42703' }).fix).toBe('Fix the setup file.'); // no place given (round 13)
+    expect(setup('select x;', { message: 'column "x" does not exist', code: '42703', position: '8' }).fix).toBe('Fix the setup file at that place.');
   });
 
   it('never says to use files when migrations is one file, which files cannot pick from', () => {

@@ -5,7 +5,7 @@
 An [MCP](https://modelcontextprotocol.io) server that lets an AI coding agent (Claude Code, or any MCP
 client) check how a project handles money. It finds money stored as floats in SQL migrations, ledger
 exports whose transactions do not balance, and audit logs that were edited after they were sealed.
-Each answer names the exact file, column or line, and how to fix it.
+Each answer names the exact file, column or line, and, for a schema finding, how to fix it.
 
 It only reads files. It never edits anything, never connects to a database and never uses the
 network.
@@ -343,7 +343,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
   cut to 40 characters (a few longer texts, such as a Postgres error, have their own limits: SPEC.md
   §2.4). Paging through findings can still show one column of every row, 40 characters each, so a
-  secrets file the name list misses is not safe from the ledger tool. Table and column names stay whole, so the agent can act on them; a path over
+  secrets file the name list misses is not safe from the ledger tool. Table and column names stay
+  whole, so the agent can act on them; a path over
   400 characters is cut in the middle. Characters that can hide text are escaped in money-guard's
   results and errors, by Unicode category: control characters, the zero-width and direction
   characters of the "Trojan Source" trick, and the invisible TAG characters that can spell out
@@ -410,7 +411,7 @@ Development needs Node.js 22.13 or newer (ESLint 10 does); the server itself run
 
 ```sh
 npm ci && npm run typecheck && npm run lint && npm test
-bash scripts/inspector-smoke.sh   # the MCP Inspector, in both protocol eras (it needs Node.js 22.19+)
+bash scripts/inspector-smoke.sh   # the MCP Inspector, in both protocol eras (Node.js 22.19+; Git Bash on Windows)
 ```
 
 [CLAUDE.md](CLAUDE.md) has the rules for changing the code. [SPEC.md](SPEC.md) is the contract: a

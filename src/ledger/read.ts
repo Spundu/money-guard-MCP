@@ -119,14 +119,10 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   // The one that occurs most in the header, read as one column, is the likeliest delimiter.
   const count = (d: string) => (header[0] ?? '').split(d).length - 1;
   const other = header.length === 1 ? DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0] : undefined;
-  // Excel writes "sep=;" as a first line in some locales, before the header (review round 12).
-  const sep = /^sep=(.?)$/i.exec(header.join(delimiter).trim());
   throw new ToolError(
     'COLUMN_NOT_FOUND',
     `The CSV header has no column ${quoted(name)} (mapped as ${field}).${hint} The columns are: ${shown.join(', ')}${more}.`,
-    sep !== null
-      ? 'The first line is Excel\'s "sep=" line, not the header: delete that line, then call again.'
-      : other === undefined
+    other === undefined
       ? 'Map each field to one of the column names in the header.'
       : `The file looks separated by ${showDelimiter(other)}, not ${showDelimiter(delimiter)}: pass delimiter ${JSON.stringify(other)}.`,
   );
@@ -141,7 +137,13 @@ const CSV_PROBLEMS: Readonly<Record<string, string>> = {
   CSV_MAX_RECORD_SIZE: 'a row holds more than 1 MiB of values',
 };
 
-function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledger {
+function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
+  // Excel writes "sep=;" as a first line in some locales: it names the delimiter and is not the header
+  // (review round 13). It is skipped, and its delimiter used; lines are still counted from the file's first.
+  const sepLine = /^(?:\uFEFF)?sep=([,;\t|])\r?\n/i.exec(new TextDecoder().decode(bytes.subarray(0, 16)));
+  const delimiter = sepLine?.[1] ?? given;
+  const sepEnd = sepLine === null ? 0 : Buffer.byteLength(sepLine[0]);
+  const lineStarts = (list: readonly number[]) => (sepEnd === 0 ? startLines(bytes, list) : startLines(bytes, [sepEnd, ...list]).slice(1));
   const wide = rowWithTooManyFields(bytes, delimiter);
   if (wide !== null) {
     throw new ToolError('PARSE_ERROR', `Line ${wide}: a row holds more than ${MAX_FIELDS.toLocaleString('en-GB')} fields.`, 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.');
@@ -158,7 +160,8 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledg
       max_record_size: MAX_ROW_CHARS,
       skip_empty_lines: true,
       trim: true,
-      to: MAX_ROWS + 2, // the header, the limit, and one more to detect "too many"
+      to: MAX_ROWS + 2 + (sepEnd === 0 ? 0 : 1), // the header, the limit, and one more to detect "too many"
+      from_line: sepEnd === 0 ? 1 : 2,
       on_record: (record: string[], context: { bytes: number }) => {
         ends.push(context.bytes);
         return record;
@@ -166,7 +169,7 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledg
     }) as string[][];
   } catch (err) {
     if (!(err instanceof CsvError)) throw err;
-    const line = startLines(bytes, [...ends, bytes.length]).at(-1) ?? 1;
+    const line = lineStarts([...ends, bytes.length]).at(-1) ?? 1;
     const problem = CSV_PROBLEMS[err.code] ?? 'the CSV structure is broken';
     throw new ToolError('PARSE_ERROR', `Line ${line}: ${problem}.`, 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.');
   }
@@ -174,7 +177,7 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledg
   if (header === undefined) return { rows: [], names: [] };
   if (data.length > MAX_ROWS) throw tooManyRows();
   const indexes = mappedEntries(columns).map(([field, name]) => [field, findColumn(header, field, name, delimiter)] as const);
-  const lines = startLines(bytes, ends);
+  const lines = lineStarts(ends);
   const rows = data.map((record, seq) => {
     const values: Partial<Record<MappedField, unknown>> = {};
     for (const [field, index] of indexes) values[field] = record[index];
@@ -279,7 +282,7 @@ function dottedPointer(name: string, record: Record<string, unknown>): string | 
   if (parts.length < 2) return undefined;
   let value: unknown = record;
   for (const part of parts) {
-    if (!isRecord(value) || !(part in value)) return undefined;
+    if (!isRecord(value) || !Object.hasOwn(value, part)) return undefined; // its own fields, not "constructor" (round 13)
     value = value[part];
   }
   return `/${parts.map((p) => p.replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`;

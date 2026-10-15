@@ -64,6 +64,7 @@ export function failure(script: Script, err: DbError, context: { available: read
   const position = err.position === undefined ? Number.NaN : Number(err.position);
   const at = Number.isInteger(position) && position > 0 ? locate(script.text, position) : null;
   const where = at === null ? script.name : `${script.name} line ${at.line}, column ${at.column}`;
+  const there = at === null ? '' : ' at that place'; // only where PostgreSQL gave a place
   // A migration writes these (RAISE EXCEPTION takes any text): in quotes, so they cannot close them
   // and add a "Fix:" of their own (review round 10).
   const detail = err.detail ? ` (${quoted(err.detail, 120)})` : '';
@@ -126,11 +127,14 @@ export function failure(script: Script, err: DbError, context: { available: read
   } else if (err.code !== undefined && /^5[34]/.test(err.code)) {
     fix = tooBig(script, context.single);
   } else if (setup) {
-    fix = 'Fix the setup file at that place.';
+    fix = `Fix the setup file${there}.`;
   } else if (err.code === '42601') {
-    fix = 'Fix the SQL at that place: PostgreSQL could not read it as written.'; // setup or preset cannot help a typo
+    fix = `Fix the SQL${there}: PostgreSQL could not read it as written.`; // setup or preset cannot help a typo
+  } else if (err.code?.startsWith('42') && / does not exist$/.test(err.message)) {
+    fix = `If this file runs on your real database, it probably needs objects your platform creates: pass setup or preset. Otherwise fix the SQL${there}.`;
   } else {
-    fix = 'If this file runs on your real database, it probably needs objects your platform creates: pass setup or preset. Otherwise fix the SQL at that place.';
+    // Any other refusal fails on real PostgreSQL too (42P17: a function in an index that is not IMMUTABLE), review round 13.
+    fix = `PostgreSQL refused this statement: fix the SQL${there}.`;
   }
   return new ToolError(code, message, fix);
 }

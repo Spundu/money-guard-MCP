@@ -28,8 +28,8 @@ Rules:
   file goes through `clip`; a database name goes through `escapeUnsafe`; a path goes through `clipPath`
   (cut in the middle past 400 characters), in results and in error messages alike (src/echo.ts); one
   shown in double quotes goes through `quoted` or `quotedPath`, which escape a quote inside it. Apply
-  each once, to raw text: a second pass would double the backslash of its own escapes (a raw value
-  that goes into a longer text is `cut`, and the whole text clipped once). The server escapes hidden
+  each once, to raw text: a second pass would double the backslash of its own escapes (build a longer
+  text from pieces each made safe once, as the nets message does). The server escapes hidden
   characters in every outgoing string once more (`escapeHidden`), but the tools must not rely on it.
 - SQL that money-guard writes (`fix_sql`) is built in TypeScript from catalog names, never by SQL
   functions in the lint database: the migrations control that database.

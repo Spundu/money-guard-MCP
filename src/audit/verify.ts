@@ -185,7 +185,11 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
     notes,
   });
 
-  if (!verdict.ok) return broken(bytes, verdict, anchor, notes, result);
+  // A log whose only fault is a missing final LF (an editor or a copy can drop it) keeps every entry:
+  // say so, instead of "cut short" (review round 13).
+  const onlyFinalNewline = !verdict.ok && reasonCode(verdict.reason ?? '') === 'TORN_LAST_LINE' && bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a
+    && verifyJsonl(Buffer.concat([bytes, Buffer.from('\n')]), keys.provider).ok;
+  if (!verdict.ok) return broken(bytes, verdict, anchor, notes, result, onlyFinalNewline);
 
   const count = verdict.lastSeq + 1;
   const head: Anchor = { count, last_hash: count === 0 ? GENESIS_HASH : entryHashAt(bytes, count - 1) };
@@ -204,6 +208,8 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   return result(`${intact}${tail}`, null, head, true);
 }
 
+const FINAL_NEWLINE_NOTE = 'Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one.';
+
 const KEY_SETTING_NOTE = 'A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered.';
 
 /**
@@ -211,7 +217,7 @@ const KEY_SETTING_NOTE = 'A wrong key setting gives this answer too, for an unto
  * before the break verified, so an anchor that covers only them is still checked: a replaced log must
  * not hide behind a later break that looks like an accident (a torn last line).
  */
-function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: string | null }, anchor: Anchor | undefined, notes: string[], result: MakeResult): AuditResult {
+function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: string | null }, anchor: Anchor | undefined, notes: string[], result: MakeResult, onlyFinalNewline = false): AuditResult {
   const index = verdict.brokenAt ?? 0;
   const crlf = firstCrlfLine(bytes);
   if (crlf !== null) notes.push(crlfNote(crlf));
@@ -222,13 +228,14 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
     const replaced = headMismatch(bytes, anchor, result);
     if (replaced) return replaced;
     if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
-  } else if (anchor && code === 'TORN_LAST_LINE') {
+  } else if (anchor && code === 'TORN_LAST_LINE' && !onlyFinalNewline) {
     // The anchor proves the entries before its count were once whole: a log that ends inside one of them
     // was cut short, not interrupted while writing (review round 12).
     notes.push(`The anchor covers ${entries(anchor.count)}, but the log ends inside entry ${index}: it was cut short, and entries the anchor vouched for are gone.`);
   } else if (anchor) {
     notes.push('The anchor was not checked: the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked.');
   }
+  if (onlyFinalNewline) notes.push(FINAL_NEWLINE_NOTE);
   // The library's fixed reasons are short; a canonicalization error can quote a key name from the line,
   // so the reason is cut like any other text from the file.
   const reason = clip(raw, MAX_REASON);

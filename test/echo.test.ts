@@ -1,7 +1,7 @@
 // src/echo.ts: what a result may repeat from a file (SPEC.md §2.4). Pieces are cut to a fixed length,
 // paths are cut in the middle, and every character that could hide or disguise text is escaped.
 import { describe, expect, it } from 'vitest';
-import { ECHO_MAX, PATH_MAX, clip, clipPath, cut, escapeHidden, escapeStrings, escapeUnsafe, hasUnsafe, quoted, quotedPath } from '../src/echo.js';
+import { ECHO_MAX, PATH_MAX, clip, clipPath, escapeHidden, escapeStrings, escapeUnsafe, hasUnsafe, quoted, quotedPath } from '../src/echo.js';
 import { RAW_HIDDEN, inTags } from './support/hidden.js';
 
 const width = (s: string) => [...s].length;
@@ -84,15 +84,6 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
     for (const show of [escapeUnsafe, (t: string) => clip(t), (t: string) => clipPath(t)]) {
       expect(new Set([show(real), show(fake), show(twice)]).size).toBe(3);
     }
-  });
-
-  it('cuts raw text without escaping it, for a value that becomes part of a longer text clipped as a whole', () => {
-    expect(cut('GBP')).toBe('GBP');
-    expect(cut('x'.repeat(41))).toBe(`${'x'.repeat(39)}…`);
-    expect(cut('x'.repeat(40))).toBe('x'.repeat(40)); // exactly the limit: kept whole
-    const hidden = `GBP\u{202e}`;
-    expect(cut(hidden)).toBe(hidden); // left raw: clip escapes the whole text once
-    expect(clip(`${cut(hidden)} legs net to 1`)).toBe(`${escapeUnsafe(hidden)} legs net to 1`);
   });
 
   it('escapes private-use characters, code points with no character, and four characters drawn blank', () => {

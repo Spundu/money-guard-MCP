@@ -140,6 +140,7 @@ describe('money_lint_schema: fix_sql', () => {
       '(scale((price)::numeric) = 2)', '(scale(total) = 1)',
       // review round 9: a cast of the column to a bounded type is a cap; a guard of fewer than two places
       // stops guarding once the column holds pence
+      '((price)::small_amt IS NOT NULL)', '((price)::public.small_amt IS NOT NULL)', // round 13: a domain can cap
       '((amount)::numeric(5,2) = amount)', '((amount)::smallint IS NOT NULL)', '(price = ((price)::bigint)::double precision)', '(fee = (fee)::int8)', '((amount)::integer = amount)', '(amount::int4 > 0)',
       '(amount = round(amount, 0))', '(amount = round(amount, 1))',
       // review round 11: the amount's text against a pattern
@@ -230,8 +231,9 @@ describe('money_lint_schema: fix_sql', () => {
 
   it('offers fix_sql beside a unique index of another column\'s expression, and withholds it beside one of the whole row', async () => {
     // Review round 12: lower(sku) also depends on the whole table, which round 11 read as the whole row.
-    const r = await lint({ 'db/migrations/0001.sql': 'create table products (id int, sku text, price double precision);\ncreate unique index products_sku on products (lower(sku));\ncreate table rows_hashed (id int, price double precision);\ncreate unique index rows_whole on rows_hashed (id) where rows_hashed is not null;' });
-    expect(r.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.products', false], ['public.rows_hashed', true]]);
+    const r = await lint({ 'db/migrations/0001.sql': 'create table products (id int, sku text, price double precision);\ncreate unique index products_sku on products (lower(sku));\ncreate table rows_hashed (id int, price double precision);\ncreate unique index rows_whole on rows_hashed (id) where rows_hashed is not null;\ncreate table skus (sku text, price double precision);\ncreate unique index skus_a on skus (sku) where sku ~ \'^A.*\';' });
+    // Review round 13: ".*" inside a string literal is not the whole row.
+    expect(r.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.products', false], ['public.rows_hashed', true], ['public.skus', false]]);
   });
 
   it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {

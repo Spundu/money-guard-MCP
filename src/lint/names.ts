@@ -56,7 +56,7 @@ const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   // identifiers and labels
   'id', 'ids', 'uuid', 'key', 'ref', 'code', 'currency', 'ccy', 'type', 'kind', 'status', 'state', 'method',
   'mode', 'reason', 'note', 'notes', 'description', 'desc', 'label', 'name', 'title', 'text', 'url', 'hash',
-  'flag', 'enabled', 'version', 'address', 'carrier', 'class', 'intent', 'transaction', 'transactions',
+  'flag', 'enabled', 'version', 'address', 'carrier', 'class', 'intent', 'transaction', 'transactions', 'subnet', 'subnets',
   // dates and times
   'date', 'at', 'on', 'time', 'ts', 'timestamp', 'year', 'years', 'month', 'months', 'week', 'weeks', 'day',
   'days', 'night', 'nights', 'hour', 'hours', 'minutes', 'seconds', 'ms',

@@ -359,10 +359,15 @@ describe('isSensitive', () => {
       'app_secrets.json', 'prod-secrets.json', 'client-secrets.json', 'access_token.json', 'auth_token.json', 'github-token.json',
       'credential.json', 'creds.csv', 'privatekey.json', 'secretkey.json', 'id_token.json', 'refresh-token.json', 'bearer_token.csv',
       // review round 12: password-manager and wallet exports, Azure's and Docker's local secrets
-      'logins.csv', 'bitwarden_export_20240101.json', 'lastpass_export.csv', 'keystore.json', 'wallet.json', 'local.settings.json', 'home/.docker/config.json']) {
+      'logins.csv', 'bitwarden_export_20240101.json', 'lastpass_export.csv', 'keystore.json', 'local.settings.json', 'home/.docker/config.json',
+      // review round 13: every type the ledger tool reads
+      'credentials.tsv', 'app_secrets.jsonl', 'access_token.ndjson']) {
       expect(isSensitive(p), p).toBe(true);
     }
-    for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv',
+    for (const p of [
+      // review round 13: wallets and logins name ledgers too
+      'wallet_transactions.csv', 'wallet.csv', 'wallet-2024-10.csv', 'customer_wallet_entries.json', 'customer_logins_revenue.csv', 'wallet_ledger.jsonl',
+      'ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv',
       // credential words in a migration or a folder name: not a credential download
       'db/migrations/0002_create_access_keys.sql', 'db/migrations/0003_client_secrets.sql', 'db/migrations/20240202_add_service_accounts', 'credentials',
       // an export stamped with a date and time, and words that only contain "token"

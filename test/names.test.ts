@@ -126,7 +126,7 @@ const NOT_MONEY = [
   'net_torque', 'total_heat', 'net_flux', 'total_runtime', 'total_uptime', 'total_xp', 'total_damage', 'total_mins',
   'total_hrs', 'total_kw', 'total_mb', 'total_gb', 'total_bmi', 'total_goals', 'total_wins', 'total_players',
   // Review round 9 (tests): "totals" as well as "total"; folded names with a money word inside, not at an end.
-  'charge_current', 'charge_voltage', 'total_watts', 'weight_totals', 'hours_totals', 'points_totals', 'fee_count_totals', 'refund_count_totals', 'fee_count_total', 'cash_count_total', 'shipping_weight_total', 'days_total', 'nights_total', 'years_total', 'underpricedpct', 'nonrefundable', 'isrefundable', 'prepaidbalancecheck',
+  'subnet', 'subnets', 'subnet_id', 'charge_current', 'charge_voltage', 'total_watts', 'weight_totals', 'hours_totals', 'points_totals', 'fee_count_totals', 'refund_count_totals', 'fee_count_total', 'cash_count_total', 'shipping_weight_total', 'days_total', 'nights_total', 'years_total', 'underpricedpct', 'nonrefundable', 'isrefundable', 'prepaidbalancecheck',
 ];
 
 describe('looksLikeMoney', () => {

@@ -43,7 +43,7 @@ export function holdsNoAmount(expr: string): boolean {
   // PostgreSQL writes every pattern back with ~: LIKE as ~~, ILIKE as ~~*, SIMILAR TO as ~ similar_to_escape().
   if (expr.includes('~')) return false;
   // The whole row ("t.* IS NOT NULL") holds the amount too (review round 12).
-  if (expr.includes('.*')) return false;
+  if (expr.replace(/'(?:[^']|'')*'/g, '').includes('.*')) return false; // not inside a string literal (round 13)
   const rest = expr
     // A quoted name, or a string literal, read left to right, so a quote inside one cannot start the
     // other. A literal that holds digits ('1000.00'::numeric, a date) keeps them: it may be an amount.
@@ -60,6 +60,9 @@ export function holdsNoAmount(expr: string): boolean {
 
 /** Longest CHECK or index expression `holdsNoAmount` reads; a real one is a few dozen characters. */
 const MAX_EXPR_CHARS = 2000;
+
+/** Types a cast of the column to cannot cap or guard it: no size, no CHECK of their own. */
+const HARMLESS_TYPE = /(?:numeric|double precision|real|text|money|bigint|integer|smallint|int8|int4|int2|character varying|bpchar|varchar|character|char|bit varying|varbit|bit|decimal|float4|float8)(?![\w$])/y;
 
 /** A cast type that bounds the value: a size (numeric(5,2), varchar(5): a text of fixed length) or a small integer type. */
 const BOUNDED_TYPE = /(?:numeric|decimal|character varying|varchar|character|char|bpchar|bit varying|varbit|bit)\(\d|(?:smallint|integer|int|int2|int4|bigint|int8)\b/y;
@@ -87,6 +90,14 @@ function castsToBoundedType(expr: string): boolean {
       while (start > 0 && /[\w.$"']/.test(expr[start - 1] ?? '')) start -= 1;
     }
     if (!/^\(?'?-?[\d.]*'?\)?$/.test(expr.slice(start, at))) return true;
+  }
+  // A cast of the column to a type not known to be harmless: a domain can carry a CHECK of its own (a
+  // domain "small_amt" with value < 1000 caps the amount), review round 13.
+  for (let at = expr.indexOf('::'); at >= 0; at = expr.indexOf('::', at + 2)) {
+    if (expr[at - 1] !== ')' && !/[\w$"]/.test(expr[at - 1] ?? '')) continue;
+    if (/['\d]$/.test(expr.slice(0, at)) || /\('[^']*'\)$|\(-?[\d.]+\)$/.test(expr.slice(Math.max(0, at - 60), at))) continue; // a literal
+    HARMLESS_TYPE.lastIndex = at + 2;
+    if (!HARMLESS_TYPE.test(expr)) return true;
   }
   return false;
 }

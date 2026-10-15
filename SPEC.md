@@ -140,7 +140,8 @@ Every path argument:
    - `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.keystore`
    - `id_rsa*`, `id_ed25519*`
    - `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`
-   - cloud credential downloads, which are `.csv` and `.json` files: names holding `credentials`
+   - cloud credential downloads, which are `.csv`, `.tsv`, `.json`, `.jsonl` and `.ndjson` files (every
+     type the ledger tool reads): names holding `credentials`
      (`credentials.csv`, AWS's `alice_credentials.csv`, `application_default_credentials.json`),
      `accesskeys`, `access_keys`, `rootkey`, `client_secret`, `service-account`, `serviceaccount`
      or `adminsdk` (AWS access-key downloads, Google OAuth, service-account and Firebase keys); names
@@ -149,8 +150,9 @@ Every path argument:
      `oauth_token` (`api_keys.json`, `aws_access_key.csv`, `passwords.csv`); `credential`, `creds`, and as
      words anywhere in the name `secret(s)`, `private_key`, `secret_key` and `access_token`, `auth_token`,
      `api_token`, `github_token`, `bearer_token`, `refresh_token`, `id_token` (`app_secrets.json`,
-     `access_token.json`); password-manager and wallet exports: `logins`, `keystore`, `wallet`, `bitwarden`,
-     `lastpass`, `1password`, `keepass`, `dashlane` as words (`logins.csv`, `bitwarden_export.json`);
+     `access_token.json`); password-manager exports: `bitwarden`, `lastpass`, `1password`, `keepass`,
+     `dashlane` as words (`bitwarden_export.json`), and `logins.csv`, `logins.json` and `keystore.json` as
+     names (a wallet's or a login's ledger, `wallet_transactions.csv`, is not refused);
      `local.settings.json` (Azure Functions) and `.docker/config.json`; `accesstokens` (`accessTokens.json`);
      `token.json`, `tokens.json` and `auth.json`; `key.json` and names ending `-key.json`, `_key.json`
      or `.key.json` (`sa-key.json`); and a Google Cloud key as
@@ -245,8 +247,8 @@ already read the files).
   first, so a program can read it.
 - **Protocol errors:** only for unknown tools and malformed requests (the SDK sends these).
 - **Arguments that break the input schema** come back from the SDK as an `isError` result ("Input
-  validation error: ...") before our handler runs. Every input object is strict (unknown keys are
-  refused), so a misspelt parameter name is reported instead of silently ignored. That text comes from
+  validation error: ...", or in other words of its own, as for more than 2,500 elements) before our
+  handler runs. Every input object is strict (unknown keys are refused; the SDK drops a `__proto__` key), so a misspelt parameter name is reported instead of silently ignored. That text comes from
   the SDK, does not start with a money-guard code, and is not held to the size budget of §2.4.
 
 Shared error codes:
@@ -437,8 +439,8 @@ never converged: verify by executing, not by parsing.
    - tables created by extensions
 
    The read gathers each column's defaults, CHECK constraints and unique-index conditions once per
-   table and column name, so its cost grows with the size of the schema (a 1,000-table schema reads in
-   about a second). The worker says first that it is reading: a time limit or the memory limit hit
+   table and column name, so its cost grows with the size of the schema (a 400-table schema reads in about
+   0.3 s on the test machine, under the test's 4 s ceiling). The worker says first that it is reading: a time limit or the memory limit hit
    there says so, not that the last file was running, and a read that fails (after a migration
    replaced one of PostgreSQL's own functions that it uses, say), or that returns a value of the wrong
    kind (such a function returning NULL: every row is checked on the main thread), is
@@ -589,7 +591,7 @@ The word lists:
 - **Non-money last words:**
   - identifiers and labels: id, ids, uuid, key, ref, code, currency, ccy, type, kind, status, state,
     method, mode, reason, note, notes, description, desc, label, name, title, text, url, hash, flag,
-    enabled, version, address, carrier, class, intent, transaction, transactions
+    enabled, version, address, carrier, class, intent, transaction, transactions, subnet, subnets
   - dates and times: date, at, on, time, ts, timestamp, year, years, month, months, week, weeks, day,
     days, night, nights, hour, hours, minutes, seconds, ms
   - counts: count, number, num, qty, quantity, attempts, retries, unit, units, rooms, seats, shares,
@@ -632,8 +634,9 @@ The word lists:
   `costcenter`, `gross_margin`, `credit_score`, `fee_per_txn_bps`, `payment_intent`, `totalqty`,
   `total_nights`, `revenue_share`, `minor_unit`, `rate_per_second`.
 
-The lists are tested against a table of about 500 column names, most of them real (Stripe, Shopify,
-Supabase templates, ledgers, payroll and the author's own apps), with look-alikes the rule must not
+The lists are tested against a table of about 500 column names: real ones (Stripe, Shopify, Supabase
+templates, ledgers, payroll and the author's own apps), edge cases written to pin each rule (`total_2`,
+`costmicros_old`), and look-alikes the rule must not
 take for money (coffee, syntax, discharge), in `test/names.test.ts`. A name rule cannot know every
 schema: a real money column it misses that is a float still shows in `other_float_columns`, which every
 summary mentions. Names it gets wrong can be added with `money_columns` or left out with
@@ -784,6 +787,10 @@ The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42601** (syntax error) on a line starting with `\`: "psql meta-command"; after a
   `COPY ... FROM stdin;` line: "a pg_dump with data; lint a schema-only dump"; otherwise "Fix the SQL
   at that place: PostgreSQL could not read it as written" (setup or a preset cannot help a typo).
+- **Any other error:** an object that does not exist (42xxx) gets "it probably needs objects your
+  platform creates: pass setup or preset"; anything else (42P17, a function in an index that is not
+  IMMUTABLE) "PostgreSQL refused this statement: fix the SQL". "At that place" only when PostgreSQL
+  gave a position.
 - **25001** (a statement that cannot run beside others in one script, such as `CREATE INDEX
   CONCURRENTLY` or `VACUUM`): lint a copy of the folder in which it sits in a file of its own (alone in
   its file, it runs); the project's own migrations need not change.
@@ -952,6 +959,9 @@ Those functions throw at the first problem. This tool returns **every** problem.
   `BAD_ROW` finding.
 - **JSONL:** one JSON object per line. Blank lines are skipped. A line that is not a JSON object is a
   `BAD_ROW` finding, and the check goes on.
+- **Excel's `sep=` line:** a CSV whose first line is `sep=;` (as Excel writes in some locales) is read
+  with that delimiter, whatever `delimiter` says, and the line is not the header; lines still count from
+  the file's first.
 - **JSON parsing:** money-guard's own strict RFC 8259 parser (`src/ledger/json.ts`, adapted from
   sealed-audit-chain's; depth ≤ 100), **never `JSON.parse`**: V8 12.9 and later misparse escaped
   one-character keys, a bug the author found while building sealed-audit-chain. It keeps every
@@ -963,7 +973,8 @@ Those functions throw at the first problem. This tool returns **every** problem.
   those rows.
 - **Transaction ids** are compared exactly. A JSON number id is its exact value as text: `1e3` is
   `1000`, and 1234567890123456789 stays itself. So the number `7` and the string `"7"` are one id,
-  as they are in most exports that write ids either way.
+  as they are in most exports that write ids either way. (The number `-0` is `0`, but the string `"-0"`
+  stays itself: text is compared as written.)
 - **Currency** is trimmed and upper-cased.
 - **Locations:** CSV and JSONL findings give **line numbers**: 1-based, the header is line 1, and a
   multi-line CSV record is reported at the line where it starts. JSON findings give **JSON Pointers**
@@ -1204,7 +1215,7 @@ mapped.
 | `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. When the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. When only the final LF is missing (with it, every entry verifies): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |
@@ -1313,7 +1324,7 @@ The tests are in `test/` (Vitest, about 960); each file starts with a comment sa
   and broken at the entry right after it, honestly or after a replacement); and a scan of the library's code that fails if it can
   return a reason this server does not map.
 - **Every error code** and every finding code is produced by a test. **Names:** about 500 column names,
-  most of them real, with the expected answer.
+  real ones and edge cases written for each rule, with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (and, through such a link,
   the same answer whether the path behind it exists or not) (the file-link cases skip
   on Windows without Developer Mode, and the test run says so); secret files, also behind a link in a
