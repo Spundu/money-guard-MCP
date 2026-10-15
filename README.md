@@ -352,7 +352,7 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
 
 ## How it is tested
 
-- `npm test` runs about 550 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 650 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.
@@ -399,14 +399,17 @@ of [integer-pence-ledger](https://github.com/Spundu/integer-pence-ledger) and th
 Before publishing, it went through rounds of review by AI agents: Claude, each in a fresh session that
 saw only the code and the docs, each with one lens (security, the checkers' correctness, MCP and
 agent use, tests and CI, and the docs as a hiring manager would read them). Round 1 found about 45
-problems, round 2 about 50 and round 3 about 40, among them hidden characters reaching the model, a
-`fix_sql` that broke column defaults, a server that spun when its host closed stderr, and migrations
-that a security fix had quietly skipped. Every finding was reproduced before it was fixed (one that
-could not be was answered instead), and fixes came with tests shown to fail without them. The tests
-reviewer also plants bugs to test the tests: in round 3, 29 of 115 went uncaught; tests now catch
-each of them that changes an answer (one changes nothing, and two are caught where the tests run on
-Linux). The rounds go on until one finds no high-severity problem. It has had no independent human
-review yet.
+problems, round 2 about 50, round 3 about 40 and round 4 about 50, among them hidden characters
+reaching the model, a `fix_sql` that broke column defaults, a server that spun when its host closed
+stderr, migrations that a security fix had quietly skipped, a catalog query that grew with the square
+of the schema, and a Node.js 24 crash that two overlapping database threads can set off. Every finding
+was reproduced before it was fixed, with two exceptions: one that could not be was answered instead,
+and that crash, which the reviewer saw twice but this machine never did, was matched to its upstream
+bug report. Fixes came with tests shown to fail without them. The tests reviewer also plants bugs to
+test the tests: 29 of 115 went uncaught in round 3, and 40 of 121 in round 4; tests now catch each of
+them that changes an answer (two change nothing a test can see, and 10 are caught only where the tests
+run on Linux). The rounds go on until one finds no high-severity problem. It has had no independent
+human review yet.
 
 ## License
 
