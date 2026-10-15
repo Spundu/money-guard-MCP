@@ -173,7 +173,7 @@ export interface LintFinding {
 /** One plain explanation per code (SPEC.md §3.10), returned once for each code present. */
 export const FIXES: Readonly<Record<LintCode, string>> = {
   FLOAT_MONEY:
-    'real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.',
+    'real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor units, or a currency without them such as jpy), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.',
   MONEY_TYPE:
     "Postgres's money type depends on the lc_monetary setting, has a fixed number of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the currency in its own column. Constraints and defaults that use the money type must change in the same migration. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.",
   NUMERIC_MONEY:
@@ -183,7 +183,7 @@ export const FIXES: Readonly<Record<LintCode, string>> = {
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros: decide the unit first), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -272,7 +272,7 @@ export function quoteIdent(name: string, reserved: ReadonlySet<string>): string 
  * domain (change the domain), an array, a generated column (change its expression), a numeric column
  * finer than a minor unit (choose the unit first), or a name holding a control or invisible character
  * (results show such names escaped, and SQL built from the escaped text would name a different column).
- * The conversion follows the name: amounts already in minor units (pence, cents, minor) are only
+ * The conversion follows the name: amounts already in minor units (pence, cents, minor units, yen) are only
  * rounded; anything else is taken to be in pounds or dollars and multiplied by 100. A conversion that
  * multiplies is null too while the column's default, a CHECK constraint or a unique index's condition
  * may hold an amount: ALTER COLUMN ... TYPE converts the stored rows with USING but leaves those in the

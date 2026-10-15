@@ -251,6 +251,8 @@ describe('money_check_double_entry: arguments', () => {
     expect(Object.values(r.counts_by_code).reduce((a, b) => a + b, 0)).toBe(12_000);
     expect(r.findings.at(-1)?.lines).toEqual([3335]); // the 10,000th finding: on row 3,334, line 3,335
     expect(r.summary).toMatch(/ Only the first 10,000 findings can be paged; the counts cover all 12,000\.$/);
+    // Review round 7: every count in a summary is written the same way.
+    expect(r.summary).toMatch(/^Not balanced: 12,000 errors\. 4,000 transactions: 0 balanced, 4,000 not checked/);
   });
 
   it('keeps the first findings in order even when an early transaction is judged after 10,000 later row findings', () => {

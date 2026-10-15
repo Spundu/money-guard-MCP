@@ -8,6 +8,7 @@ import { verifyAuditLog } from '../src/audit/verify.js';
 import { parseAuditKeys } from '../src/config.js';
 import { checkLedgerFile } from '../src/ledger/run.js';
 import { FIXES, NULL_FIX_NOTE } from '../src/lint/catalog.js';
+import { RULE_WORDS, WORD_LISTS } from '../src/lint/names.js';
 import { lintSchema } from '../src/lint/run.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from '../src/text.js';
 import type { ToolError } from '../src/errors.js';
@@ -105,5 +106,23 @@ describe('SPEC.md and the code agree', () => {
 
   it('keeps every description and the instructions under the 4,096 characters a client shows (SPEC.md §1, fact 3)', () => {
     for (const text of [INSTRUCTIONS, LINT_DESCRIPTION, LEDGER_DESCRIPTION, AUDIT_DESCRIPTION]) expect(text.length).toBeLessThan(4096);
+  });
+
+  it('on every word list of the name rule (§3.5), word for word', () => {
+    // Review round 7: words added to the code in round 6 never reached the SPEC lists.
+    const section = SPEC.slice(SPEC.indexOf('### 3.5'), SPEC.indexOf('### 3.6'));
+    const lines = section.split('\n');
+    for (const [label, words] of Object.entries(WORD_LISTS)) {
+      const first = lines.findIndex((line) => line.startsWith(`- **${label}`));
+      expect(first, label).toBeGreaterThan(-1);
+      const end = lines.findIndex((line, i) => i > first && !/^\s+\S/.test(line));
+      // Each list, or each sub-list, follows a colon outside brackets; a sentence after it is prose.
+      const parts = lines.slice(first, end).join(' ').replace(/^- \*\*[^*]+\*\*/, '').replace(/\([^)]*\)/g, '').split(/\s+-\s+/);
+      const listed = parts.flatMap((part) => (part.includes(':') ? (part.split(':')[1] ?? '') : part).split(/[.;](?:\s|$)/)[0]?.split(',') ?? []).map((w) => w.trim().replace(/^and /, '')).filter((w) => w !== '');
+      expect(listed.filter((w) => !/^[a-z0-9]+$/.test(w)), label).toEqual([]);
+      expect([...new Set(listed)].sort(), label).toEqual([...words].sort());
+    }
+    const words = new Set(section.toLowerCase().match(/[a-z0-9]+/g));
+    expect(RULE_WORDS.filter((w) => !words.has(w))).toEqual([]);
   });
 });

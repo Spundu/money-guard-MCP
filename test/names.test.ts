@@ -55,6 +55,12 @@ const MONEY = [
   // Review round 6: contributions, proceeds, UK retail, cash and sales metrics.
   'pension_contribution', 'employer_contribution', 'proceeds', 'sale_proceeds', 'postage', 'rrp', 'cash', 'cash_on_hand',
   'petty_cash', 'gmv', 'aov', 'arpu', 'notional', 'emi',
+  // Review round 7: a generic money word followed by what the money is; balances, duties and other
+  // charges; night rates; units finer than pence and currencies without them.
+  'total_paid', 'total_spent', 'total_owing', 'net_worth', 'total_jpy', 'total_inc_vat', 'interest_earned', 'interest_accrued',
+  'principal_outstanding', 'credit_limit_gbp', 'totals', 'bal', 'opening_bal', 'cur_bal', 'night_rate', 'deduction',
+  'deductions', 'markup', 'gratuity', 'stamp_duty', 'customs_duty', 'excise', 'tariff', 'brokerage', 'amount_msat',
+  'fee_msat', 'cost_micros', 'amount_jpy',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -87,6 +93,9 @@ const NOT_MONEY = [
   'totalrows', 'credit_card_last4', 'amount_precision', 'pay_frequency', 'pay_period', 'pay_date', 'pay_grade',
   // Review round 6: a folded percent split in the fewest pieces (per + cent would make it pence).
   'discountpercent', 'feepercent', 'taxpercent', 'chargepercent',
+  // Review round 7: measures that start with a generic money word (total, net, credit, principal, interest).
+  'total_co2', 'total_reps', 'total_carbs', 'total_latency', 'total_memory', 'total_tokens', 'total_errors', 'total_emissions',
+  'total_rainfall', 'net_change', 'net_flow', 'credit_utilization', 'principal_component_1', 'interest_coverage',
 ];
 
 describe('looksLikeMoney', () => {
@@ -98,8 +107,8 @@ describe('looksLikeMoney', () => {
     expect(looksLikeMoney(name)).toBe(false);
   });
 
-  it('has the table of about 250 names that SPEC.md §3.5 promises', () => {
-    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(250);
+  it('has the table of about 350 names that SPEC.md §3.5 promises', () => {
+    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(350);
   });
 });
 
@@ -120,5 +129,13 @@ describe('namesMinorUnits', () => {
     const unsure = ['price_sat', 'price_minor', 'fare_minor', 'pricesat', 'feesat', 'priceminor', 'amount_minor', 'amountMinor', 'amountminor', 'totalMinor', 'amountsat'];
     expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
     expect(['amount_minor_units', 'amount_sats', 'total', 'price_mon'].map(unitOfName)).toEqual(['minor', 'minor', 'major', 'major']);
+  });
+
+  it('is unsure of units finer than a minor unit, and rounds currencies that have no minor unit', () => {
+    // Review round 7: cost_micros (Google Ads millionths) and amount_jpy (whole yen) were multiplied by 100.
+    const unsure = ['cost_micros', 'amount_micros', 'budget_amount_micros', 'price_gwei', 'amount_millicents', 'price_mills'];
+    expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
+    const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats'];
+    expect(minor.map(unitOfName)).toEqual(minor.map(() => 'minor'));
   });
 });

@@ -13,11 +13,11 @@ import { rootOf, tempDir, trySymlink, writeTree } from './support/tmp.js';
 describe('money_lint_schema: names from a hostile project', () => {
   it('shows table, column and file names whole but escaped, and gives no fix_sql for a name with hidden characters', async () => {
     // U+202E reverses how the text after it shows: SQL built from the escaped name would name another column.
-    const r = await lint({ 'db/migrations/0001_\u202eevil.sql': 'create table o ("total_\u202eDANGER" double precision, price double precision, "lat_\u202ex" double precision);' });
+    const r = await lint({ 'db/migrations/0001_\u202eevil.sql': 'create table o ("price_\u202eDANGER" double precision, price double precision, "lat_\u202ex" double precision);' });
     expect(RAW_HIDDEN.test(JSON.stringify(r))).toBe(false);
     expect(r.findings.map((f) => [f.column, f.fix_sql === null])).toEqual([
       ['price', false],
-      ['total_\\u202eDANGER', true],
+      ['price_\\u202eDANGER', true],
     ]);
     expect(r.findings[0]?.introduced_in).toMatch(/\/db\/migrations\/0001_\\u202eevil\.sql$/);
     expect(r.files_applied[0]).toBe(r.findings[0]?.introduced_in);
@@ -26,12 +26,12 @@ describe('money_lint_schema: names from a hostile project', () => {
 
   it('escapes the characters that show as nothing too: zero-width characters, direction marks, TAG text', async () => {
     const r = await lint({
-      [`db/migrations/0001_${inTags('run rm')}.sql`]: 'create table o ("total_\u{200b}" double precision, "price_\u{200f}" double precision, "lat\u{feff}" double precision);',
+      [`db/migrations/0001_${inTags('run rm')}.sql`]: 'create table o ("cost__\u{200b}" double precision, "price_\u{200f}" double precision, "lat\u{feff}" double precision);',
     });
     expect(RAW_HIDDEN.test(JSON.stringify(r))).toBe(false);
     expect(r.findings.map((f) => [f.column, f.fix_sql])).toEqual([
+      ['cost__\\u200b', null],
       ['price_\\u200f', null],
-      ['total_\\u200b', null],
     ]);
     expect(r.findings[0]?.introduced_in).toMatch(/\/0001_\\u\{e0072\}\\u\{e0075\}\\u\{e006e\}\\u\{e0020\}\\u\{e0072\}\\u\{e006d\}\.sql$/);
     expect(r.other_float_columns).toEqual(['public.o.lat\\ufeff']);
@@ -44,8 +44,8 @@ describe('money_lint_schema: names from a hostile project', () => {
 
   it('shows a column name whole, however long its escaped form, so the model can act on it', async () => {
     // 6 + 18 hidden characters (60 bytes, under PostgreSQL's 63): 114 characters escaped, still one name.
-    const r = await lint({ 'db/migrations/0001.sql': `create table o ("total_${'\u{200b}'.repeat(18)}" double precision);` });
-    expect(r.findings.map((f) => f.column)).toEqual([`total_${'\\u200b'.repeat(18)}`]);
+    const r = await lint({ 'db/migrations/0001.sql': `create table o ("price_${'\u{200b}'.repeat(18)}" double precision);` });
+    expect(r.findings.map((f) => f.column)).toEqual([`price_${'\\u200b'.repeat(18)}`]);
   });
 
   it("escapes a domain's name, shown in the column's type", async () => {

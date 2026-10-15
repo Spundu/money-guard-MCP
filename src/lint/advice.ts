@@ -26,7 +26,7 @@ export function wayPast(script: Script, single: boolean | undefined, ways: { set
 export function tooBig(script: Script, single: boolean | undefined): string {
   const way = wayPast(script, single, {
     setup: 'Take that part out of the setup file.',
-    folder: 'Leave the file out with files, or lint the migrations in smaller groups.',
+    folder: 'Leave the file out with files, or lint one schema-only dump of the database the migrations build (pg_dump --schema-only).',
     single: 'Lint a copy without the part that needs it (a large data load, say).',
   });
   return `The file needs more than the lint database can give it (memory or a size limit). ${way}`;
@@ -107,7 +107,7 @@ export function failure(script: Script, err: DbError, context: { available: read
     const statement = /^(.+?) cannot run inside a transaction block$/.exec(err.message)?.[1] ?? 'this statement';
     fix = `money-guard runs each file as one script, where ${clip(statement, 60)} cannot run (psql, which commits statement by statement, can). ${past({ setup: 'Take it out of the setup file.', folder: 'If the file does nothing else, leave it out with files.', single: 'Lint a copy without it.' })}`;
   } else if (err.code === '0A000' && /^cannot alter type of a column used (?:by|in) /.test(err.message)) {
-    fix = 'Something else uses this column (a view, a rule, a policy, a trigger or a generated column): in the same migration, drop it before the ALTER and create it again after.';
+    fix = 'Something else uses this column (a view, a rule, a policy, a trigger, a generated column or a function with a BEGIN ATOMIC body): in the same migration, drop it before the ALTER and create it again after.';
   } else if (err.code === '55P04') {
     fix = `money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). ${past({ setup: 'Take that part out of the setup file.', folder: 'Split the file in two, or leave it out with files.', single: 'Split the file in two, put both in a folder, and lint the folder.' })}`;
   } else if (err.code === '53200' && /max_locks_per_transaction/.test(err.hint ?? '')) {

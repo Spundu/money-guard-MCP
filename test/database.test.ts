@@ -286,7 +286,7 @@ describe('runScripts with a database that misbehaves', () => {
     const many = Array.from({ length: 300 }, (_, i) => ({ name: `db/${String(i).padStart(4, '0')}.sql`, text: 'select 1;', phase: 'migration' as const }));
     await expect(runScripts(many, { timeoutMs: 2000, preset: false, worker: FAKE })).rejects.toMatchObject({
       code: 'TIMEOUT',
-      fix: expect.stringMatching(/^The folder holds 300 migration files, each run and checked in turn: lint them in smaller groups with files, or pass a larger timeout_seconds\./),
+      fix: expect.stringMatching(/^The folder holds 300 migration files, each run and checked in turn: pass a larger timeout_seconds, or lint one schema-only dump of the database they build \(pg_dump --schema-only\)\./),
     });
   });
 

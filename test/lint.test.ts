@@ -207,7 +207,7 @@ describe('money_lint_schema: judging columns', () => {
     const r = await lint({ 'db/migrations/0001.sql': 'create table t (total bigint, tax_exempt boolean, price_valid_until timestamptz, refund_ids uuid[], balance_note_total text);' });
     expect(r.summary).toBe('No problems: 1 money column in 1 table uses a safe type. 1 migration file applied. 1 money-named column of text, JSON or another type was not checked.');
     // varchar, char and an extension's text type (citext) can hold an amount too.
-    const more = await lint({ 'db/migrations/0001.sql': 'create extension citext; create table t (price_str varchar(20), amount_char char(10), total_ci citext);' });
+    const more = await lint({ 'db/migrations/0001.sql': 'create extension citext; create table t (price_str varchar(20), amount_char char(10), balance_ci citext);' });
     expect(more.summary).toBe('No money columns of a number type found in 1 table. 1 migration file applied. 3 money-named columns of text, JSON or another type were not checked.');
   });
 

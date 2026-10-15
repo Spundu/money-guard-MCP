@@ -13,7 +13,7 @@ network.
 **Status:** 0.1.0. Not on npm yet: run it from a clone (below). It speaks MCP 2026-07-28, and the 2025
 protocol versions for older clients. [SPEC.md](SPEC.md) fixes every parameter, result field, code and
 limit. Its CI has not run yet; the tests pass on Windows and Linux machines ([How it is
-tested](#how-it-is-tested)). macOS is untested, though nothing in it is specific to Windows or Linux.
+tested](#how-it-is-tested)). macOS is untested.
 
 ## What it checks
 
@@ -28,29 +28,6 @@ COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database tha
 does not. (Only to decide whether to offer `fix_sql` does it read text: the defaults, CHECK
 constraints and index conditions as PostgreSQL writes them back, with simple, cautious patterns that
 withhold the fix when in doubt.)
-
-Limits: a ledger file of 25 MiB and 1,000,000 rows, an audit log of 100 MiB, migrations of 5 MiB a
-file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
-
-## How it works
-
-- `src/index.ts` serves one MCP client on stdio; `src/server.ts` registers the three read-only tools
-  and makes every answer safe and small on the way out.
-- **Schema lint** (`src/lint/`): the migrations run one file at a time in PGlite, inside a worker
-  thread, so a stuck or runaway migration can be stopped without stopping the server. After each file
-  the worker notes the type of every column that file created or changed, and after the last it reads
-  the catalog in full; the main
-  thread judges each column (`names.ts`, `catalog.ts`) and writes `fix_sql` itself. A new lint's
-  thread starts only once the last one has ended: on Node.js 24, one that starts while another is
-  being torn down can crash the process (a V8 bug, fixed upstream).
-- **Ledger check** (`src/ledger/`): strict CSV and JSON readers keep every number as its exact text
-  (`json.ts` never uses `JSON.parse`); amounts become `BigInt` minor units, summed per transaction
-  and currency.
-- **Audit check** (`src/audit/`): sealed-audit-chain verifies the chain; money-guard names the first
-  break and why, and checks an earlier head (the anchor).
-- **Safety in one place**: every path goes through `src/paths.ts` (confined to the project), every
-  piece of text it echoes through `src/echo.ts` (escaped and cut), and every result through the budget
-  in `src/budget.ts`.
 
 ## Quick start with Claude Code
 
@@ -196,7 +173,7 @@ same JSON is also sent as text, for clients that ignore structured results. This
   "other_float_columns": [],
   "other_float_columns_count": 0,
   "fixes": {
-    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.",
+    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor units, or a currency without them such as jpy), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.",
     "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are."
   }
 }
@@ -204,16 +181,21 @@ same JSON is also sent as text, for clients that ignore structured results. This
 
 </details>
 
-`fix_sql` is a starting point. It converts pounds to pence and rounds amounts that are already in
-pence (or cents) to whole pence; the tests run each kind of conversion on stored rows. It is `null`
-where the unit needs a decision (a column with four decimal places), where a default, a CHECK
-constraint or a unique index condition may hold amounts in pounds, in the table or in a partition or
-child table (Postgres's type change would leave those unconverted, so the agent writes that migration
-by hand; a CHECK such as `amount >= 0` is fine), and in the other cases SPEC.md §3.6 lists (domains,
-arrays, generated and inherited columns, names with hidden characters). A trigger or function that
-compares the column with an amount in its body is not seen (PostgreSQL records no link to it), so
-check those before running a fix that multiplies by 100. The agent adds it as a new
-migration and runs the check again, and the check runs that migration too. [SPEC.md](SPEC.md) shows
+`fix_sql` is a starting point. It converts pounds to pence, and rounds amounts that are already in
+pence (or cents, or yen) to whole units; the tests run each kind of conversion on stored rows. The
+agent adds it as a new migration and runs the check again, and the check runs that migration too.
+
+It is `null` where the change needs a decision or the agent's own migration:
+- the unit is unclear: a column with four decimal places, or a name such as `amount_minor`,
+  `price_sat` (Saturday?) or `cost_micros`;
+- a default, a CHECK constraint or a unique index condition may hold amounts in pounds, in the table
+  or in a partition or child table: Postgres's type change would leave those unconverted (a CHECK
+  such as `amount >= 0` is fine);
+- the other cases SPEC.md §3.6 lists: domains, arrays, generated and inherited columns, and names with
+  hidden characters or a backslash before `u`.
+
+A trigger or function that compares the column with an amount in its body is not always seen, so
+check those before running a fix that multiplies by 100. [SPEC.md](SPEC.md) shows
 full results of the other two tools (§4.9, §5.8).
 
 ## Settings
@@ -235,7 +217,8 @@ To verify audit logs in Claude Code, keep the key in your environment and pass i
 named `.mcp.json` in your project's root folder, instead of the `claude mcp add` command above. If you
 ran that command, remove its entry first (`claude mcp remove money-guard`): an entry added with the
 command takes precedence over the file's. The file holds no secret, only a reference to the variable;
-its path to `dist/index.js` is the one on your machine (with forward slashes on Windows too):
+its path to `dist/index.js` is the one on your machine (with forward slashes on Windows too), so if
+the project is shared, add `.mcp.json` to `.gitignore` or let each person keep their own:
 
 ```json
 {
@@ -311,6 +294,29 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
 - It returns `ok`, the first broken entry with its line and a reason code (`CONTENT_TAMPERED`,
   `HMAC_MISMATCH`, `LINK_BROKEN` and others), and the `head` to keep for next time.
 
+Limits: a ledger file of 25 MiB and 1,000,000 rows, an audit log of 100 MiB, migrations of 5 MiB a
+file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
+
+## How it works
+
+- `src/index.ts` serves one MCP client on stdio; `src/server.ts` registers the three read-only tools
+  and makes every answer safe and small on the way out.
+- **Schema lint** (`src/lint/`): the migrations run one file at a time in PGlite, inside a worker
+  thread, so a stuck or runaway migration can be stopped without stopping the server. After each file
+  the worker notes the type of every column that file created or changed, and after the last it reads
+  the catalog in full; the main
+  thread judges each column (`names.ts`, `catalog.ts`) and writes `fix_sql` itself. A new lint's
+  thread starts only once the last one has ended: on Node.js 24, one that starts while another is
+  being torn down can crash the process (a V8 bug, fixed upstream).
+- **Ledger check** (`src/ledger/`): strict CSV and JSON readers keep every number as its exact text
+  (`json.ts` never uses `JSON.parse`); amounts become `BigInt` minor units, summed per transaction
+  and currency.
+- **Audit check** (`src/audit/`): sealed-audit-chain verifies the chain; money-guard names the first
+  break and why, and checks an earlier head (the anchor).
+- **Safety in one place**: every path goes through `src/paths.ts` (confined to the project), every
+  piece of text it echoes through `src/echo.ts` (escaped and cut), and every result through the budget
+  in `src/budget.ts`.
+
 ## Security
 
 - **stdio only.** No network listener and no network requests. No shell and no child processes.
@@ -329,8 +335,8 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
   results and errors, by Unicode category: control characters, the zero-width and direction
   characters of the "Trojan Source" trick, and the invisible TAG characters that can spell out
   instructions a person cannot see but a model reads. (A few blank-looking characters, such as wide
-  spaces, are outside those categories and pass as they are; a backslash before `u` is doubled, so
-  text cannot pass for an escape.) A result is at most 20,000 characters.
+  spaces, are outside those categories and pass as they are; every backslash is doubled, as JSON
+  shows one, so text cannot pass for an escape.) A result is at most 20,000 characters.
   SPEC.md §2.4 has the exact rules.
 - **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
   project that does not look like a secret.
@@ -361,7 +367,7 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
 
 ## How it is tested
 
-- `npm test` runs about 730 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 780 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.
@@ -378,8 +384,6 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
     stderr through Node's streams and console, as PGlite prints, is fully contained, and that test fails
     when the capture is removed. (A thread could still write to file descriptor 1 directly; PGlite
     does not.)
-  - Each test added in the review rounds was shown to fail on the code before its fix; the reviews
-    are summed up in [How this was built](#how-this-was-built).
 - Outside the suite, and in CI once it runs: the official
   [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 2.11.0 in both protocol eras
   (`--strict` finds no schema-portability problem); the packed npm tarball installed into an empty

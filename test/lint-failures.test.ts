@@ -51,6 +51,8 @@ describe('money_lint_schema: failures', () => {
     ['a table created twice', { 'db/migrations/0001.sql': 'create table t (id int);', 'db/migrations/0002.sql': 'create table t (id int);' }, '42P07', /^Something creates this object twice: .* Create it once, or with IF NOT EXISTS\.$/],
     // As money-guard's own fix_sql meets it on a table with row-level security.
     ['a policy on the column', { 'db/migrations/0001.sql': 'create table t (price double precision, owner text);\nalter table t enable row level security;\ncreate policy cheap on t using (price < 10);\nalter table t alter column price type bigint;' }, '0A000', /^Something else uses this column \(a view, a rule, a policy/],
+    // Review round 7: a SQL function with a BEGIN ATOMIC body is linked to the column it reads.
+    ['a BEGIN ATOMIC function of the column', { 'db/migrations/0001.sql': 'create table t (price double precision);\ncreate function cheap() returns bigint language sql begin atomic select count(*) from t where price < 10; end;\nalter table t alter column price type bigint;' }, '0A000', /^Something else uses this column \(.*a function with a BEGIN ATOMIC body\)/],
   ])('fits the hint to what real PostgreSQL reports: %s', async (_what, files, state, hint) => {
     const e = await failure(files);
     expect(e.message).toContain(`(SQLSTATE ${state})`);

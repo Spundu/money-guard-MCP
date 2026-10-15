@@ -193,7 +193,8 @@ already read the files).
   `BigInt`. No floating point touches an amount, anywhere.
 - **Data minimisation.** A value copied from a data file into a result (a ledger cell, a header name,
   a transaction id, a currency) is cut at 40 characters, `…` marking the cut. A few things are cut at
-  other lengths: a log entry's `writer_key_id` at 64, a library reason at 120, a finding's `message` at
+  other lengths, among them: a JSON parse error at 60, the project root's folder name, a placeholder
+  setting and a `records_pointer` at 80, a `money_columns` or `ignore_columns` entry at 80 or 120, a log entry's `writer_key_id` at 64, a library reason at 120, a finding's `message` at
   120, a Postgres error message at 300 (it can quote the migration's own text, such as a path the
   migration names) and its detail at 120 (it can quote a row's values, as a unique-key violation does),
   the reason a lint database stopped at 200, a statement's name in a hint at 60, and a CSV header read as one column is shown up to 40 characters, though that can
@@ -249,7 +250,7 @@ Shared error codes:
 | `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. |
 | `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. |
 | `FILE_TOO_LARGE` | Over the tool's size limit. | States the limit; suggests a smaller export. |
-| `FILE_UNREADABLE` | The file or folder passed the checks but cannot be read: another program has it locked (Windows), permission is denied, or it went away. | Close the program that holds it, or fix its permissions. |
+| `FILE_UNREADABLE` | The file or folder passed the checks but cannot be read: another program has it locked (Windows), permission is denied, or it went away. | Locked: close the program that holds it. Permission denied: give the user that runs the server read access. Gone: check the path. Then call again. |
 | `BUSY` | A second `money_lint_schema` while one runs (§2.6). | Retry after the running lint finishes. |
 | `INTERNAL_ERROR` | A bug. | Details are in the server's log (stderr). |
 
@@ -258,7 +259,7 @@ Shared error codes:
   `BUSY` straight away, with no hidden queue. (The MCP spec says servers MUST rate-limit tool calls.)
 - `money_check_double_entry` and `audit_verify_chain` run to the end before the server reads the next
   message, so they answer one call after another; on the largest files they allow (25 and 100 MiB)
-  that can take several seconds: about 3 for a million-row CSV ledger and 9 for a 100 MiB audit log on
+  that can take several seconds: 2 to 4 for a million-row CSV ledger and about 9 for a 100 MiB audit log on
   an ordinary machine, more on a busy one. A hostile file cannot make the ledger tool take much longer
   or fill memory: it keeps the first 10,000 findings (counting all), reads a CSV row of at most 1 MiB
   of values, and a JSON file of at most 7,000,000 values (§4.8). A lint runs in its worker meanwhile.
@@ -347,7 +348,7 @@ never converged: verify by executing, not by parsing.
 | `preset` | `"supabase"` | none | Built-in setup for Supabase projects (§3.4). |
 | `setup` | string, a `.sql` path relative to the project root | none | A file run before the migrations (after `preset`), to create what your platform provides: roles, schemas, functions. Columns it creates are not checked. If it lies in the migrations folder, it is not run again as a migration. |
 | `accept_numeric` | boolean | `false` | Treat `numeric`/`decimal` money columns as fine instead of warning about them. |
-| `money_columns` | array of ≤ 200 names (3-200 characters each) | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`. |
+| `money_columns` | array of ≤ 200 names (3-200 characters each) | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`, written as the database has them (a result shows a backslash doubled: write it once). A name that holds a dot cannot be listed. |
 | `ignore_columns` | array of ≤ 200 names (3-200 characters each) | none | Columns never to report (false positives), in the same format. The findings they would raise still count in `ignored_count`. |
 | `timeout_seconds` | integer 5-300 | 45 | Stop after this long. The default stays under the 60 seconds that common MCP clients wait for an answer, so the model gets `TIMEOUT` with the file that was running, not a client error. A larger value only helps with a client that waits longer. |
 
@@ -476,7 +477,7 @@ word**, with these refinements:
   `price_per_month` and `cost_per_hour` are money; `tax_rate_per_year` is not. A name that still
   ends in a ratio word (percent, percentage, pct, rate, ratio, bps, factor, multiplier, score, share,
   split) is not money: `fee_per_txn_bps`, `commission_per_sale_pct`.
-- **Rates that are prices:** "rate" after hourly, daily, nightly, weekly, pay, day, bill, billing,
+- **Rates that are prices:** "rate" after hourly, daily, nightly, night, weekly, pay, day, bill, billing,
   labor, labour, room, overtime, mileage, rental or hire is the price of an hour, a stay or a mile, so
   money: `hourly_rate`, `room_rate`; so is "rate per" an hour, day, night, week, month, mile, km,
   unit, item, kg, lb, person, guest, visit or session (`rate_per_hour`). Other rates (`tax_rate`,
@@ -490,40 +491,62 @@ word**, with these refinements:
   are not.
 - **Units:** unit and units are non-money last words (`net_units`, `price_unit`), except after minor
   or smallest, where they name the unit of an amount (`amount_minor_units`, `amount_in_smallest_unit`).
+- **Generic money words:** total, net, gross, credit, charge, principal and interest also start many
+  measures (`total_co2`, `net_change`, `credit_utilization`, `interest_coverage`). When they are
+  the only money words, the name is money only when nothing follows the last of them (`grand_total`,
+  `net`) or every word after it says what the money is: a money word, a minor-unit word, a word that
+  stands beside money words, a currency code, a finer unit, or one of the words after generic money
+  words (lists below): `total_paid`, `credit_limit`, `net_worth`, `total_jpy` are money;
+  `total_co2` and `total_tokens` are not.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
-  `totalamount`. Every word the rule does not know is first split into the words it knows (the lists below, and
-  words that often stand beside a money word: platform, service, late, sales, sale, base, retail,
-  wholesale, delivery, handling, processing, booking, cancellation, setup, transfer, exchange, monthly,
-  annual, yearly, initial, final, original, max, min, limit, due, paid, owed, outstanding, remaining,
-  pending, grand, line, item, order, invoice, account, opening, closing, current, available, card,
-  cash, per, in, value, after, before, smallest, unit, old, new, prev, previous, holiday, sick, overtime,
-  take, home), in as few words as it can be: `totaldiscount` is total + discount, `platformfee`
-  platform + fee, `totalqty` total + qty, and a folded word inside a longer name too:
-  `totalamount_old` is total + amount + old. The split name gets the answer its snake_case form gets,
-  for the minor-unit words too (`amountminorunits`, `pricecentsusd`: `fix_sql` only rounds). A number
-  at the end is dropped (`price2`, `credit_card_last4`). A one-word name that cannot be split into known words still counts when it
+  `totalamount`. Every word the rule does not know is first split into the words it knows (the money,
+  non-money, minor-unit, ratio, rate, value and beside lists, all in this section), in as few words as
+  it can be: `totaldiscount` is total + discount, `platformfee` platform + fee, `totalqty` total +
+  qty, and a folded word inside a longer name too: `totalamount_old` is total + amount + old. The split
+  name gets the answer its snake_case form gets, for the minor-unit words too (`amountminorunits`,
+  `pricecentsusd`: `fix_sql` only rounds). A number at the end is dropped (`price2`,
+  `credit_card_last4`). A one-word name that cannot be split into known words still counts when it
   ends in a long money word (amount, balance, cost, payment, payout, price, refund, revenue, salary,
   subtotal, surcharge, total), maybe followed by a minor-unit word (below, except the short cent, sat
   and wei), or starts with one and does not end in a non-money word of four letters or more. Words
-  that would also split ordinary words into money words ("work": network) are not in the list, so
+  that would also split ordinary words into money words ("work": network) are not in the lists, so
   coffee, syntax, network and discharge stay what they are.
 - **"minor"** says the unit of an amount beside another money word (`amount_minor`,
   `amount_minor_units`). Beside a version it is a version part (`version_minor`, `os_minor`); alone,
   or with unit (`minor_unit`, ISO 4217's currency exponent), it is not an amount.
 
-- **Money words:** amount, amounts, amt, balance, balances, charge, charges, cost, costs, discount,
-  discounts, fee, fees, money, payment, payments, payout, payouts, pence, penny, pennies, cent, cents,
-  paise, minor, price, prices, refund, refunds, revenue, salary, salaries, subtotal, surcharge, tax,
-  taxes, total, totals, vat, wage, wages, gbp, usd, eur; the ledger and finance words debit, debits,
-  credit, credits, net, gross, commission, commissions, deposit, deposits, interest, principal,
-  expense, expenses, income, profit, profits, earnings, budget, budgets, msrp, mrr, arr, mrp, gst,
-  cgst, sgst, igst; the pay,
-  commerce and insurance words bonus, bonuses, allowance, allowances, stipend, stipends, diem, rent,
-  rents, fare, fares, spend, premium, premiums, deductible, deductibles, donation, donations, penalty,
-  penalties, pnl, cogs, shipping, tip, tips, pay, cashback, copay, copays, reimbursement, reimbursements,
-  installment, installments, instalment, instalments, dividend, dividends, royalty, royalties, arrears,
-  overdraft, overdrafts, payable, payables, receivable, receivables, spending; and the minor units of other currencies paisa, kobo, sats,
-  satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport, lamports.
+The word lists:
+- **Money words:**
+  - common: amount, amounts, amt, balance, balances, charge, charges, cost, costs, discount, discounts,
+    fee, fees, money, payment, payments, payout, payouts, pence, penny, pennies, cent, cents, paise,
+    minor, price, prices, refund, refunds, revenue, salary, salaries, subtotal, surcharge, tax, taxes,
+    total, totals, vat, wage, wages, gbp, usd, eur
+  - ledger and finance: debit, debits, credit, credits, net, gross, commission, commissions, deposit,
+    deposits, interest, principal, expense, expenses, income, profit, profits, earnings, budget,
+    budgets, msrp, mrr, arr, mrp, gst, cgst, sgst, igst
+  - pay, commerce and insurance: bonus, bonuses, allowance, allowances, stipend, stipends, diem, rent,
+    rents, fare, fares, spend, premium, premiums, deductible, deductibles, donation, donations, penalty,
+    penalties, pnl, cogs, shipping, tip, tips, pay, cashback, copay, copays, reimbursement,
+    reimbursements, installment, installments, instalment, instalments, dividend, dividends, royalty,
+    royalties, arrears, overdraft, overdrafts, payable, payables, receivable, receivables, spending,
+    contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, bal,
+    deduction, deductions, markup, markups, gratuity, gratuities, duty, duties, excise, tariff, tariffs,
+    brokerage
+  - minor units of other currencies: paisa, kobo, sats, satoshi, satoshis, centavo, centavos, kopek,
+    kopeks, kopeck, kopecks, wei, lamport, lamports, msat, msats
+- **Generic money word list:** total, totals, net, gross, credit, credits, charge, charges, principal,
+  interest
+- **Words after generic money words:** spent, received, collected, billed, invoiced, charged, refunded,
+  earned, owing, raised, accrued, worth, incl, excl, inc, ex, with, without
+- **Words beside money words** (known for splitting folded names and after generic money words):
+  platform, service, late, sales, sale, base, retail, wholesale, delivery, handling, processing,
+  booking, cancellation, setup, transfer, exchange, monthly, annual, yearly, initial, final, original,
+  max, min, limit, due, paid, owed, outstanding, remaining, pending, grand, line, item, order, invoice,
+  account, opening, closing, current, available, card, per, in, value, after, before, smallest, unit,
+  old, new, prev, previous, holiday, sick, overtime, take, home
+- **Currency codes** (beside gbp, usd and eur, which are money words): bif, clp, djf, gnf, isk, jpy,
+  kmf, krw, pyg, rwf, ugx, vnd, vuv, xaf, xof, xpf, aud, brl, cad, chf, cny, czk, dkk, hkd, huf, idr,
+  ils, inr, mxn, myr, nok, nzd, php, pln, ron, sek, sgd, thb, try, twd, zar, aed, sar
 - **Non-money last words:**
   - identifiers and labels: id, ids, uuid, key, ref, code, currency, ccy, type, kind, status, state,
     method, mode, reason, note, notes, description, desc, label, name, title, text, url, hash, flag,
@@ -540,12 +563,17 @@ word**, with these refinements:
     calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
     power, usage, capacity, speed, temperature, precision, scale
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
-- **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, paisa, kobo,
-  sats, satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport, lamports;
-  and "minor" or "smallest" before unit or units (`amount_minor_units`, `amount_in_smallest_unit`).
-  "minor" and "sat" without unit after them may say the unit or something else (`amount_minor`, but
-  also `price_minor`, a child's price, and `price_sat`, Saturday's): `fix_sql` is `null` for them,
-  the unit needs a decision.
+- **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, paisa,
+  kobo, sats, satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport,
+  lamports, msat, msats; and "minor" or "smallest" before unit or units (`amount_minor_units`,
+  `amount_in_smallest_unit`).
+- **Currencies without minor units** (ISO 4217 exponent 0; `fix_sql` only rounds, as whole yen are
+  the smallest unit): bif, clp, djf, gnf, isk, jpy, kmf, krw, pyg, rwf, ugx, vnd, vuv, xaf, xof, xpf
+- **Unsure unit words** (`fix_sql` is `null`, the unit needs a decision): sat, minor. Without unit
+  after them they may say the unit or something else (`amount_minor`, but also `price_minor`, a
+  child's price, and `price_sat`, Saturday's).
+- **Finer units** (`fix_sql` is `null`: `cost_micros` holds millionths, and a fix must choose the
+  unit): micros, micro, millicents, millicent, mills, gwei
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
   `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`,
   `amountdue`, `platformfee`, `totaldiscount`, `debit`, `credit_limit`, `net`, `hourly_rate`,
@@ -555,7 +583,7 @@ word**, with these refinements:
   `costcenter`, `gross_margin`, `credit_score`, `fee_per_txn_bps`, `payment_intent`, `totalqty`,
   `total_nights`, `revenue_share`, `minor_unit`, `rate_per_second`.
 
-The lists are tested against a table of about 300 column names, most of them real (Stripe, Shopify,
+The lists are tested against a table of about 350 column names, most of them real (Stripe, Shopify,
 Supabase templates, ledgers, payroll and the author's own apps), with look-alikes the rule must not
 take for money (coffee, syntax, discharge), in `test/names.test.ts`. A name rule cannot know every
 schema: a real money column it misses that is a float still shows in `other_float_columns`, which every
@@ -607,7 +635,9 @@ conversion follows the name and the declared scale; the test suite runs each kin
   leaves those as written: a default of 2.50 becomes 3 pence, and `CHECK (amount <= 1000.00)` a cap of
   £10. The next lint could not see that, so such a fix is not offered. A trigger or a function that
   compares the column with an amount in its body is not seen either: PostgreSQL records no link from a
-  function's body to a column, so the ALTER succeeds and such a cap becomes a hundred times lower.
+  function's body held as text (plpgsql, or SQL written as a string) to a column, so the ALTER succeeds
+  and such a cap becomes a hundred times lower. (A SQL function with a `BEGIN ATOMIC` body is linked:
+  the ALTER fails with 0A000, and the hint says to drop and recreate it.)
   Check triggers and functions that use the column before running a fix that multiplies. Fine, and the fix is offered: a
   CHECK such as `amount >= 0`; digits in a name (`q1_revenue >= 0`) or a type's size
   (`0::numeric(10,2)`); a two-decimal guard (`total = round(total, 2)`, `scale(total) <= 2`), which
@@ -659,7 +689,7 @@ shows it: the tool runs the new migration too.
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, or more than 10,000 files and folders to look through for them (listing them blocks the server). | Points at the folder of migrations, or `files`. |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, or `files` is given with a single `.sql` file. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
-| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: lint them in smaller groups, or pass a larger `timeout_seconds`), and that a larger limit helps only with a client that waits longer than 60 seconds. |
+| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: pass a larger `timeout_seconds`, or lint one schema-only dump of the database they build; linting the files in groups would fail, as each group needs the ones before it), and that a larger limit helps only with a client that waits longer than 60 seconds. |
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
@@ -669,8 +699,8 @@ The `MIGRATION_FAILED` hints by SQLSTATE:
   later (Flyway's `R__` files sort before `V1__`).
 - **42883 for an operator** (`operator does not exist: uuid = text`): "cast one side, or fix the
   column type".
-- **0A000 when a column's type cannot change** because a view, a rule, a policy, a trigger or a
-  generated column uses it (as after a `fix_sql`): "drop it before the ALTER and create it again
+- **0A000 when a column's type cannot change** because a view, a rule, a policy, a trigger, a
+  generated column or a function with a `BEGIN ATOMIC` body uses it (as after a `fix_sql`): "drop it before the ALTER and create it again
   after, in the same migration".
 - **A transaction left open** (BEGIN with no COMMIT): "add the COMMIT it lacks, or take out its BEGIN".
 - **53200 with PostgreSQL's hint to raise max_locks_per_transaction:** "the file creates more objects
@@ -757,7 +787,7 @@ shortened):
   "other_float_columns": [],
   "other_float_columns_count": 0,
   "fixes": {
-    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.",
+    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor units, or a currency without them such as jpy), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.",
     "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are."
   }
 }
@@ -770,7 +800,8 @@ shortened):
 When a code has a finding whose `fix_sql` is null, its text ends with: "Where fix_sql is null, the
 change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element
 type), a generated column (change its expression), a column a child table inherits (change it on the
-parent), amounts finer than a penny (choose the unit first), a default, CHECK constraint or unique index
+parent), amounts finer than a penny (choose the unit first), a name that may not say its unit
+(amount_minor, price_sat, cost_micros: decide the unit first), a default, CHECK constraint or unique index
 condition that may hold amounts in the old unit (convert
 those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand)."
 
@@ -1161,7 +1192,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 730); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 780); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit

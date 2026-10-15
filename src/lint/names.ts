@@ -1,6 +1,8 @@
 // Which column names look like money (SPEC.md §3.5). A name looks like money when ANY of its words is a
 // money word and its LAST word is not a word that turns it into something else (an id, a date, a
-// count, a rate): "amount_due" is money, "amount_currency" and "price_id" are not. Words after "per"
+// count, a rate): "amount_due" is money, "amount_currency" and "price_id" are not. A generic money word
+// (total, net, credit...) that is the only one counts at the end or before words that say what the money
+// is ("total_paid"), not before a measure ("total_co2"). Words after "per"
 // only say what the amount is for ("price_per_month" is money), unless the name ends in a ratio
 // ("fee_per_txn_bps"); a pay rate or a priced rate is money ("hourly_rate", "rate_per_hour"); so is
 // what an order or a cart is worth ("order_value"). A one-word name that PostgreSQL folded to
@@ -27,9 +29,11 @@ const MONEY_WORDS: ReadonlySet<string> = new Set([
   'reimbursements', 'installment', 'installments', 'instalment', 'instalments', 'dividend', 'dividends', 'royalty',
   'royalties', 'arrears', 'overdraft', 'overdrafts', 'payable', 'payables', 'receivable', 'receivables', 'spending',
   'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi',
+  'bal', 'deduction', 'deductions', 'markup', 'markups', 'gratuity', 'gratuities', 'duty', 'duties', 'excise', 'tariff',
+  'tariffs', 'brokerage',
   // minor units of other currencies
   'paisa', 'kobo', 'sats', 'satoshi', 'satoshis', 'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck',
-  'kopecks', 'wei', 'lamport', 'lamports',
+  'kopecks', 'wei', 'lamport', 'lamports', 'msat', 'msats',
 ]);
 
 const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
@@ -58,15 +62,39 @@ const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
 /** Words that say the column already holds minor units, so a fix must not multiply by 100. */
 const MINOR_UNIT_WORDS: ReadonlySet<string> = new Set([
   'pence', 'penny', 'pennies', 'cent', 'cents', 'paise', 'paisa', 'kobo', 'sat', 'sats', 'satoshi', 'satoshis',
-  'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck', 'kopecks', 'wei', 'lamport', 'lamports', 'minor',
+  'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck', 'kopecks', 'wei', 'lamport', 'lamports', 'msat', 'msats', 'minor',
 ]);
 
-/** Last words that make a name a ratio even after "per": "fee_per_txn_bps", "commission_per_sale_pct". */
+/**
+ * Currencies with no minor unit (ISO 4217 exponent 0): a yen amount is whole yen already, so a fix
+ * only rounds.
+ */
+const ZERO_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set([
+  'bif', 'clp', 'djf', 'gnf', 'isk', 'jpy', 'kmf', 'krw', 'pyg', 'rwf', 'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf',
+]);
+
+/** Units finer than a minor unit ("cost_micros", Google Ads' millionths): the fix needs the unit decided. */
+const FINER_UNIT_WORDS: ReadonlySet<string> = new Set(['micros', 'micro', 'millicents', 'millicent', 'mills', 'gwei']);
+
+/**
+ * Money words that also start many measures ("total_co2", "net_change", "credit_utilization",
+ * "interest_coverage"): they make a name money only at its end ("grand_total", "battery_charge"), or
+ * followed by words that say what the money is (AFTER_GENERIC_WORDS: "total_paid", "credit_limit",
+ * "net_worth", "total_jpy").
+ */
+const GENERIC_MONEY_WORDS: ReadonlySet<string> = new Set(['total', 'totals', 'net', 'gross', 'credit', 'credits', 'charge', 'charges', 'principal', 'interest']);
+
+/** Currency codes, beside the gbp, usd and eur of the money words: "total_jpy", "net_chf". */
+const CURRENCY_CODES: ReadonlySet<string> = new Set([
+  ...ZERO_DECIMAL_CURRENCIES, 'aud', 'brl', 'cad', 'chf', 'cny', 'czk', 'dkk', 'hkd', 'huf', 'idr', 'ils', 'inr', 'mxn', 'myr', 'nok',
+  'nzd', 'php', 'pln', 'ron', 'sek', 'sgd', 'thb', 'try', 'twd', 'zar', 'aed', 'sar',
+]);
+
 const RATIO_WORDS: ReadonlySet<string> = new Set(['percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'score', 'share', 'split']);
 
 /** Words before "rate" that make it the price of a stay, an hour or a mile, which is money: "hourly_rate", "room_rate". */
 const PAY_RATE_WORDS: ReadonlySet<string> = new Set([
-  'hourly', 'daily', 'nightly', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour', 'room', 'overtime', 'mileage', 'rental', 'hire',
+  'hourly', 'daily', 'nightly', 'night', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour', 'room', 'overtime', 'mileage', 'rental', 'hire',
 ]);
 
 /** What "rate_per_..." can be priced by: "rate_per_hour" is a price; "rate_per_second" stays a rate. */
@@ -90,6 +118,17 @@ const OTHER_WORDS: ReadonlySet<string> = new Set([
   'limit', 'due', 'paid', 'owed', 'outstanding', 'remaining', 'pending', 'grand', 'line', 'item', 'order', 'invoice', 'account',
   'opening', 'closing', 'current', 'available', 'card', 'per', 'in', 'value', 'after', 'before', 'smallest',
   'unit', 'old', 'new', 'prev', 'previous', 'holiday', 'sick', 'overtime', 'take', 'home',
+]);
+
+/** Words that say what the money is after a generic money word, beside the money, minor-unit and other words. */
+const AFTER_GENERIC_ONLY: ReadonlySet<string> = new Set([
+  'spent', 'received', 'collected', 'billed', 'invoiced', 'charged', 'refunded', 'earned', 'owing', 'raised', 'accrued',
+  'worth', 'incl', 'excl', 'inc', 'ex', 'with', 'without',
+]);
+
+/** Words that may follow a generic money word in a money name: "total_paid", "net_worth", "total_inc_vat", "total_jpy". */
+const AFTER_GENERIC_WORDS: ReadonlySet<string> = new Set([
+  ...MONEY_WORDS, ...MINOR_UNIT_WORDS, ...OTHER_WORDS, ...CURRENCY_CODES, ...FINER_UNIT_WORDS, ...AFTER_GENERIC_ONLY,
 ]);
 
 /**
@@ -184,8 +223,11 @@ function judgeWords(all: readonly string[]): boolean {
   // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
   // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
   // exponent), it is not an amount.
-  const moneyWords = ws.filter((w) => MONEY_WORDS.has(w));
-  if (moneyWords.some((w) => w !== 'minor')) return true;
+  if (ws.some((w) => MONEY_WORDS.has(w) && w !== 'minor' && !GENERIC_MONEY_WORDS.has(w))) return true;
+  // A generic money word counts at the end, or before words that say what the money is: "total_paid"
+  // is money, "total_co2" a measure.
+  const generic = ws.map((w) => GENERIC_MONEY_WORDS.has(w)).lastIndexOf(true);
+  if (generic >= 0) return ws.slice(generic + 1).every((w) => AFTER_GENERIC_WORDS.has(w));
   if (ws.length !== 1 || last === 'minor') return false;
   // A folded name the known words cannot split: the long money words at either end.
   const word = withoutUnit(last);
@@ -199,16 +241,19 @@ const UNSURE_UNIT_WORDS: ReadonlySet<string> = new Set(['sat', 'minor']);
 /**
  * What a money column's name says about its unit: "minor" when it says minor units plainly (a
  * minor-unit word: "amount_pence", "price_cents_usd", "amount_sats"; "minor" or "smallest" before unit
- * or units: "amount_minor_units", "amount_in_smallest_unit"); "unsure" when it holds a word that may
- * mean minor units or something else ("amount_minor", "price_minor", "price_sat"): a fix needs that
- * decided first; "major" otherwise.
+ * or units: "amount_minor_units", "amount_in_smallest_unit"; a currency with no minor unit:
+ * "amount_jpy"); "unsure" when it holds a word that may mean minor units or something else
+ * ("amount_minor", "price_minor", "price_sat") or a unit finer than a minor unit ("cost_micros",
+ * "price_gwei"): a fix needs that decided first; "major" otherwise.
  */
 export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   const ws = knownWords(name);
+  if (ws.some((w) => FINER_UNIT_WORDS.has(w))) return 'unsure';
   const unitAfter = (i: number) => ws[i + 1] === 'unit' || ws[i + 1] === 'units';
   if (ws.some((w, i) => (w === 'minor' || w === 'smallest') && unitAfter(i))) return 'minor';
   if (ws.some((w) => MINOR_UNIT_WORDS.has(w) && !UNSURE_UNIT_WORDS.has(w))) return 'minor';
   if (ws.some((w) => UNSURE_UNIT_WORDS.has(w))) return 'unsure';
+  if (ws.some((w) => ZERO_DECIMAL_CURRENCIES.has(w))) return 'minor'; // whole yen are its smallest unit
   // A folded name the known words cannot split, ending in a unit word ("grossamountpence").
   const only = ws.length === 1 ? ws[0] : undefined;
   if (only === undefined || withoutUnit(only) === only) return 'major';
@@ -219,3 +264,20 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
 export function namesMinorUnits(name: string): boolean {
   return unitOfName(name) === 'minor';
 }
+
+/** The word lists, for the test that holds SPEC.md §3.5 to them. */
+export const WORD_LISTS: Readonly<Record<string, ReadonlySet<string>>> = {
+  'Money words': MONEY_WORDS,
+  'Generic money word list': GENERIC_MONEY_WORDS,
+  'Words after generic money words': AFTER_GENERIC_ONLY,
+  'Words beside money words': OTHER_WORDS,
+  'Currency codes': CURRENCY_CODES,
+  'Non-money last words': NOT_MONEY_LAST_WORDS,
+  'Minor-unit words': new Set([...MINOR_UNIT_WORDS].filter((w) => !UNSURE_UNIT_WORDS.has(w))),
+  'Currencies without minor units': ZERO_DECIMAL_CURRENCIES,
+  'Unsure unit words': UNSURE_UNIT_WORDS,
+  'Finer units': FINER_UNIT_WORDS,
+};
+
+/** The words of the prose rules of SPEC.md §3.5, which must all appear there. */
+export const RULE_WORDS: readonly string[] = [...RATIO_WORDS, ...PAY_RATE_WORDS, ...PRICED_UNITS, ...VALUE_WORDS];

@@ -35,6 +35,15 @@ describe('a file or folder the system will not let the server read', () => {
     expect(unreadable('exports/l.csv', { code: 'EACCES' }).message).toBe('"exports/l.csv" cannot be read (permission denied).');
   });
 
+  it('gives each cause its own fix: a file that went away is not a lock or a permission', () => {
+    // Review round 7: "no longer exists" was told to close the program that holds it.
+    expect(['EBUSY', 'EACCES', 'ENOENT'].map((code) => unreadable('exports/l.csv', { code }).fix)).toEqual([
+      'Close the program that holds it, then call again.',
+      'Give the user that runs the server read access to it, then call again.',
+      'It was moved or deleted while the tool read it: check the path, then call again.',
+    ]);
+  });
+
   it.each(['EPERM', 'EBUSY'])('answers FILE_UNREADABLE, not that the file does not exist, when finding its real path fails with %s', (code) => {
     const dir = tempDir();
     writeTree(dir, { 'exports/l.csv': 't,a\n' });

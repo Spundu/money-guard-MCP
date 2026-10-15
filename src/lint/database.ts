@@ -260,7 +260,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
       const migrations = scripts.filter((s) => s.phase === 'migration').length;
       const folder =
         migrations >= MANY_FILES
-          ? `The folder holds ${migrations} migration files, each run and checked in turn: lint them in smaller groups with files, or pass a larger timeout_seconds.`
+          ? `The folder holds ${migrations} migration files, each run and checked in turn: pass a larger timeout_seconds, or lint one schema-only dump of the database they build (pg_dump --schema-only).`
           : 'Leave slow data-loading files out with files.';
       const slow =
         script === undefined

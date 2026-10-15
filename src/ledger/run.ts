@@ -52,8 +52,13 @@ export interface LedgerResult {
 
 const BY_EXTENSION: Readonly<Record<string, LedgerFormat>> = { '.csv': 'csv', '.tsv': 'csv', '.json': 'json', '.jsonl': 'jsonl', '.ndjson': 'jsonl' };
 
+/** A count as every summary writes it: 10,005, not 10005. */
+function num(n: number): string {
+  return n.toLocaleString('en-GB');
+}
+
 function count(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
+  return `${num(n)} ${n === 1 ? one : many}`;
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
@@ -90,7 +95,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
   const result: LedgerResult = {
-    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names) + (total > MAX_LISTED_FINDINGS ? ` Only the first ${MAX_LISTED_FINDINGS.toLocaleString('en-GB')} findings can be paged; the counts cover all ${total.toLocaleString('en-GB')}.` : ''),
+    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names) + (total > MAX_LISTED_FINDINGS ? ` Only the first ${num(MAX_LISTED_FINDINGS)} findings can be paged; the counts cover all ${num(total)}.` : ''),
     file: clipPath(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -136,8 +141,9 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   // "baseCurrency", "txn_ccy", "curr", "/amount/currency": a currency word anywhere ("cur" only first,
   // as "balance_cur" may be current). Not a name that also holds an amount word ("amount_currency", an
   // amount in another currency; "Cur Balance"; "debit_in_account_currency") or a period ("cur_period"),
-  // nor one that ends in a rate or a ratio. A name that ends in its currency word or in "code" is
-  // preferred to the others.
+  // nor one that ends in a rate or a ratio. A plain currency name ("Currency", "ccy", "Currency Code")
+  // is preferred to one that says which currency it is ("Original Currency"), and a name that ends in
+  // its currency word or in "code" to the others.
   const AMOUNT_WORDS = ['amount', 'amounts', 'balance', 'balances', 'debit', 'credit', 'total', 'price', 'fee', 'value', 'values', 'period', 'rate', 'rates', 'factor', 'ratio', 'in'];
   // For a JSON Pointer, the field's own name: "/amount/currency" is a currency beside an amount.
   const wordsOf = (name: string) =>
@@ -153,8 +159,12 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
     return currency && !ws.some((w) => AMOUNT_WORDS.includes(w));
   };
   const endsLikeOne = (name: string) => [...CURRENCY, 'cur', 'code'].includes(wordsOf(name).at(-1) ?? '');
+  const plain = (name: string) => {
+    const ws = wordsOf(name);
+    return CURRENCY.includes(ws[0] ?? '') && (ws.length === 1 || (ws.length === 2 && ws[1] === 'code'));
+  };
   const candidates = names.filter(looksLikeCurrency);
-  const name = candidates.find(endsLikeOne) ?? candidates[0];
+  const name = candidates.find(plain) ?? candidates.find(endsLikeOne) ?? candidates[0];
   return name === undefined ? '' : ` "${clip(name)}" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }
 
@@ -171,13 +181,13 @@ function summarise(
   if (rows === 0) return 'The file has no rows, so nothing was proven.';
   const warned = warnings > 0 ? ` ${count(warnings, 'warning', 'warnings')}.` : '';
   if (errors === 0) {
-    const all = found === 1 ? 'the 1 transaction nets' : `all ${found} transactions net`;
+    const all = found === 1 ? 'the 1 transaction nets' : `all ${num(found)} transactions net`;
     return `Balanced: ${all} to zero in whole minor units.${warned}`;
   }
-  const parts = [`${balanced} balanced`];
-  if (counts.UNBALANCED) parts.push(`${counts.UNBALANCED} unbalanced`);
-  if (counts.TOO_FEW_LEGS) parts.push(`${counts.TOO_FEW_LEGS} with too few legs`);
-  if (notChecked > 0) parts.push(`${notChecked} not checked (rows with unreadable values)`);
+  const parts = [`${num(balanced)} balanced`];
+  if (counts.UNBALANCED) parts.push(`${num(counts.UNBALANCED)} unbalanced`);
+  if (counts.TOO_FEW_LEGS) parts.push(`${num(counts.TOO_FEW_LEGS)} with too few legs`);
+  if (notChecked > 0) parts.push(`${num(notChecked)} not checked (rows with unreadable values)`);
   const head = `Not balanced: ${count(errors, 'error', 'errors')}${warnings > 0 ? ` and ${count(warnings, 'warning', 'warnings')}` : ''}.`;
   // Errors that belong to no transaction (a record that is not an object, a row without an id) are
   // counted apart, or the transaction counts alone would not explain them.

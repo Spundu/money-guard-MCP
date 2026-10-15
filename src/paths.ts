@@ -216,15 +216,15 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
  */
 export function unreadable(shownPath: string, err: unknown): ToolError {
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  const why =
+  const [why, fix] =
     code === 'EBUSY'
-      ? 'is locked by another program'
+      ? ['is locked by another program', 'Close the program that holds it, then call again.']
       : code === 'EACCES' || code === 'EPERM'
-        ? 'cannot be read (permission denied)'
+        ? ['cannot be read (permission denied)', 'Give the user that runs the server read access to it, then call again.']
         : code === 'ENOENT'
-          ? 'no longer exists'
-          : `cannot be read (${typeof code === 'string' ? clip(code, 20) : 'an unknown error'})`;
-  return new ToolError('FILE_UNREADABLE', `"${clipPath(shownPath)}" ${why}.`, 'Close the program that holds it, or fix its permissions, then call again.');
+          ? ['no longer exists', 'It was moved or deleted while the tool read it: check the path, then call again.']
+          : [`cannot be read (${typeof code === 'string' ? clip(code, 20) : 'an unknown error'})`, 'Close the program that holds it, or fix its permissions, then call again.'];
+  return new ToolError('FILE_UNREADABLE', `"${clipPath(shownPath)}" ${why}.`, fix);
 }
 
 /** Whether a file-system error means the path is there but may not be read now: permissions, a lock. */

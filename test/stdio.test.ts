@@ -183,7 +183,7 @@ describe('the stdio process', () => {
       await new Promise((r) => setTimeout(r, 500)); // the check has started
       server.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2, reason: 'too slow' } });
       await vi.waitFor(() => expect(server.stdout()).toContain('"id":2'), { timeout: 30_000 });
-      expect(server.stdout()).toContain('Balanced: all 500000 transactions net to zero');
+      expect(server.stdout()).toContain('Balanced: all 500,000 transactions net to zero');
       await vi.waitFor(() => expect(server.stderr()).toMatch(/money-guard-mcp: money_check_double_entry ok \d+ms/), { timeout: 5000 });
       expect(server.stderr()).not.toContain('CANCELLED');
     } finally {

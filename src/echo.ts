@@ -71,7 +71,10 @@ export function escapeUnsafe(text: string): string {
 
 /**
  * Text with its hidden characters escaped and nothing else changed, for text that may already have been
- * made safe: the escapes are plain ASCII, so applying it twice changes nothing.
+ * made safe: the escapes are plain ASCII, so applying it twice changes nothing. It does not double
+ * backslashes (that would double those of the tools' own escapes), so it is a safety net, not the
+ * escaping: raw text still goes through `escapeUnsafe`, `clip` or `clipPath`, or a backslash before a
+ * hidden character could show as the text "\u200b".
  */
 export function escapeHidden(text: string): string {
   return text.replace(EVERY_UNSAFE, escapeChar);

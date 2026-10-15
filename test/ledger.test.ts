@@ -212,6 +212,9 @@ describe('money_check_double_entry: the rules', () => {
     expect(check('.csv', 't,a,balance_cur\nT1,1,5\nT1,-1,5\n', { columns }).summary).not.toMatch(/looks like a currency/);
     // A rate or an amount named after a currency is not one.
     expect(check('.csv', 't,a,currency_rate\nT1,1,1.2\nT1,-1,1.2\n', { columns }).summary).not.toMatch(/looks like a currency/);
+    // Review round 7: a plain currency column is named before one that says which currency it is.
+    expect(check('.csv', 't,a,Original Currency,Currency\nT1,1,USD,GBP\nT1,-1,USD,GBP\n', { columns }).summary).toContain(' "Currency" looks like');
+    expect(check('.csv', 't,a,Settlement Currency,Currency Code\nT1,1,USD,GBP\nT1,-1,USD,GBP\n', { columns }).summary).toContain(' "Currency Code" looks like');
     const mapped = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'Currency' } });
     expect(mapped.findings[0]?.code).toBe('UNBALANCED');
   });
