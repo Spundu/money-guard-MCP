@@ -58,6 +58,14 @@ const MONEY = [
   // Review round 7: a generic money word followed by what the money is; balances, duties and other
   // charges; night rates; units finer than pence and currencies without them.
   'total_paid', 'total_spent', 'total_owing', 'net_worth', 'total_jpy', 'total_inc_vat', 'interest_earned', 'interest_accrued',
+  // Review round 8: what may follow is open-ended (deposited, ytd, used): only a measure after it says no.
+  'total_minor_units', 'total_in_minor_units', 'net_minor_units', 'totalminorunits', 'total_deposited', 'total_withdrawn',
+  'total_transferred', 'total_settled', 'total_invested', 'total_disbursed', 'total_wagered', 'total_staked', 'total_reimbursed',
+  'total_ytd', 'gross_ytd', 'net_ytd', 'interest_ytd', 'total_lifetime', 'total_pretax', 'net_settlement', 'credit_used',
+  'credits_applied', 'credit_issued', 'principal_repaid', 'totalDeposited',
+  // Review round 8: unit prices (Odoo's price_unit on every order line), freight, tolls and finance terms.
+  'price_unit', 'cost_unit', 'unit_price', 'freight', 'freight_charge', 'tolls', 'toll', 'ltv', 'ebitda', 'severance',
+  'severance_pay', 'bad_debt', 'debt',
   'principal_outstanding', 'credit_limit_gbp', 'totals', 'bal', 'opening_bal', 'cur_bal', 'night_rate', 'deduction',
   'deductions', 'markup', 'gratuity', 'stamp_duty', 'customs_duty', 'excise', 'tariff', 'brokerage', 'amount_msat',
   'fee_msat', 'cost_micros', 'amount_jpy',
@@ -85,7 +93,7 @@ const NOT_MONEY = [
   // that are not money; look-alikes a folded split must not turn into money.
   'totalqty', 'totalkwh', 'totalkg', 'totalpct', 'paymentday', 'priceid', 'total_nights', 'total_guests',
   'total_area', 'revenue_share', 'minor_unit', 'minor_units', 'total_users', 'total_weeks', 'net_units', 'gross_area',
-  'total_usage', 'total_power', 'rate_per_second', 'metric_value', 'setting_value', 'value', 'price_unit',
+  'total_usage', 'total_power', 'rate_per_second', 'metric_value', 'setting_value', 'value',
   'payment_method_currency', 'network', 'farewell', 'online', 'baseline', 'cashflow', 'creditscore', 'interestrate',
   // Review round 5: splits and sessions; sizes and counts of rows, pages and bytes; the last digits of a
   // card; a precision; when and how often pay comes.
@@ -135,9 +143,12 @@ describe('unitOfName', () => {
 
   it('is unsure of units finer than a minor unit, and rounds currencies that have no minor unit', () => {
     // Review round 7: cost_micros (Google Ads millionths) and amount_jpy (whole yen) were multiplied by 100.
-    const unsure = ['cost_micros', 'amount_micros', 'budget_amount_micros', 'price_gwei', 'amount_millicents', 'price_mills'];
+    const unsure = ['cost_micros', 'amount_micros', 'budget_amount_micros', 'price_gwei', 'amount_millicents', 'price_mills',
+      // Review round 8: folded too (costMicros created unquoted), and "won", which may be a currency or a prize.
+      'costmicros', 'pricemicros', 'amountmillicents', 'budgetamountmicros', 'amount_won', 'price_won'];
     expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
-    const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats'];
+    expect(['costmicros', 'pricemicros'].map(looksLikeMoney)).toEqual([true, true]);
+    const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats', 'amount_yen', 'price_yen'];
     expect(minor.map(unitOfName)).toEqual(minor.map(() => 'minor'));
   });
 });

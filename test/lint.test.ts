@@ -187,6 +187,10 @@ describe('money_lint_schema: judging columns', () => {
       /^BAD_COLUMN_NAME: money_columns names "public\.Orders\.GrossValue", which is not a column of any table the migrations create\. Did you mean "public\.orders\.grossvalue"\?/,
     );
     expect(await codeOf(files, { ignore_columns: ['orders.amount', 'orders.nothing_like_it'] })).toBe('BAD_COLUMN_NAME');
+    // Review round 8: database names stay whole, the suggestion too (up to 191 characters).
+    const [s, t] = ['s'.repeat(60), 't'.repeat(60)];
+    const long = { 'db/migrations/0001.sql': `create schema ${s}; create table ${s}.${t} (price_total numeric(10,2));` };
+    expect((await failure(long, { money_columns: [`${s}.${t}.price_totl`] })).message).toContain(`Did you mean "${s}.${t}.price_total"?`);
     // A column alone could be in any table: the entry must name one.
     expect((await failure(files, { money_columns: ['grossvalue'] })).message).toBe('money_columns entry "grossvalue" is not "table.column" or "schema.table.column".');
   });
@@ -226,6 +230,12 @@ describe('money_lint_schema: judging columns', () => {
     const fifty = Array.from({ length: 50 }, (_, i) => `price_${i} double precision`).join(', ');
     const all = await lint({ 'db/migrations/0001.sql': `create table big (${fifty});` });
     expect([all.findings.length, all.findings_truncated, all.error_count]).toEqual([50, false, 50]);
+  });
+
+  it('writes counts of a thousand or more with a thousands separator, as the ledger does', async () => {
+    const columns = Array.from({ length: 1000 }, (_, i) => `price_${i} double precision`).join(', ');
+    const r = await lint({ 'db/migrations/0001.sql': `create table big (${columns});` });
+    expect(r.summary).toMatch(/^1,000 problems in 1,000 money columns \(1,000 errors, 0 warnings\)\./);
   });
 
   it('stays within 20,000 characters with the longest names and a deep folder, cutting the file list first', async () => {

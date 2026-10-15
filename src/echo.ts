@@ -6,6 +6,12 @@
 /** Longest piece of file content a result may repeat, in characters (code points). */
 export const ECHO_MAX = 40;
 
+/**
+ * Longest header or field name that COLUMN_NOT_FOUND suggests, in characters: the list of names cuts
+ * each at ECHO_MAX, so the one suggestion is shown whole, for the model to map.
+ */
+export const NAME_MAX = 200;
+
 /** Longest path a result or an error shows, in characters; a longer one is cut in the middle. */
 export const PATH_MAX = 400;
 

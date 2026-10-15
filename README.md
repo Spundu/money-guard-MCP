@@ -25,13 +25,14 @@ tested](#how-it-is-tested)). macOS is untested.
 
 Why run the migrations instead of reading them? Patterns over SQL text easily miss a later `ALTER
 COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database that ran the migrations
-does not. (Only to decide whether to offer `fix_sql` does it read text: the defaults, CHECK
-constraints and index conditions as PostgreSQL writes them back, with simple, cautious patterns that
-withhold the fix when in doubt.)
+does not. It reads SQL text in one place only: to decide whether to offer `fix_sql`, it looks at
+the defaults, CHECK constraints and index conditions as PostgreSQL writes them back, with simple,
+cautious patterns that withhold the fix when in doubt.
 
 ## Quick start with Claude Code
 
-You need Node.js 22.12 or newer, and git.
+You need Node.js 22.12 or newer, and git. (On 22.12, `npm ci` warns that ESLint wants 22.13; the
+warning is harmless, as ESLint is only used in development.)
 
 ```sh
 git clone https://github.com/Spundu/money-guard-mcp.git
@@ -240,6 +241,9 @@ Set the variable where Claude Code starts, then start Claude Code again:
 - Windows: run `[Environment]::SetEnvironmentVariable('MONEY_GUARD_AUDIT_KEYS', 'k1=<64 hex digits>',
   'User')` in PowerShell and open a new terminal.
 
+A shell profile or a user variable gives the key to every program started from then on. To keep it
+narrower, set it only in the terminal that starts Claude Code, or load it there from a secret store.
+
 Claude Code asks you to approve a server from a project file the first time; `/mcp` then shows it
 connected. Never paste a key into the chat: money-guard never asks for one, never returns one and
 never logs one. An agent that runs shell commands can still read the environment Claude Code started
@@ -346,8 +350,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   [Settings](#settings). The log (stderr) has a startup line and one line per call: the tool, the time
   it took and the outcome code. Writing it never holds up an answer: a host that does not read it
   loses log lines, not answers.
-- **One schema lint at a time.** A second one gets `BUSY` straight away. The other two tools answer
-  one call after another. Cancelling a lint stops its database at once.
+- **One schema lint at a time.** A second one gets `BUSY` straight away, and so do the other two
+  tools while a lint runs, so its memory limit keeps being checked. They answer one call after another. Cancelling a lint stops its database at once.
 
 ## What it does not do
 
@@ -367,13 +371,13 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 780 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 830 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.
   - This README's example output and JSON, and the example results in SPEC.md (field by field, in
     order), are checked against what the tools return on the demo project.
-  - Every sealed-audit-chain failure reason maps to its own code.
+  - Every sealed-audit-chain failure reason maps to a code that names it: none falls through to `OTHER`.
   - A real MCP client talks to the server in both protocol eras, in-process and as a separate process
     over stdio.
   - Security: path escapes (also through links in a migrations folder), secret files, a hostile

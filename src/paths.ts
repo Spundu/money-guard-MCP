@@ -220,7 +220,7 @@ export function unreadable(shownPath: string, err: unknown): ToolError {
     code === 'EBUSY'
       ? ['is locked by another program', 'Close the program that holds it, then call again.']
       : code === 'EACCES' || code === 'EPERM'
-        ? ['cannot be read (permission denied)', 'Give the user that runs the server read access to it, then call again.']
+        ? ['cannot be read (permission denied)', 'Give the user that runs the server read access to it, and read and search (x) access to each folder on its path, then call again.']
         : code === 'ENOENT'
           ? ['no longer exists', 'It was moved or deleted while the tool read it: check the path, then call again.']
           : [`cannot be read (${typeof code === 'string' ? clip(code, 20) : 'an unknown error'})`, 'Close the program that holds it, or fix its permissions, then call again.'];

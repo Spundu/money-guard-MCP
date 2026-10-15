@@ -9,7 +9,7 @@ import { MAX_RESULT_CHARS } from './budget.js';
 import { clipPath, escapeHidden, escapeStrings } from './echo.js';
 import { ToolError } from './errors.js';
 import { checkLedgerFile } from './ledger/run.js';
-import { lintSchema } from './lint/run.js';
+import { lintSchema, refuseWhileLinting } from './lint/run.js';
 import { logLine } from './log.js';
 import { readChecked, resolveInRoot, type Root } from './paths.js';
 import { auditInput, auditOutput, ledgerInput, ledgerOutput, lintInput, lintOutput } from './schemas.js';
@@ -127,8 +127,9 @@ export function createServer(config: Config, log: Log = stderrLog): McpServer {
     'money_check_double_entry',
     { title: 'Check double-entry balance', description: LEDGER_DESCRIPTION, inputSchema: ledgerInput, outputSchema: ledgerOutput, annotations: ANNOTATIONS },
     async (args, ctx) =>
-      answer('money_check_double_entry', log, ctx.mcpReq.signal, () =>
-        checkLedgerFile(root(), {
+      answer('money_check_double_entry', log, ctx.mcpReq.signal, () => {
+        refuseWhileLinting();
+        return checkLedgerFile(root(), {
           file: args.file,
           columns: {
             transaction_id: args.columns.transaction_id,
@@ -145,8 +146,8 @@ export function createServer(config: Config, log: Log = stderrLog): McpServer {
           records_pointer: given(args.records_pointer),
           offset: given(args.offset),
           limit: given(args.limit),
-        }),
-      ),
+        });
+      }),
   );
 
   server.registerTool(
@@ -154,6 +155,7 @@ export function createServer(config: Config, log: Log = stderrLog): McpServer {
     { title: 'Verify audit log chain', description: AUDIT_DESCRIPTION, inputSchema: auditInput, outputSchema: auditOutput, annotations: ANNOTATIONS },
     async (args, ctx) =>
       answer('audit_verify_chain', log, ctx.mcpReq.signal, () => {
+        refuseWhileLinting();
         const target = resolveInRoot(root(), args.file, { kind: 'file', extensions: ['.jsonl', '.ndjson', '.log'], maxBytes: AUDIT_MAX_BYTES });
         if (!config.auditKeys.ok) throw config.auditKeys.error;
         return verifyAuditLog({ file: clipPath(target.rel), bytes: readChecked(target.real, target.rel), keys: config.auditKeys.value, anchor: given(args.anchor) });

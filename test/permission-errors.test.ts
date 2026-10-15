@@ -39,7 +39,7 @@ describe('a file or folder the system will not let the server read', () => {
     // Review round 7: "no longer exists" was told to close the program that holds it.
     expect(['EBUSY', 'EACCES', 'ENOENT'].map((code) => unreadable('exports/l.csv', { code }).fix)).toEqual([
       'Close the program that holds it, then call again.',
-      'Give the user that runs the server read access to it, then call again.',
+      'Give the user that runs the server read access to it, and read and search (x) access to each folder on its path, then call again.',
       'It was moved or deleted while the tool read it: check the path, then call again.',
     ]);
   });

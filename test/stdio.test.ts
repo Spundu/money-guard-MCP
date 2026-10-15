@@ -144,11 +144,21 @@ describe('the stdio process', () => {
         await new Promise((r) => setTimeout(r, 10));
       }
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 9999, method: 'ping' })}\n`);
-      await vi.waitFor(() => expect(stdout).toContain('"id":9999'), { timeout: 30_000, interval: 200 });
+      // Review round 8: on a slow disk (WSL reading /mnt/c) the 6,000 calls took over a minute while
+      // answers kept coming. What must not happen is that answers stop: fail after 20 s without one.
+      let answers = -1;
+      let quiet = 0;
+      while (!stdout.includes('"id":9999')) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const now = stdout.split('"id":').length - 1;
+        quiet = now === answers ? quiet + 1 : 0;
+        answers = now;
+        expect(quiet, `no answer for 20 s after ${answers} answers`).toBeLessThan(20);
+      }
     } finally {
       child.kill();
     }
-  }, 60_000);
+  }, 300_000);
 
   it('does not run a call the client cancelled before it ran, logs it CANCELLED, and sends no answer for it', async () => {
     // A million rows take seconds to check; cancelled before it ran, the call is not run at all.

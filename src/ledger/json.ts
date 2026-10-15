@@ -51,11 +51,13 @@ function hexValue(code: number): number {
  * A document larger in memory than the caller allows: more objects and arrays (each costs about 180
  * bytes of memory for 1 or 2 bytes of text, so a 25 MiB file of nested arrays would take over 2 GiB),
  * more values of any kind (a number costs about 60 bytes for 2 bytes of text), or an object with more
- * than MAX_OBJECT_KEYS keys (2.6 million keys took 8.5 seconds). `kind` says which.
+ * than MAX_OBJECT_KEYS keys (2.6 million keys took 8.5 seconds), or more than MAX_FIELD_NAMES different
+ * keys in all (the same cost spread over many small objects: 2.3 million took up to 11 seconds). `kind`
+ * says which.
  */
 export class JsonLimitError extends Error {
   override name = 'JsonLimitError';
-  constructor(readonly kind: 'containers' | 'values' | 'keys') {
+  constructor(readonly kind: 'containers' | 'values' | 'keys' | 'names') {
     super(`too many ${kind}`);
   }
 }
@@ -64,10 +66,15 @@ export class JsonLimitError extends Error {
 export interface JsonBudget {
   containers: number;
   values: number;
+  /** The different keys seen so far, when they are counted (at most MAX_FIELD_NAMES). */
+  names?: Set<string>;
 }
 
 /** The most keys one object may have: a ledger record has a few dozen at most. */
 export const MAX_OBJECT_KEYS = 10_000;
+
+/** The most different keys a file may hold in all: a ledger's records share a few dozen. */
+export const MAX_FIELD_NAMES = 100_000;
 
 class Parser {
   #pos = 0;
@@ -216,6 +223,11 @@ class Parser {
       this.#skipWhitespace();
       if (this.text.charCodeAt(this.#pos) !== QUOTE) this.#fail('expected a string key');
       const key = this.#string();
+      const names = this.budget.names;
+      if (names !== undefined && !names.has(key)) {
+        if (names.size >= MAX_FIELD_NAMES) throw new JsonLimitError('names');
+        names.add(key);
+      }
       this.#skipWhitespace();
       if (this.text.charCodeAt(this.#pos) !== 58 /* : */) this.#fail('expected :');
       this.#pos += 1;

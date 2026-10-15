@@ -28,6 +28,14 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(text).toBe(
       'COLUMN_NOT_FOUND: The CSV header has no column "amount_pens" (mapped as amount). Did you mean "amount_pence"? The columns are: "txn_id", "amount_pence". Fix: Map each field to one of the column names in the header.',
     );
+    // Review round 8: the list cuts a long name at 40 characters, so the suggestion shows it whole (up to
+    // 200), and a model that sent the cut name can map the real one.
+    const long = 'Transaction Identifier For The General Ledger Entry';
+    const cutName = `${long.slice(0, 39)}…`;
+    const csv = errorText(() => check('.csv', `${long},amount_pence\nA,1\n`, { columns: { transaction_id: cutName, amount: 'amount_pence' } }));
+    expect(csv).toContain(`Did you mean "${long}"? The columns are: "${cutName}", "amount_pence".`);
+    const json = errorText(() => check('.jsonl', `{"${long}":"A","a":1}\n`, { columns: { transaction_id: cutName, amount: 'a' } }));
+    expect(json).toContain(`Did you mean "${long}"? The first record's fields are: "${cutName}", "a".`);
   });
 
   it('suggests the delimiter when the header was read as one column that holds another one', () => {
@@ -219,6 +227,13 @@ describe('money_check_double_entry: reading JSON and JSONL', () => {
     expect(check('.json', doc, { columns, records_pointer: '/data/0' }).balanced).toBe(true);
     expect(errorText(() => check('.json', doc, { columns, records_pointer: '/data/00' }))).toMatch(/is nothing \(the pointer leads nowhere\)/);
   });
+
+  it('shows the pointers of findings escaped once, as every copied text: a backslash doubled (review round 8)', () => {
+    const key = `a${'\\'}u200b`; // a backslash, then u200b: plain text in a key
+    const doc = JSON.stringify({ [key]: [{ t: 'A', a: 5 }] });
+    const r = check('.json', doc, { columns: { transaction_id: 't', amount: 'a' }, records_pointer: `/${key}` });
+    expect(r.findings[0]?.pointers).toEqual([`/a${'\\\\'}u200b/0`]);
+  });
 });
 
 describe('money_check_double_entry: arguments', () => {
@@ -281,5 +296,10 @@ describe('money_check_double_entry: arguments', () => {
     const keys = `[{${Array.from({ length: 10_001 }, (_, i) => `"k${i}":1`).join(',')}}]`;
     expect(errorText(() => check('.json', keys, { columns }))).toMatch(/^FILE_TOO_LARGE: The file holds an object with more than 10,000 keys; this tool reads at most that many\./);
     expect(errorText(() => check('.json', `[${'1,'.repeat(7_000_000)}1]`, { columns }))).toMatch(/^FILE_TOO_LARGE: The file holds more than 7,000,000 JSON values; this tool reads at most that many\./);
+    // Review round 8: the same cost spread over many small objects, each with keys of its own.
+    const record = (i: number) => `{${Array.from({ length: 10 }, (_, k) => `"k${i}_${k}":1`).join(',')}}`;
+    const spread = Array.from({ length: 10_001 }, (_, i) => record(i));
+    expect(errorText(() => check('.json', `[${spread.join(',')}]`, { columns }))).toMatch(/^FILE_TOO_LARGE: The file holds more than 100,000 different field names; this tool reads at most that many\./);
+    expect(errorText(() => check('.jsonl', `${spread.join('\n')}\n`, { columns }))).toMatch(/^FILE_TOO_LARGE: The file holds more than 100,000 different field names/);
   });
 });

@@ -4,9 +4,9 @@
 
 import { CsvError, parse } from 'csv-parse/sync';
 import { closest } from '../closest.js';
-import { clip } from '../echo.js';
+import { NAME_MAX, clip } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { JsonLimitError, JsonNumber, JsonSyntaxError, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
+import { JsonLimitError, JsonNumber, JsonSyntaxError, MAX_FIELD_NAMES, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
 
 export type LedgerFormat = 'csv' | 'json' | 'jsonl';
 
@@ -54,13 +54,15 @@ export const MAX_CONTAINERS = 2_500_000;
 export const MAX_VALUES = 7_000_000;
 
 function jsonBudget(): JsonBudget {
-  return { containers: MAX_CONTAINERS, values: MAX_VALUES };
+  return { containers: MAX_CONTAINERS, values: MAX_VALUES, names: new Set() };
 }
 
 function tooLarge(err: JsonLimitError): ToolError {
   const what =
     err.kind === 'keys'
       ? `an object with more than ${MAX_OBJECT_KEYS.toLocaleString('en-GB')} keys`
+      : err.kind === 'names'
+        ? `more than ${MAX_FIELD_NAMES.toLocaleString('en-GB')} different field names`
       : err.kind === 'values'
         ? `more than ${MAX_VALUES.toLocaleString('en-GB')} JSON values`
         : `more than ${MAX_CONTAINERS.toLocaleString('en-GB')} JSON objects and arrays`;
@@ -111,7 +113,7 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   const shown = header.slice(0, 30).map((h) => `"${clip(h)}"`);
   const more = header.length > 30 ? ` and ${header.length - 30} more` : '';
   const near = closest(name, header);
-  const hint = near === undefined ? '' : ` Did you mean "${clip(near)}"?`;
+  const hint = near === undefined ? '' : ` Did you mean "${clip(near, NAME_MAX)}"?`;
   // A header read as one column that holds another delimiter: the file is separated by that one.
   // The one that occurs most in the header, read as one column, is the likeliest delimiter.
   const count = (d: string) => (header[0] ?? '').split(d).length - 1;
@@ -283,7 +285,7 @@ function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, fir
     if (good.some((row) => row.values[field] !== undefined)) continue;
     const keys = Object.keys(first);
     const near = name.startsWith('/') ? undefined : closest(name, keys);
-    const hint = near === undefined ? '' : ` Did you mean "${clip(near)}"?`;
+    const hint = near === undefined ? '' : ` Did you mean "${clip(near, NAME_MAX)}"?`;
     const shown = keys.slice(0, 30).map((k) => `"${clip(k)}"`).join(', ');
     const fields = keys.length === 0 ? 'The first record has no fields.' : `The first record's fields are: ${shown}${keys.length > 30 ? ` and ${keys.length - 30} more` : ''}.`;
     throw new ToolError(

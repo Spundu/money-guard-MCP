@@ -197,7 +197,7 @@ already read the files).
   setting and a `records_pointer` at 80, a `money_columns` or `ignore_columns` entry at 80 or 120, a log entry's `writer_key_id` at 64, a library reason at 120, a finding's `message` at
   120, a Postgres error message at 300 (it can quote the migration's own text, such as a path the
   migration names) and its detail at 120 (it can quote a row's values, as a unique-key violation does),
-  the reason a lint database stopped at 200, a statement's name in a hint at 60, and a CSV header read as one column is shown up to 40 characters, though that can
+  the reason a lint database stopped at 200, the one header or field name `COLUMN_NOT_FOUND` suggests at 200 (the list beside it cuts each name at 40, and the model needs the whole name to map it), a statement's name in a hint at 60, and a CSV header read as one column is shown up to 40 characters, though that can
   be all of a short file's first line. Database table and column names stay whole, so the model can act on them
   (PostgreSQL caps a name at 63 bytes). A column's type is cut at 200 characters: PostgreSQL's
   `format_type` writes it, and a migration can replace that function. A path inside the project stays whole up to 400 characters; a
@@ -250,19 +250,22 @@ Shared error codes:
 | `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. |
 | `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. |
 | `FILE_TOO_LARGE` | Over the tool's size limit. | States the limit; suggests a smaller export. |
-| `FILE_UNREADABLE` | The file or folder passed the checks but cannot be read: another program has it locked (Windows), permission is denied, or it went away. | Locked: close the program that holds it. Permission denied: give the user that runs the server read access. Gone: check the path. Then call again. |
-| `BUSY` | A second `money_lint_schema` while one runs (§2.6). | Retry after the running lint finishes: usually a few seconds, at most its time limit. |
+| `FILE_UNREADABLE` | The file or folder passed the checks but cannot be read: another program has it locked (Windows), permission is denied, or it went away. | Locked: close the program that holds it. Permission denied: give the user that runs the server read access, and read and search (x) access to each folder on its path. Gone: check the path. Then call again. |
+| `BUSY` | A second `money_lint_schema`, or a ledger or audit check, while a lint runs (§2.6). | Retry after the running lint finishes: usually a few seconds, at most its time limit. |
 | `INTERNAL_ERROR` | A bug. | Details are in the server's log (stderr). |
 
 ### 2.6 Limits and concurrency
 - At most **one** `money_lint_schema` runs at a time, because it starts a database: a second one gets
   `BUSY` straight away, with no hidden queue. (The MCP spec says servers MUST rate-limit tool calls.)
+  While a lint runs, `money_check_double_entry` and `audit_verify_chain` answer `BUSY` too: each holds
+  the main thread for seconds, and the lint's memory limit (§3.9) is checked on that thread, so a
+  hostile migration could grow by gigabytes before it was stopped. Once the lint has answered, they run.
 - `money_check_double_entry` and `audit_verify_chain` run to the end before the server reads the next
   message, so they answer one call after another; on the largest files they allow (25 and 100 MiB)
   that can take several seconds: 2 to 4 for a million-row CSV ledger and about 9 for a 100 MiB audit log on
   an ordinary machine, more on a busy one. A hostile file cannot make the ledger tool take much longer
   or fill memory: it keeps the first 10,000 findings (counting all), reads a CSV row of at most 1 MiB
-  of values, and a JSON file of at most 7,000,000 values (§4.8). A lint runs in its worker meanwhile.
+  of values, and a JSON file of at most 7,000,000 values and 100,000 different keys (§4.8).
 - A cancelled lint stops its work: the worker is terminated and its database discarded, the log gets
   a `CANCELLED` line, and the next lint can start at once (its database starts once the cancelled
   one's thread has ended, §3.4). A ledger or audit call cannot be cancelled
@@ -371,7 +374,9 @@ never converged: verify by executing, not by parsing.
     `-- Down Migration` (as its own parser reads them: indented, or with more dashes), and tern
     `---- create above / drop below ----`. A down marker counts only in a file that also holds its
     tool's up marker (tern has none), so a comment such as `-- Down migration (manual)` in an ordinary
-    file cuts nothing. The down part becomes blank, so line numbers stay exact. Without this, the down
+    file cuts nothing. A file that holds comments reading as both node-pg-migrate markers (`-- up
+    migration notes`, later `-- down migration is manual`) is cut as node-pg-migrate's own parser
+    would cut it. The down part becomes blank, so line numbers stay exact. Without this, the down
     part would drop what the up part created, and the lint would see nothing to check.
   - **pg_dump 17.6+/18:** lines starting `\restrict ` or `\unrestrict ` are blanked, keeping the same
     length, so line numbers stay exact.
@@ -391,7 +396,9 @@ never converged: verify by executing, not by parsing.
    or write the computer's files or run programs (§1, fact 6). The worker's output (a NOTICE a
    migration raises, say) is captured and dropped, so it never reaches the protocol channel or the log.
 3. Run `preset` (if given), then `setup` (if given). Then take a **baseline snapshot** of the catalog.
-   Columns already present at that point are not checked, unless a migration changes their type.
+   Columns already present at that point are not checked, unless a migration changes their type
+   (`real` and `double precision` count as one type here: both are floating point, so a setup
+   column changed from one to the other stays unchecked).
 4. Run each migration file as **one script**. PostgreSQL runs a multi-statement script as one
    transaction, so a file behaves as `psql -1 -f` would (`psql -f` alone commits statement by
    statement): a file that adds a value to an enum an earlier file created, then uses it, fails
@@ -420,8 +427,9 @@ never converged: verify by executing, not by parsing.
    table and column name, so its cost grows with the size of the schema (a 1,000-table schema reads in
    about a second). The worker says first that it is reading: a time limit or the memory limit hit
    there says so, not that the last file was running, and a read that fails (after a migration
-   replaced one of PostgreSQL's own functions that it uses, say) is `MIGRATION_FAILED` for the last
-   file: "the catalog could not be read after this file, the last one".
+   replaced one of PostgreSQL's own functions that it uses, say), or that returns a value of the wrong
+   kind (such a function returning NULL: every row is checked on the main thread), is
+   `MIGRATION_FAILED` for the last file: "the catalog could not be read after this file, the last one".
 6. For each finding, `introduced_in` is the earliest file after which the column has had its current
    type without a break. A change of precision or length (`numeric(10,2)` to `numeric(12,2)`, or `real`
    to `double precision`) is not a break. Examples:
@@ -489,15 +497,17 @@ word**, with these refinements:
 - **An amount "in" a currency:** a name that ends in currency or ccy after "in" is judged by the words
   before "in": `debit_in_account_currency` is money; `amount_currency` and `payment_method_currency`
   are not.
-- **Units:** unit and units are non-money last words (`net_units`, `price_unit`), except after minor
-  or smallest, where they name the unit of an amount (`amount_minor_units`, `amount_in_smallest_unit`).
+- **Units:** unit and units are non-money last words (`net_units`), except after minor or smallest,
+  where they name the unit of an amount (`amount_minor_units`, `amount_in_smallest_unit`), and after
+  price or cost, where they make a unit price (`price_unit`, Odoo's price on every order line).
 - **Generic money words:** total, net, gross, credit, charge, principal and interest also start many
   measures (`total_co2`, `net_change`, `credit_utilization`, `interest_coverage`). When they are
-  the only money words, the name is money only when nothing follows the last of them (`grand_total`,
-  `net`) or every word after it says what the money is: a money word, a minor-unit word, a word that
-  stands beside money words, a currency code, a finer unit, or one of the words after generic money
-  words (lists below): `total_paid`, `credit_limit`, `net_worth`, `total_jpy` are money;
-  `total_co2` and `total_tokens` are not.
+  the only money words, the name is money unless a word after the last of them is a measure: a
+  non-money last word (except unit or units after minor or smallest) or one of the measures after
+  generic money words (lists below). `total_paid`, `total_deposited`, `net_ytd`, `credit_used`
+  and `total_minor_units` are money; `total_co2` (co and 2), `total_tokens` and `net_units` are not.
+  Words not in the lists count as money: a missed money column gets no warning at all, while a
+  measure taken for money gets a finding someone can dismiss.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
   `totalamount`. Every word the rule does not know is first split into the words it knows (the money,
   non-money, minor-unit, ratio, rate, value and beside lists, all in this section), in as few words as
@@ -531,22 +541,22 @@ The word lists:
     royalties, arrears, overdraft, overdrafts, payable, payables, receivable, receivables, spending,
     contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, bal,
     deduction, deductions, markup, markups, gratuity, gratuities, duty, duties, excise, tariff, tariffs,
-    brokerage
+    brokerage, freight, toll, tolls, ltv, ebitda, severance, debt, debts
   - minor units of other currencies: paisa, kobo, sats, satoshi, satoshis, centavo, centavos, kopek,
     kopeks, kopeck, kopecks, wei, lamport, lamports, msat, msats
 - **Generic money word list:** total, totals, net, gross, credit, credits, charge, charges, principal,
   interest
-- **Words after generic money words:** spent, received, collected, billed, invoiced, charged, refunded,
-  earned, owing, raised, accrued, worth, incl, excl, inc, ex, with, without
-- **Words beside money words** (known for splitting folded names and after generic money words):
+- **Measures after generic money words:** co, ghg, carbon, emissions, reps, carbs, protein, fat, sugar,
+  latency, memory, cpu, ram, disk, storage, bandwidth, tokens, errors, failures, requests, calls,
+  events, messages, downloads, files, tasks, jobs, runs, tests, cases, deaths, population, words,
+  chars, characters, likes, followers, rainfall, change, changes, flow, flows, utilization,
+  utilisation, component, components, coverage, axis, investigator
+- **Words beside money words** (known for splitting folded names):
   platform, service, late, sales, sale, base, retail, wholesale, delivery, handling, processing,
   booking, cancellation, setup, transfer, exchange, monthly, annual, yearly, initial, final, original,
   max, min, limit, due, paid, owed, outstanding, remaining, pending, grand, line, item, order, invoice,
   account, opening, closing, current, available, card, per, in, value, after, before, smallest, unit,
   old, new, prev, previous, holiday, sick, overtime, take, home
-- **Currency codes** (beside gbp, usd and eur, which are money words): bif, clp, djf, gnf, isk, jpy,
-  kmf, krw, pyg, rwf, ugx, vnd, vuv, xaf, xof, xpf, aud, brl, cad, chf, cny, czk, dkk, hkd, huf, idr,
-  ils, inr, mxn, myr, nok, nzd, php, pln, ron, sek, sgd, thb, try, twd, zar, aed, sar
 - **Non-money last words:**
   - identifiers and labels: id, ids, uuid, key, ref, code, currency, ccy, type, kind, status, state,
     method, mode, reason, note, notes, description, desc, label, name, title, text, url, hash, flag,
@@ -568,10 +578,10 @@ The word lists:
   lamports, msat, msats; and "minor" or "smallest" before unit or units (`amount_minor_units`,
   `amount_in_smallest_unit`).
 - **Currencies without minor units** (ISO 4217 exponent 0; `fix_sql` only rounds, as whole yen are
-  the smallest unit): bif, clp, djf, gnf, isk, jpy, kmf, krw, pyg, rwf, ugx, vnd, vuv, xaf, xof, xpf
-- **Unsure unit words** (`fix_sql` is `null`, the unit needs a decision): sat, minor. Without unit
+  the smallest unit): bif, clp, djf, gnf, isk, jpy, kmf, krw, pyg, rwf, ugx, vnd, vuv, xaf, xof, xpf, yen
+- **Unsure unit words** (`fix_sql` is `null`, the unit needs a decision): sat, minor, won. Without unit
   after them they may say the unit or something else (`amount_minor`, but also `price_minor`, a
-  child's price, and `price_sat`, Saturday's).
+  child's price, and `price_sat`, Saturday's; `amount_won` may be Korean won or a prize).
 - **Finer units** (`fix_sql` is `null`: `cost_micros` holds millionths, and a fix must choose the
   unit): micros, micro, millicents, millicent, mills, gwei
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
@@ -641,7 +651,8 @@ conversion follows the name and the declared scale; the test suite runs each kin
   Check triggers and functions that use the column before running a fix that multiplies. Fine, and the fix is offered: a
   CHECK such as `amount >= 0`; digits in a name (`q1_revenue >= 0`) or a type's size
   (`0::numeric(10,2)`); a two-decimal guard (`total = round(total, 2)`, `scale(total) <= 2`), which
-  holds for pence as it did for pounds (`trunc(total, 2)` and `scale(total) < 3` too); a unique index whose condition holds no amount (`WHERE
+  holds for pence as it did for pounds (`trunc(total, 2)` and `scale(total) < 3` too, but not
+  `scale(total) = 2`: a `bigint` has scale 0, so that guard would refuse every value); a unique index whose condition holds no amount (`WHERE
   deleted_at IS NULL`); and an ordinary index with a condition (it only decides which rows it speeds
   up). A `money` column whose default, CHECK or index condition holds a money value (`0::money`) gets
   `null`: such a value cannot work on a `bigint`, so the ALTER would fail.
@@ -689,7 +700,7 @@ shows it: the tool runs the new migration too.
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, or more than 10,000 files and folders to look through for them (listing them blocks the server). | Points at the folder of migrations, or `files`. |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, or `files` is given with a single `.sql` file. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
-| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: pass a larger `timeout_seconds`, or lint one schema-only dump of the database they build; linting the files in groups would fail, as each group needs the ones before it), and that a larger limit helps only with a client that waits longer than 60 seconds. |
+| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: pass a larger `timeout_seconds`, or lint one schema-only dump of the database they build; linting the files in groups would fail, as each group needs the ones before it; while the catalog was read, after every file had run: none of these), and that a limit over 60 seconds helps only with a client that waits longer than that. |
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
@@ -707,10 +718,12 @@ The `MIGRATION_FAILED` hints by SQLSTATE:
   than one transaction can hold locks for": split it (the lint database already allows 4,096 locks per
   transaction, against PostgreSQL's default of 64, so a one-file dump of thousands of tables runs).
 - **42P07, 42710, 42P06, 42723** (a table, a role or extension, a schema or a function that already
-  exists): "something creates this object twice", with only the causes there can be (two migrations
-  or files out of order; for one file, the file itself; the setup file only when one is given):
+  exists): "something creates this object twice", with only the causes there can be (the file
+  itself; in a folder, two migrations or files out of order too; the setup file only when one is
+  given, and not for the preset):
   "create it once, or with IF NOT EXISTS"; with the
-  Supabase preset, that the preset already makes some objects (roles such as anon).
+  Supabase preset, that the preset already makes some objects (roles such as anon). For the public
+  schema or the plpgsql language: every PostgreSQL database already has them.
 - **Extension not available:** the list of available extensions, and that a whole-database dump
   (`pg_dump`, `supabase db dump`) should be linted as its migrations folder instead.
 - **42601** (syntax error) on a line starting with `\`: "psql meta-command"; after a
@@ -884,7 +897,8 @@ Those functions throw at the first problem. This tool returns **every** problem.
   missing CSV column lists the header). A field that only some records lack is `MISSING_VALUE` on
   those rows.
 - **Transaction ids** are compared exactly. A JSON number id is its exact value as text: `1e3` is
-  `1000`, and 1234567890123456789 stays itself.
+  `1000`, and 1234567890123456789 stays itself. So the number `7` and the string `"7"` are one id,
+  as they are in most exports that write ids either way.
 - **Currency** is trimmed and upper-cased.
 - **Locations:** CSV and JSONL findings give **line numbers**: 1-based, the header is line 1, and a
   multi-line CSV record is reported at the line where it starts. JSON findings give **JSON Pointers**
@@ -949,7 +963,7 @@ too large or too small to use (more than 400 places, §4.4).
 | `code`, `severity` | | As above. |
 | `transaction_id` | string or null | Cut at 40 characters for display. Grouping always uses the full id. |
 | `lines` | integer[] | CSV and JSONL: the rows involved, at most 20. |
-| `pointers` | string[] | JSON: the records involved, at most 20. |
+| `pointers` | string[] | JSON: the records involved, at most 20, escaped as every copied text is (§2.4). |
 | `more_rows` | integer | How many rows were left out of `lines`/`pointers`. |
 | `field` | string | For row findings: `amount`, `side`, `debit`, `credit`, `currency`, `transaction_id`, or `debit/credit` when both are empty. |
 | `value` | string | The offending text, ≤ 40 characters. |
@@ -961,7 +975,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy or curr anywhere in it, or cur first, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio or "in": `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name that ends in its currency word or in "code" is named first; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy or curr anywhere in it, or cur first, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio or "in": `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -976,7 +990,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 | Code | When |
 |---|---|
 | `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields, a row of more than 1 MiB of values) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). |
-| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match. When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). |
+| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match (≤ 200 characters, so a long name can be mapped). When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. |
 | `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. "an object with keys data, meta" (≤ 20 keys, ≤ 40 characters each). |
@@ -988,8 +1002,9 @@ The fields come in the order of this table. Findings are sorted by their first l
   2,500,000 objects and arrays: each costs about 180 bytes of memory for one or two bytes of text, so
   a 25 MiB file of nested arrays would take over 2 GiB (`FILE_TOO_LARGE`). A million records with one
   nested object each fit. It holds at most 7,000,000 values of any kind (a number costs about 60 bytes
-  for two of text; a file of records holds about 5 million at most), and no object holds more than
-  10,000 keys (`FILE_TOO_LARGE` too).
+  for two of text; a file of records holds about 5 million at most), no object holds more than
+  10,000 keys, and the file holds at most 100,000 different keys in all (each new key costs the
+  parser time: 2.3 million spread over small records took up to 11 seconds) (`FILE_TOO_LARGE` too).
 - A CSV row holds at most 1 MiB of values (`PARSE_ERROR`): a 25 MiB row of one-character fields took
   15 seconds to read.
 - At most 20 locations per finding.
@@ -1194,7 +1209,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 780); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 830); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
@@ -1231,7 +1246,7 @@ The tests are in `test/` (Vitest, about 780); each file starts with a comment sa
   anchors from an earlier run (grown, emptied, replaced, broken at the last entry the anchor covers,
   and broken at the entry right after it, honestly or after a replacement); and a scan of the library's code that fails if it can
   return a reason this server does not map.
-- **Every error code** and every finding code is produced by a test. **Names:** about 300 column names,
+- **Every error code** and every finding code is produced by a test. **Names:** about 350 column names,
   most of them real, with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (and, through such a link,
   the same answer whether the path behind it exists or not) (the file-link cases skip

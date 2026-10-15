@@ -217,7 +217,7 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   if (anchor && anchorChecked) {
     const replaced = headMismatch(bytes, anchor, result);
     if (replaced) return replaced;
-    notes.push('The entries the anchor covers are intact; the break comes after them.');
+    if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
   } else if (anchor) {
     notes.push('The anchor was not checked: the chain breaks at or before the last entry it covers, so entries it vouched for are damaged or gone.');
   }

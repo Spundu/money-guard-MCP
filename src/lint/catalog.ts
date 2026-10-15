@@ -134,6 +134,26 @@ export const DETAIL_SQL = `
   LEFT JOIN col_indexes ON col_indexes.root = cols.relid AND col_indexes.attname = cols.column_name
   ORDER BY cols.schema_name, cols.table_name, cols.column_name`;
 
+/**
+ * Whether a row of the catalog read has the kinds of values DetailRow says. A migration can replace the
+ * functions that write them (format_type, pg_get_expr, concat_ws) with ones that return NULL.
+ */
+export function isDetailRow(row: unknown): row is DetailRow {
+  if (typeof row !== 'object' || row === null) return false;
+  const r = row as Record<string, unknown>;
+  const text = (k: string) => typeof r[k] === 'string';
+  const texts = (k: string, nullItems = false) => r[k] === null || (Array.isArray(r[k]) && r[k].every((v) => typeof v === 'string' || (nullItems && v === null)));
+  return (
+    ['col', 'schema_name', 'table_name', 'column_name', 'declared', 'generated', 'base_name', 'base_schema', 'base_kind'].every(text) &&
+    typeof r.inherited === 'boolean' &&
+    typeof r.via_array === 'boolean' &&
+    (r.domain_name === null || text('domain_name')) &&
+    texts('defaults') &&
+    texts('checks', true) &&
+    texts('index_exprs')
+  );
+}
+
 export interface DetailRow {
   col: string;
   schema_name: string;
@@ -252,7 +272,8 @@ export function holdsNoAmount(expr: string): boolean {
     .replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, (token) => (token.startsWith("'") && /\d/.test(token) ? token.slice(1, -1) : 'x'))
     .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?(?:\[\])?/g, '') // a cast and its type's size
     .replace(/\b(?:round|trunc)\(((?:[^()]|\([^()]*\))*),\s*\d+\)/g, '($1)') // round(x, 2): places
-    .replace(/\bscale\(((?:[^()]|\([^()]*\))*)\)\s*(?:<=|<|=)\s*\d+/g, '($1)') // scale(x) <= 2: places
+    // scale(x) <= 2: places. "= 2" is not: a bigint has scale 0, so it would fail for every value.
+    .replace(/\bscale\(((?:[^()]|\([^()]*\))*)\)\s*(?:(?:<=|<)\s*\d+|=\s*0+(?![\d.]))/g, '($1)')
     .replace(/\b[a-z_][a-z0-9_$]*\b(?!\s*\()/gi, 'x'); // a bare name, which may hold digits
   return !/[1-9]/.test(rest) && !/[\p{L}\p{N}_"]\(/u.test(rest);
 }

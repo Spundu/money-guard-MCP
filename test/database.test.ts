@@ -248,7 +248,7 @@ describe('runScripts with a database that misbehaves', () => {
     await expect(run('reading', { timeoutMs: 3000 })).rejects.toMatchObject({
       code: 'TIMEOUT',
       message: 'The lint ran out of time (3 s) while reading the catalog, after every file had run.',
-      fix: 'Leave slow data-loading files out with files. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.',
+      fix: 'timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.',
     });
     await expect(run('reading-crash')).rejects.toMatchObject({
       code: 'MIGRATION_FAILED',
@@ -271,13 +271,13 @@ describe('runScripts with a database that misbehaves', () => {
     await expect(run('endless', { timeoutMs: 3000 })).rejects.toMatchObject({
       code: 'TIMEOUT',
       message: 'The lint ran out of time (3 s) while starting the database.',
-      fix: 'A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.',
+      fix: 'timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.',
     });
     process.env.MONEY_GUARD_TEST_WORKER = 'hang';
     await expect(runScripts([{ name: 'setup.sql', text: 'select 1;', phase: 'setup' }], { timeoutMs: 3000, preset: false, worker: FAKE })).rejects.toMatchObject({
       code: 'TIMEOUT',
       message: 'The lint ran out of time (3 s) while running setup.sql.',
-      fix: 'Take slow data loading out of the setup file. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.',
+      fix: 'Take slow data loading out of the setup file. timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.',
     });
   });
 
@@ -309,7 +309,8 @@ describe('runScripts with a database that misbehaves', () => {
         (e: unknown) => (e instanceof ToolError ? e.fix : String(e)),
       );
     };
-    expect(await fixOf('reading', 3000)).toBe('If the file loads data, lint a schema-only copy (pg_dump --schema-only). A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.');
+    // Review round 8: every file had run, so data loading is not what took the time.
+    expect(await fixOf('reading', 3000)).toBe('timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.');
     expect(await fixOf('unusable')).toBe('Lint a copy without that statement.');
     expect(await fixOf('crash')).toBe('Lint parts of the file on their own to find the statement that stops the database.');
     expect(await fixOf('reading-crash')).toBe("Lint parts of the file on their own to find the statement that breaks the read (one that replaces PostgreSQL's own functions, say).");

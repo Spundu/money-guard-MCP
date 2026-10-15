@@ -87,6 +87,20 @@ describe.each(ERAS)('the server, %s era', (era) => {
     }
   });
 
+  it('answers BUSY from the ledger and audit tools while a lint runs, so the lint memory check keeps running', async () => {
+    // Review round 8: a ledger or audit call holds the main thread for seconds, and the lint's memory
+    // limit is checked there: a hostile migration grew by gigabytes meanwhile.
+    const client = await connect(era);
+    const lint = client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'db/migrations' } });
+    const busy = await Promise.all([
+      client.callTool({ name: 'money_check_double_entry', arguments: JOURNAL_ARGS }),
+      client.callTool({ name: 'audit_verify_chain', arguments: { file: 'logs/audit.jsonl' } }),
+    ]);
+    expect(busy.map((r) => [r.isError, textOf(r).split(':')[0]])).toEqual([[true, 'BUSY'], [true, 'BUSY']]);
+    expect((await lint).isError ?? false).toBe(false);
+    expect((await client.callTool({ name: 'money_check_double_entry', arguments: JOURNAL_ARGS })).isError ?? false).toBe(false); // free again
+  });
+
   it('answers a problem the model can fix with an isError result that starts with the code', async () => {
     const client = await connect(era);
     const r = await client.callTool({ name: 'money_check_double_entry', arguments: { ...JOURNAL_ARGS, file: '../outside.csv' } });

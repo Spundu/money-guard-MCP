@@ -78,9 +78,11 @@ export function failure(script: Script, err: DbError, context: { available: read
       'A whole-database dump (pg_dump, supabase db dump) also creates the extensions a platform provides: lint the migrations folder instead (supabase/migrations for Supabase).';
   } else if (err.code === '42883' && err.message.startsWith('operator does not exist')) {
     fix = 'The two sides of an operator have types that do not go together (uuid and text, say): cast one side, or fix the column type.';
+  } else if (err.code !== undefined && ALREADY_EXISTS.has(err.code) && /"(?:public|plpgsql)"/.test(err.message)) {
+    fix = 'Every PostgreSQL database already has the public schema and the plpgsql language: leave them out, or create them with IF NOT EXISTS.';
   } else if (err.code !== undefined && ALREADY_EXISTS.has(err.code)) {
     // setup or a preset cannot help here: they may be what made it first.
-    fix = `${context.preset ? 'The Supabase preset already creates some objects (roles such as anon, the auth and extensions schemas): leave those out here, or create them with IF NOT EXISTS. ' : ''}Something creates this object twice: ${past({ setup: 'the setup file itself', folder: context.setupGiven === true ? 'the setup file and a migration, two migrations, or files run out of order' : 'two migrations, or files run out of order', single: context.setupGiven === true ? 'the file itself, or the setup file and the file' : 'the file itself' })}. Create it once, or with IF NOT EXISTS.`;
+    fix = `${context.preset ? 'The Supabase preset already creates some objects (roles such as anon, the auth and extensions schemas): leave those out here, or create them with IF NOT EXISTS. ' : ''}Something creates this object twice: ${past({ setup: 'the setup file itself', folder: context.setupGiven === true ? 'the file itself, the setup file and a migration, two migrations, or files run out of order' : 'the file itself, two migrations, or files run out of order', single: context.setupGiven === true ? 'the file itself, or the setup file and the file' : 'the file itself' })}. Create it once, or with IF NOT EXISTS.`;
   } else if (setup && err.code !== undefined && MISSING_OBJECT.has(err.code)) {
     fix = context.preset
       ? 'The Supabase preset does not create this: create it earlier in the setup file.'

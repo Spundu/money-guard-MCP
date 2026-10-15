@@ -92,18 +92,25 @@ describe('money_lint_schema: failures', () => {
     // Review round 7: one dump file without setup was told of "the setup file" and "files run out of order".
     const dir = newDir();
     const twice = 'create table a (id int);\ncreate table a (id int);\n';
-    writeTree(path.join(projectRoot().real, dir), { 'dump.sql': twice, 'db/0001.sql': 'create table b (id int);', 'db/0002.sql': 'create table b (id int);', 'setup.sql': 'create table b (id int);', 'one/0001.sql': 'select 1;' });
-    const fixOf = async (params: { migrations: string; setup?: string }) =>
+    writeTree(path.join(projectRoot().real, dir), { 'dump.sql': twice, 'db/0001.sql': 'create table b (id int);', 'db/0002.sql': 'create table b (id int);', 'setup.sql': 'create table b (id int);', 'one/0001.sql': 'select 1;', 'twice/0001.sql': twice, 'pub/0001.sql': 'create schema public;' });
+    const fixOf = async (params: { migrations: string; setup?: string; preset?: 'supabase' }) =>
       lintSchema(projectRoot(), params).then(
         () => '',
         (e: { fix: string }) => e.fix,
       );
     expect(await fixOf({ migrations: `${dir}/dump.sql` })).toBe('Something creates this object twice: the file itself. Create it once, or with IF NOT EXISTS.');
-    expect(await fixOf({ migrations: `${dir}/db` })).toBe('Something creates this object twice: two migrations, or files run out of order. Create it once, or with IF NOT EXISTS.');
-    expect(await fixOf({ migrations: `${dir}/db`, setup: `${dir}/setup.sql` })).toMatch(/twice: the setup file and a migration, two migrations, or files run out of order\./);
+    expect(await fixOf({ migrations: `${dir}/db` })).toBe('Something creates this object twice: the file itself, two migrations, or files run out of order. Create it once, or with IF NOT EXISTS.');
+    // Review round 8: in a folder too, one file can create it twice; PostgreSQL itself makes the public schema.
+    expect(await fixOf({ migrations: `${dir}/twice` })).toMatch(/twice: the file itself, two migrations/);
+    expect(await fixOf({ migrations: `${dir}/pub` })).toBe('Every PostgreSQL database already has the public schema and the plpgsql language: leave them out, or create them with IF NOT EXISTS.');
+    expect(await fixOf({ migrations: `${dir}/db`, setup: `${dir}/setup.sql` })).toMatch(/twice: the file itself, the setup file and a migration, two migrations, or files run out of order\./);
     expect(await fixOf({ migrations: `${dir}/dump.sql`, setup: `${dir}/one/0001.sql` })).toMatch(/twice: the file itself, or the setup file and the file\./);
     // In the setup file itself, the same hint: it may be what creates the object twice.
     expect(await fixOf({ migrations: `${dir}/one`, setup: `${dir}/dump.sql` })).toBe('Something creates this object twice: the setup file itself. Create it once, or with IF NOT EXISTS.');
+    // Review round 8: the preset is not a setup file. Without one, none is named.
+    const preset = 'The Supabase preset already creates some objects (roles such as anon, the auth and extensions schemas): leave those out here, or create them with IF NOT EXISTS. Something creates this object twice: ';
+    expect(await fixOf({ migrations: `${dir}/db`, preset: 'supabase' })).toBe(`${preset}the file itself, two migrations, or files run out of order. Create it once, or with IF NOT EXISTS.`);
+    expect(await fixOf({ migrations: `${dir}/dump.sql`, preset: 'supabase' })).toBe(`${preset}the file itself. Create it once, or with IF NOT EXISTS.`);
   });
 });
 
@@ -243,7 +250,7 @@ describe('money_lint_schema: safety', () => {
     const e = await failure({ 'db/migrations/0001.sql': 'select 1;', 'db/migrations/0002_loop.sql': 'do $$ begin loop end loop; end $$;' }, { timeout_seconds: 20 });
     expect(e.code).toBe('TIMEOUT');
     expect(e.message).toMatch(/ran out of time \(20 s\) while running p\d+\/db\/migrations\/0002_loop\.sql/);
-    expect(e.fix).toBe('Leave slow data-loading files out with files. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.');
+    expect(e.fix).toBe('Leave slow data-loading files out with files. timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.');
     expect(Date.now() - started).toBeLessThan(35_000);
   });
 
@@ -256,6 +263,14 @@ describe('money_lint_schema: safety', () => {
     });
     expect(e.code).toBe('MIGRATION_FAILED');
     expect(e.message).toBe(`${lastDir()}/db/migrations/0002.sql: the catalog could not be read after this file, the last one (division by zero).`);
+    // Review round 8: a replacement that returns NULL was INTERNAL_ERROR, "a bug in money-guard".
+    for (const fn of ['format_type(oid, integer)', 'pg_get_expr(pg_node_tree, oid)']) {
+      const nulls = await failure({
+        'db/migrations/0001.sql': 'create table t (amount numeric default 0);',
+        'db/migrations/0002.sql': `create or replace function pg_catalog.${fn} returns text language sql as $$ select null::text $$;`,
+      });
+      expect([nulls.code, nulls.message], fn).toEqual(['MIGRATION_FAILED', `${lastDir()}/db/migrations/0002.sql: the catalog could not be read after this file, the last one (a function of PostgreSQL's gave a value of the wrong kind).`]);
+    }
   });
 
   it.each([

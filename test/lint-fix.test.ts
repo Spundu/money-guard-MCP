@@ -124,12 +124,14 @@ describe('money_lint_schema: fix_sql', () => {
       '(q1_revenue >= (0)::numeric)', '("Q2 total" >= 0)', '(total >= (0)::numeric(10,2))', '(total = round(total, 2))',
       '(total = round((total)::numeric, 2))', '(scale(fee) <= 2)', '(deleted_at IS NULL)',
       // review round 5: trunc's places and "scale below 3" guard two decimals too; a text literal holds no amount
-      '(total = trunc(total, 2))', '(scale(total) < 3)', "((total >= (0)::numeric) AND (note <> 'x\"y'::text))",
+      '(total = trunc(total, 2))', '(scale(total) < 3)', '(scale(total) = 0)', "((total >= (0)::numeric) AND (note <> 'x\"y'::text))",
     ];
     for (const expr of safe) expect(holdsNoAmount(expr), expr).toBe(true);
     const amounts = ['((fee > (0)::numeric) AND (fee <= 99.99))', '(cap <= max_total())', '(amount <= (1000)::numeric)', '(round(amount) = amount)', '(amount > (100)::numeric(10,2))', "(code <> '840'::text)",
       // review round 5: a quote inside a text literal must not hide the amount after it; an amount in quotes
-      "(((total)::text <> 'x\"'::text) AND (total < 500) AND ('\"'::text <> 'y'::text))", "(total <= '1000.00'::numeric)"];
+      "(((total)::text <> 'x\"'::text) AND (total < 500) AND ('\"'::text <> 'y'::text))", "(total <= '1000.00'::numeric)",
+      // review round 8: a bigint has scale 0, so "scale = 2" fails for every pence value
+      '(scale((price)::numeric) = 2)', '(scale(total) = 1)'];
     for (const expr of amounts) expect(holdsNoAmount(expr), expr).toBe(false);
   });
 

@@ -1,6 +1,6 @@
 // audit_verify_chain's core (src/audit/verify.ts, SPEC.md §5): a valid log, one log per reason a log can
 // fail, anchors from an earlier run (grown, emptied, replaced, broken after them), CR LF line ends, and a
-// scan proving every reason the library can return is mapped to its own code.
+// scan proving every reason the library can return is mapped to a code that names it, not OTHER.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -171,6 +171,9 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(run(bytes(VALID), { count: 0, last_hash: GENESIS_HASH }).ok).toBe(true);
     expect(run(bytes(''), { count: 0, last_hash: GENESIS_HASH }).summary).toBe('The log is empty, which always verifies. It matches the anchor.');
     expect(run(bytes(VALID), { count: 0, last_hash: 'a'.repeat(64) })).toMatchObject({ ok: false, break: { code: 'ANCHOR_HEAD_MISMATCH', line: null } });
+    // Review round 8: an anchor of no entries vouches for none, so no note says its entries are intact.
+    const broken = run(bytes(VALID.replace('"alice"', '"mallory"')), { count: 0, last_hash: GENESIS_HASH });
+    expect([broken.ok, broken.break?.entry_index, broken.notes]).toEqual([false, 0, []]);
   });
 
   it('catches an emptied log, without telling the caller to pass the anchor it passed', () => {
@@ -256,7 +259,7 @@ describe('reasonCode', () => {
     expect(reasons.size).toBeGreaterThanOrEqual(15);
   });
 
-  it('maps every reason verifyJsonl can return to its own code', () => {
+  it('maps every reason verifyJsonl can return to a code that names it, not OTHER', () => {
     const unmapped = [...reasons].filter((r) => !VERIFY_CHAIN_ONLY.has(r) && reasonCode(r) === 'OTHER');
     expect(unmapped).toEqual([]);
   });

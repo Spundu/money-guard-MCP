@@ -9,7 +9,7 @@ import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { failedCode, failure, tooBig, wayPast } from './advice.js';
 import { formatMib } from '../paths.js';
-import { DETAIL_SQL, MARK_SQL, SNAPSHOT_SQL, type DetailRow } from './catalog.js';
+import { DETAIL_SQL, MARK_SQL, SNAPSHOT_SQL, isDetailRow, type DetailRow } from './catalog.js';
 
 export interface Script {
   /** What messages call it, as they may show it: a path relative to the root (through clipPath), or "the Supabase preset". */
@@ -80,7 +80,7 @@ type Message =
   | { type: 'failed'; step: number; error: DbError }
   | { type: 'unusable'; step: number }
   | { type: 'crashed'; error: DbError }
-  | { type: 'done'; detail: DetailRow[] };
+  | { type: 'done'; detail: DetailRow[] }; // from the real worker, checked with isDetailRow: the migrations control the database
 
 /** The worker's error as an Error for the log: its type and code only (its stack stayed in the worker). */
 function workerError(e: DbError): Error {
@@ -102,6 +102,8 @@ export interface RunOptions {
   timeoutMs: number;
   preset: boolean;
   filesGiven?: boolean | undefined;
+  /** A setup file was given (the preset is not one). */
+  setupGiven?: boolean | undefined;
   /** migrations names one file, which files cannot pick from. */
   single?: boolean | undefined;
   signal?: AbortSignal | undefined;
@@ -148,7 +150,7 @@ function waitForThread(previous: Promise<unknown>, options: RunOptions): Promise
     const limit = setTimeout(
       () =>
         done(() =>
-          reject(new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while starting the database.`, 'A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.')),
+          reject(new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while starting the database.`, 'timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.')),
         ),
       options.timeoutMs,
     );
@@ -260,13 +262,13 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
       const migrations = scripts.filter((s) => s.phase === 'migration').length;
       const folder =
         migrations >= MANY_FILES
-          ? `The folder holds ${migrations} migration files, each run and checked in turn: pass a larger timeout_seconds, or lint one schema-only dump of the database they build (pg_dump --schema-only).`
+          ? `The folder holds ${migrations.toLocaleString('en-GB')} migration files, each run and checked in turn: pass a larger timeout_seconds, or lint one schema-only dump of the database they build (pg_dump --schema-only).`
           : 'Leave slow data-loading files out with files.';
       const slow =
-        script === undefined
+        script === undefined || reading // every file had run: data loading is not what took the time
           ? ''
           : `${wayPast(script, options.single, { setup: 'Take slow data loading out of the setup file.', folder, single: 'If the file loads data, lint a schema-only copy (pg_dump --schema-only).' })} `;
-      finish({ error: new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while ${doing}.`, `${slow}A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.`) });
+      finish({ error: new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while ${doing}.`, `${slow}timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.`) });
     }, Math.max(0, options.timeoutMs - (Date.now() - calledAt)));
     const onAbort = () => finish({ error: options.signal?.reason ?? new Error('cancelled') });
     if (options.signal?.aborted) onAbort();
@@ -313,7 +315,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           reading = true;
           break;
         case 'failed':
-          finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset, filesGiven: options.filesGiven ?? false, single: options.single ?? false, setupGiven: scripts.some((s) => s.phase === 'setup') }) });
+          finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset, filesGiven: options.filesGiven ?? false, single: options.single ?? false, setupGiven: options.setupGiven ?? false }) });
           break;
         case 'unusable':
           finish({ error: stuck(m.step, 'no longer answers correctly') });
@@ -322,6 +324,12 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           finish({ error: stopped(m.error.message, workerError(m.error)) });
           break;
         case 'done':
+          // A migration that replaces one of PostgreSQL's own functions can make the read return NULL.
+          // (A test's own worker, given as options.worker, sends rows of its own query.)
+          if (options.worker === undefined && !(m.detail as unknown[]).every(isDetailRow)) {
+            finish({ error: stopped("a function of PostgreSQL's gave a value of the wrong kind") });
+            break;
+          }
           finish({ ok: { postgres, detail: m.detail, since: new Map([...since].map(([col, v]) => [col, v.since])), reserved: new Set(reserved) } });
           break;
       }

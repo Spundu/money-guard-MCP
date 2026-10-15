@@ -63,14 +63,25 @@ function columnSet(entries: readonly string[] | undefined, param: string): Set<s
 }
 
 function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
+  return `${n.toLocaleString('en-GB')} ${word}${n === 1 ? '' : 's'}`;
 }
 
 let busy = false;
 
+const BUSY_FIX = 'Call again when the running lint has finished: usually a few seconds, but at most its time limit (45 seconds unless it set timeout_seconds).';
+
+/**
+ * The ledger and audit tools call this first. While a lint runs they answer BUSY: each holds the main
+ * thread for seconds, and the lint's memory limit is checked there, so a migration could otherwise grow
+ * by gigabytes before it is stopped.
+ */
+export function refuseWhileLinting(): void {
+  if (busy) throw new ToolError('BUSY', 'A schema lint is running; this check waits for it, so that the lint\'s memory limit keeps being checked.', BUSY_FIX);
+}
+
 export async function lintSchema(root: Root, params: LintParams, signal?: AbortSignal): Promise<LintResult> {
   if (busy) {
-    throw new ToolError('BUSY', 'Another schema lint is running; each one starts a database, so they run one at a time.', 'Call again when the running lint has finished: usually a few seconds, but at most its time limit (45 seconds unless it set timeout_seconds).');
+    throw new ToolError('BUSY', 'Another schema lint is running; each one starts a database, so they run one at a time.', BUSY_FIX);
   }
   busy = true;
   try {
@@ -94,6 +105,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     timeoutMs: (params.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000,
     preset: params.preset !== undefined,
     filesGiven: params.files !== undefined,
+    setupGiven: sources.setup !== null,
     single: sources.single,
     signal,
   });
@@ -259,7 +271,7 @@ function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string,
     );
   }
   const near = closest(entry, known);
-  const hint = near === undefined ? '' : ` Did you mean "${clip(near, 120)}"?`;
+  const hint = near === undefined ? '' : ` Did you mean "${escapeUnsafe(near)}"?`; // a database name: whole, as findings show it
   return new ToolError(
     'BAD_COLUMN_NAME',
     `${param} names "${clip(entry, 120)}", which is not a column of any table the migrations create.${hint}`,

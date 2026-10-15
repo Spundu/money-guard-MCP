@@ -186,7 +186,7 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
         throw new ToolError('PATH_OUTSIDE_ROOT', `${shown} is a link to a place outside the project folder (${root.name}).`, 'Remove the link, or pass files with the migrations to run.');
       }
       if (isSensitive(path.relative(root.real, real))) {
-        throw new ToolError('SENSITIVE_PATH', `${shown} is a link to a file that looks like a secret (an .env file, a private key or credentials).`, 'money-guard never reads secret files. Remove the link.');
+        throw new ToolError('SENSITIVE_PATH', `${shown} is a link to a file or folder that looks like a secret (an .env file, a private key, credentials or the .git folder).`, 'money-guard never reads secret files. Remove the link.');
       }
       try {
         const stat = statSync(real);

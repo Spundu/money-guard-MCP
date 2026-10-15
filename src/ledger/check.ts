@@ -2,7 +2,7 @@
 // legs, no leg that moves nothing, whole minor units, legs netting to zero), applied to every
 // transaction of an export, returning every problem instead of throwing at the first.
 
-import { clip, cut } from '../echo.js';
+import { clip, cut, escapeUnsafe } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { parseAmount, type AmountFormat } from '../money.js';
 import { JsonNumber, plainDecimal } from './json.js';
@@ -175,7 +175,7 @@ function refs(rows: readonly LedgerRow[]): Pick<Finding, 'lines' | 'pointers' | 
   const shown = rows.slice(0, MAX_REFS);
   const more = rows.length - shown.length;
   const out: Pick<Finding, 'lines' | 'pointers' | 'more_rows'> =
-    shown[0]?.pointer !== undefined ? { pointers: shown.map((r) => r.pointer ?? '') } : { lines: shown.map((r) => r.line ?? 0) };
+    shown[0]?.pointer !== undefined ? { pointers: shown.map((r) => escapeUnsafe(r.pointer ?? '')) } : { lines: shown.map((r) => r.line ?? 0) }; // a pointer holds the caller's text and the file's keys
   if (more > 0) out.more_rows = more;
   return out;
 }
