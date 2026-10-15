@@ -92,7 +92,7 @@ describe('money_lint_schema: failures', () => {
     // Review round 7: one dump file without setup was told of "the setup file" and "files run out of order".
     const dir = newDir();
     const twice = 'create table a (id int);\ncreate table a (id int);\n';
-    writeTree(path.join(projectRoot().real, dir), { 'dump.sql': twice, 'db/0001.sql': 'create table b (id int);', 'db/0002.sql': 'create table b (id int);', 'setup.sql': 'create table b (id int);', 'one/0001.sql': 'select 1;', 'twice/0001.sql': twice, 'pub/0001.sql': 'create schema public;' });
+    writeTree(path.join(projectRoot().real, dir), { 'dump.sql': twice, 'db/0001.sql': 'create table b (id int);', 'db/0002.sql': 'create table b (id int);', 'setup.sql': 'create table b (id int);', 'one/0001.sql': 'select 1;', 'twice/0001.sql': twice, 'pub/0001.sql': 'create schema public;', 'lang/0001.sql': 'create language plpgsql;' });
     const fixOf = async (params: { migrations: string; setup?: string; preset?: 'supabase' }) =>
       lintSchema(projectRoot(), params).then(
         () => '',
@@ -102,7 +102,9 @@ describe('money_lint_schema: failures', () => {
     expect(await fixOf({ migrations: `${dir}/db` })).toBe('Something creates this object twice: the file itself, two migrations, or files run out of order. Create it once, or with IF NOT EXISTS.');
     // Review round 8: in a folder too, one file can create it twice; PostgreSQL itself makes the public schema.
     expect(await fixOf({ migrations: `${dir}/twice` })).toMatch(/twice: the file itself, two migrations/);
-    expect(await fixOf({ migrations: `${dir}/pub` })).toBe('Every PostgreSQL database already has the public schema and the plpgsql language: leave them out, or create them with IF NOT EXISTS.');
+    for (const which of ['pub', 'lang']) {
+      expect(await fixOf({ migrations: `${dir}/${which}` }), which).toBe('Every PostgreSQL database already has the public schema and the plpgsql language: leave them out, or create them with IF NOT EXISTS.');
+    }
     expect(await fixOf({ migrations: `${dir}/db`, setup: `${dir}/setup.sql` })).toMatch(/twice: the file itself, the setup file and a migration, two migrations, or files run out of order\./);
     expect(await fixOf({ migrations: `${dir}/dump.sql`, setup: `${dir}/one/0001.sql` })).toMatch(/twice: the file itself, or the setup file and the file\./);
     // In the setup file itself, the same hint: it may be what creates the object twice.
@@ -266,7 +268,8 @@ describe('money_lint_schema: safety', () => {
     // Review round 8: a replacement that returns NULL was INTERNAL_ERROR, "a bug in money-guard".
     for (const fn of ['format_type(oid, integer)', 'pg_get_expr(pg_node_tree, oid)']) {
       const nulls = await failure({
-        'db/migrations/0001.sql': 'create table t (amount numeric default 0);',
+        // Review round 9: columns with and without a default, so one bad row among good ones is caught.
+        'db/migrations/0001.sql': 'create table t (amount numeric default 0, note_total double precision, label text);',
         'db/migrations/0002.sql': `create or replace function pg_catalog.${fn} returns text language sql as $$ select null::text $$;`,
       });
       expect([nulls.code, nulls.message], fn).toEqual(['MIGRATION_FAILED', `${lastDir()}/db/migrations/0002.sql: the catalog could not be read after this file, the last one (a function of PostgreSQL's gave a value of the wrong kind).`]);

@@ -100,6 +100,8 @@ describe('money_check_double_entry: reading CSV', () => {
   it('suggests a name within 2 edits, or a third of its length, among the first 5,000 candidates', () => {
     expect(closest('amnt', ['currency', 'amount'])).toBe('amount'); // 2 edits from a 4-letter name
     expect(closest('amt', ['currency', 'amount'])).toBe(undefined); // 3 edits: too far for a guess
+    // Review round 9: a third of the length, rounded down: 3 edits are too many for 7 letters, not for 9.
+    expect([closest('abcdefg', ['xyzdefg']), closest('abcdefghi', ['xyzdefghi'])]).toEqual([undefined, 'xyzdefghi']);
     // Ties go to the first: amount and amoun are both 1 edit from amout (review round 8).
     expect([closest('amout', ['amount', 'amoun']), closest('amout', ['amoun', 'amount'])]).toEqual(['amount', 'amoun']);
     const many = [...Array.from({ length: 5000 }, (_, i) => `col_${i}`), 'amount'];
@@ -321,5 +323,9 @@ describe('money_check_double_entry: arguments', () => {
     const spread = Array.from({ length: 10_001 }, (_, i) => record(i));
     expect(errorText(() => check('.json', `[${spread.join(',')}]`, { columns }))).toMatch(/^FILE_TOO_LARGE: The file holds more than 100,000 different field names; this tool reads at most that many\./);
     expect(errorText(() => check('.jsonl', `${spread.join('\n')}\n`, { columns }))).toMatch(/^FILE_TOO_LARGE: The file holds more than 100,000 different field names/);
+    // Review round 9: exactly 100,000 are read; one more is refused.
+    const exactly = Array.from({ length: 10_000 }, (_, i) => record(i));
+    expect(codeOf(() => check('.json', `[${exactly.join(',')}]`, { columns }))).toBe('COLUMN_NOT_FOUND');
+    expect(codeOf(() => check('.json', `[${[...exactly, '{"one_more":1}'].join(',')}]`, { columns }))).toBe('FILE_TOO_LARGE');
   });
 });

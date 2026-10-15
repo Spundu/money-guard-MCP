@@ -8,7 +8,7 @@ import { verifyAuditLog } from '../src/audit/verify.js';
 import { parseAuditKeys } from '../src/config.js';
 import { checkLedgerFile } from '../src/ledger/run.js';
 import { FIXES, NULL_FIX_NOTE } from '../src/lint/catalog.js';
-import { RULE_WORDS, WORD_LISTS } from '../src/lint/names.js';
+import { RULE_WORDS, SUB_LISTS, WORD_LISTS } from '../src/lint/names.js';
 import { lintSchema } from '../src/lint/run.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from '../src/text.js';
 import type { ToolError } from '../src/errors.js';
@@ -121,6 +121,14 @@ describe('SPEC.md and the code agree', () => {
       const listed = parts.flatMap((part) => (part.includes(':') ? (part.split(':')[1] ?? '') : part).split(/[.;](?:\s|$)/)[0]?.split(',') ?? []).map((w) => w.trim().replace(/^and /, '')).filter((w) => w !== '');
       expect(listed.filter((w) => !/^[a-z0-9]+$/.test(w)), label).toEqual([]);
       expect([...new Set(listed)].sort(), label).toEqual([...words].sort());
+    }
+    // Review round 9: the sub-lists the rule before total uses, each with its own set.
+    for (const [name, set] of Object.entries(SUB_LISTS)) {
+      const first = lines.findIndex((line) => line.startsWith(`  - ${name}:`));
+      expect(first, name).toBeGreaterThan(-1);
+      const end = lines.findIndex((line, i) => i > first && !line.startsWith('    '));
+      const listed = lines.slice(first, end).join(' ').slice(`  - ${name}:`.length).split(',').map((w) => w.trim());
+      expect(listed.sort(), name).toEqual([...set].sort());
     }
     // Review round 8: each prose list, word for word, between the words around it.
     const prose = section.replace(/\s+/g, ' ');

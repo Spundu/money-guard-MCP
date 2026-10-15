@@ -161,7 +161,9 @@ const GENERIC_MEASURE_WORDS: ReadonlySet<string> = new Set([
  * ("usage_charge" is money).
  */
 const TOTALLED_WORDS: ReadonlySet<string> = new Set(
-  [...COUNT_WORDS, ...MEASURE_WORDS, ...GENERIC_MEASURE_WORDS, 'hours', 'minutes', 'seconds', 'ms'].filter((w) => !['unit', 'units', 'margin'].includes(w)),
+  [...COUNT_WORDS, ...MEASURE_WORDS, ...GENERIC_MEASURE_WORDS, 'days', 'nights', 'weeks', 'months', 'years', 'hours', 'minutes', 'seconds', 'ms'].filter(
+    (w) => !['unit', 'units', 'margin'].includes(w),
+  ),
 );
 
 /**
@@ -325,6 +327,12 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   const ending = only.slice(withoutUnit(only).length);
   return UNSURE_UNIT_WORDS.has(ending) || FINER_UNIT_WORDS.has(ending) ? 'unsure' : 'minor';
 }
+
+/** Sub-lists of the non-money last words that the rule before total uses, for the same test. */
+export const SUB_LISTS: Readonly<Record<string, ReadonlySet<string>>> = {
+  counts: COUNT_WORDS,
+  'rates and measures': MEASURE_WORDS,
+};
 
 /** The word lists, for the test that holds SPEC.md §3.5 to them. */
 export const WORD_LISTS: Readonly<Record<string, ReadonlySet<string>>> = {

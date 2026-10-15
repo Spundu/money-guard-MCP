@@ -77,7 +77,7 @@ const MONEY = [
   'amountjpy', 'feeyen', 'amountkwd', 'pricekrw', 'amountwon',
   // Review round 9: order words and things that have a price say nothing against a total.
   'line_items_total', 'orders_total', 'tier_total', 'stage_total', 'first_total', 'last_total', 'position_total', 'lines_total',
-  'units_total', 'unit_total', 'margin_total', 'items_total',
+  'units_total', 'unit_total', 'margin_total', 'items_total', 'day_total', 'month_total',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -122,6 +122,8 @@ const NOT_MONEY = [
   'total_mileage', 'total_meters', 'total_litres', 'total_tons', 'total_grams', 'net_mass', 'gross_mass', 'net_force',
   'net_torque', 'total_heat', 'net_flux', 'total_runtime', 'total_uptime', 'total_xp', 'total_damage', 'total_mins',
   'total_hrs', 'total_kw', 'total_mb', 'total_gb', 'total_bmi', 'total_goals', 'total_wins', 'total_players',
+  // Review round 9 (tests): "totals" as well as "total"; folded names with a money word inside, not at an end.
+  'weight_totals', 'hours_totals', 'points_totals', 'days_total', 'nights_total', 'years_total', 'underpricedpct', 'nonrefundable', 'isrefundable', 'prepaidbalancecheck',
 ];
 
 describe('looksLikeMoney', () => {

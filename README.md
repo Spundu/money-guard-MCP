@@ -375,7 +375,7 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 910 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 920 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.

@@ -514,7 +514,8 @@ word**, with these refinements:
   column is listed in `money_columns` (§3.6), so a measure is never multiplied by 100. Before total or totals, a count or a
   measure says what is totalled, so the name is not money: `weight_total`, `hours_total` and
   `credit_score_total` are read as `total_weight`. These words are the counts and the rates and
-  measures among the non-money last words, hours, minutes, seconds and ms, and the measures after
+  measures among the non-money last words, the plural time words (days, nights, weeks, months, years,
+  hours, minutes, seconds) and ms, and the measures after
   generic money words; not unit, units or margin, and not order words or things that have a price
   (`units_total`, `margin_total`, `line_items_total`, `orders_total` and `tier_total` are money). Other generic words keep theirs: `usage_charge` is money.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
@@ -1239,7 +1240,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 910); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 920); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
