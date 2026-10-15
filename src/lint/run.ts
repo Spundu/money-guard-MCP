@@ -6,6 +6,7 @@ import { closest } from '../closest.js';
 import { clip, clipPath, escapeUnsafe, quoted, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { Root } from '../paths.js';
+import { ExpressionReader } from './amounts.js';
 import { FIXES, NULL_FIX_NOTE, baseType, displayType, fixSql, isMoneyColumn, judge, type DetailRow, type LintCode, type LintFinding } from './catalog.js';
 import { runScripts, type Script } from './database.js';
 import { collectSources } from './files.js';
@@ -18,6 +19,18 @@ const MAX_LISTED = 30;
 
 /** Ends the summary when not every finding is in the result (review round 11: the lint has pages now). */
 const NOT_ALL_LISTED = ' Not every finding is listed (findings_truncated): pass next_offset as offset for the next ones.';
+
+/**
+ * How the summary ends for a page: the next page while there is one; on a later page with none after
+ * it, which findings these are, so that nothing tells the model to pass a next_offset that is null
+ * (review round 12: on the last page it said so, and an offset of null starts again from the first).
+ */
+function pageNote(offset: number, shown: number, total: number, next: number | null): string {
+  if (next !== null) return NOT_ALL_LISTED;
+  if (offset === 0) return '';
+  const n = (x: number) => x.toLocaleString('en-GB');
+  return shown > 0 ? ` These are findings ${n(offset + 1)}-${n(offset + shown)} of ${n(total)}, the last.` : ` No findings from offset ${n(offset)}: there are ${n(total)}.`;
+}
 /** Longest column type a finding shows: a schema-qualified domain and its base type fit. */
 const MAX_TYPE_CHARS = 200;
 
@@ -128,6 +141,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     for (const [entry, given] of set) if (!knownSet.has(entry)) throw unknownColumn(param, entry, given, known, fromSetup.has(entry));
   }
 
+  const reader = new ExpressionReader(); // one budget for every expression this lint reads
   const findings: LintFinding[] = [];
   const tables = new Set<string>();
   const moneyTables = new Set<string>(); // the tables that hold a money column whose type was judged
@@ -166,7 +180,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
         // format_type writes it, and a migration can replace that function: cut like any outside text.
         type: clip(displayType(row), MAX_TYPE_CHARS),
         introduced_in: clipPath(sources.files[since]?.rel ?? '?'),
-        fix_sql: fixSql(row, code, db.reserved, listedNames),
+        fix_sql: fixSql(row, code, db.reserved, listedNames, reader),
       });
     } else if (!money && (base === 'real' || base === 'double precision')) {
       otherFloats.push(escapeUnsafe(key));
@@ -191,7 +205,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const offset = params.offset ?? 0;
   const page = findings.slice(offset, offset + MAX_FINDINGS);
   const result: LintResult = {
-    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }) + (offset > 0 || findings.length > offset + MAX_FINDINGS ? NOT_ALL_LISTED : ''),
+    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }),
     migrations: clipPath(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -210,6 +224,12 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     other_float_columns_count: otherFloats.length,
     fixes,
   };
+  // The summary ends with what this page is; set again whenever the page is cut below.
+  const base = result.summary;
+  const noteThePage = () => {
+    result.summary = base + pageNote(offset, result.findings.length, findings.length, result.next_offset);
+  };
+  noteThePage();
   // Over the budget (long names, deep folders): shorten the listing of applied files first, then the
   // float columns, then the findings, never below one. The counts above still cover everything.
   while (result.files_applied.length > 0 && overBudget(result)) {
@@ -221,7 +241,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     result.findings.pop();
     result.findings_truncated = true;
     result.next_offset = offset + result.findings.length; // the next page starts where this one was cut
-    if (!result.summary.endsWith(NOT_ALL_LISTED)) result.summary += NOT_ALL_LISTED;
+    noteThePage();
   }
   return result;
 }

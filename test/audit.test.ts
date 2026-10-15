@@ -2,7 +2,7 @@
 // fail, anchors from an earlier run (grown, emptied, replaced, broken after them), CR LF line ends, and a
 // scan proving every reason the library can return is mapped to a code that names it, not OTHER.
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { GENESIS_HASH, InMemoryKeyProvider, appendEntry, toJsonlLine, type SealedEntry } from 'sealed-audit-chain';
@@ -200,6 +200,28 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(r.notes).toEqual(['The anchor was not checked: the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked.']);
   });
 
+  it('says a log that ends inside an entry the anchor covers was cut short, not interrupted', () => {
+    // Review round 12: cut mid-line, it read like an interrupted write; cut at a line end, ANCHOR_COUNT_MISMATCH.
+    const cut = FIVE.slice(0, FIVE.indexOf('\n', FIVE.indexOf('\n') + 1) + 20); // inside entry 2 of the 3 HEAD covers
+    const r = run(bytes(cut), HEAD);
+    expect([r.ok, r.anchor_checked, r.break?.code, r.break?.entry_index]).toEqual([false, false, 'TORN_LAST_LINE', 2]);
+    expect(r.notes).toEqual(['The anchor covers 3 entries, but the log ends inside entry 2: it was cut short, and entries the anchor vouched for are gone.']);
+  });
+
+  it('asks to check the key setting when a seal fails at the first entry after a change of key', () => {
+    // Review round 12: a log that moved from k1 to k2, with k2 set wrong, read as tampered with.
+    const keys = { k1: Buffer.from(KEY_HEX, 'hex'), k2: Buffer.from(OTHER_HEX, 'hex') };
+    let prev: SealedEntry | null = null;
+    const entries: SealedEntry[] = [];
+    for (const [i, draft] of DRAFTS.entries()) {
+      prev = appendEntry(prev, draft as Record<string, unknown>, new InMemoryKeyProvider(keys, i < 2 ? 'k1' : 'k2'));
+      entries.push(prev);
+    }
+    const r = run(bytes(text(entries)), undefined, keysFrom(`k1=${KEY_HEX},k2=${'5a'.repeat(32)}`));
+    expect([r.break?.code, r.break?.entry_index]).toEqual(['HMAC_MISMATCH', 2]);
+    expect(r.notes.some((n) => n.startsWith('A wrong key setting gives this answer too'))).toBe(true);
+  });
+
   it('checks the anchor when the chain breaks at the entry right after it: an accident stays one, a replaced log cannot hide behind one', () => {
     const torn = (log: string) => log.slice(0, -20); // a crash mid-write leaves the last line cut short
     const honest = run(bytes(torn(text(chain([...DRAFTS, { event: 'payment.capture', amount_pence: 500 }])))), HEAD);
@@ -255,7 +277,10 @@ describe('reasonCode', () => {
   // fails this test instead of silently becoming OTHER.
   const require = createRequire(import.meta.url);
   const pkgDir = path.dirname(require.resolve('sealed-audit-chain/package.json'));
-  const source = ['verify.ts', 'jsonl.ts'].map((f) => readFileSync(path.join(pkgDir, 'src', f), 'utf8')).join('\n');
+  // A release of the library that ships no src/ would leave nothing to read: say so, rather than fail on a missing file.
+  const shipsSource = ['verify.ts', 'jsonl.ts'].every((f) => existsSync(path.join(pkgDir, 'src', f)));
+  if (!shipsSource) console.warn('NOTE: sealed-audit-chain ships no src/ here, so its reasons cannot be read and checked against reasonCode.');
+  const source = shipsSource ? ['verify.ts', 'jsonl.ts'].map((f) => readFileSync(path.join(pkgDir, 'src', f), 'utf8')).join('\n') : '';
   const literal = String.raw`(?:'([^']+)'|` + '`([^`]+)`)';
   const patterns = [new RegExp(String.raw`(?:error|unreadable): ` + literal, 'g'), new RegExp(String.raw`broken\([^,]+, ` + literal, 'g')];
   const reasons = new Set<string>();

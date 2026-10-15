@@ -139,7 +139,7 @@ const OTHER_WORDS: ReadonlySet<string> = new Set([
   'cancellation', 'setup', 'transfer', 'exchange', 'monthly', 'annual', 'yearly', 'initial', 'final', 'original', 'max', 'min',
   'limit', 'due', 'paid', 'owed', 'outstanding', 'remaining', 'pending', 'grand', 'line', 'item', 'order', 'invoice', 'account',
   'opening', 'closing', 'current', 'available', 'card', 'per', 'in', 'value', 'after', 'before', 'smallest', 'lowest', 'denomination',
-  'unit', 'old', 'new', 'prev', 'previous', 'holiday', 'sick', 'overtime', 'take', 'home',
+  'unit', 'old', 'new', 'prev', 'previous', 'holiday', 'sick', 'overtime', 'take', 'home', 'sub', 'cart', 'basket', 'running', 'store',
   'refunded', 'invoiced', 'charged', 'billed', 'spent', 'earned', 'collected', 'withdrawn', 'deposited', 'accrued', 'credited', 'debited', 'settled', 'disbursed', 'reimbursed', 'received',
 ]);
 

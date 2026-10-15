@@ -41,6 +41,8 @@ export function holdsNoAmount(expr: string): boolean {
   if (castsToBoundedType(expr)) return false;
   // A pattern over the amount's text ("price::text ~ '^\d+\.\d\d$'") checks its form in pounds (review round 11).
   if (/~|\bsimilar\s+to\b|\blike\b/i.test(expr)) return false;
+  // The whole row ("t.* IS NOT NULL") holds the amount too (review round 12).
+  if (expr.includes('.*')) return false;
   const rest = expr
     // A quoted name, or a string literal, read left to right, so a quote inside one cannot start the
     // other. A literal that holds digits ('1000.00'::numeric, a date) keeps them: it may be an amount.
@@ -59,7 +61,7 @@ export function holdsNoAmount(expr: string): boolean {
 const MAX_EXPR_CHARS = 2000;
 
 /** A cast type that bounds the value: a size (numeric(5,2), varchar(5): a text of fixed length) or a small integer type. */
-const BOUNDED_TYPE = /(?:numeric|decimal|character varying|varchar|character|char|bpchar|bit varying|varbit|bit)\(\d|(?:smallint|integer|int|int2|int4)\b/y;
+const BOUNDED_TYPE = /(?:numeric|decimal|character varying|varchar|character|char|bpchar|bit varying|varbit|bit)\(\d|(?:smallint|integer|int|int2|int4|bigint|int8)\b/y;
 
 /**
  * Whether the expression casts anything but a number to a bounded type ("amount::numeric(5,2) =
@@ -86,4 +88,36 @@ function castsToBoundedType(expr: string): boolean {
     if (!/^\(?'?-?[\d.]*'?\)?$/.test(expr.slice(start, at))) return true;
   }
   return false;
+}
+
+/** The most characters of expressions one lint reads in all, the same text once (review round 12). */
+export const MAX_LINT_EXPR_CHARS = 1_000_000;
+
+/**
+ * Reads the expressions of one lint: each distinct text once, and at most MAX_LINT_EXPR_CHARS in all.
+ * Each is capped at 2,000 characters, but not how many there are: 24,300 defaults from 80 inherited
+ * tables held the main thread 20 s (review round 12). Past the budget an expression counts as one that
+ * may hold an amount, so the fix is withheld.
+ */
+export class ExpressionReader {
+  #left = MAX_LINT_EXPR_CHARS;
+  readonly #known = new Map<string, boolean>();
+
+  holdsNoAmount(expr: string): boolean {
+    return this.#read(`c${expr}`, expr, holdsNoAmount);
+  }
+
+  isZeroOrNullDefault(expr: string): boolean {
+    return this.#read(`d${expr}`, expr, isZeroOrNullDefault);
+  }
+
+  #read(key: string, expr: string, judge: (text: string) => boolean): boolean {
+    const known = this.#known.get(key);
+    if (known !== undefined) return known;
+    if (expr.length > this.#left) return false;
+    this.#left -= expr.length;
+    const answer = judge(expr);
+    this.#known.set(key, answer);
+    return answer;
+  }
 }

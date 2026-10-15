@@ -216,15 +216,19 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const crlf = firstCrlfLine(bytes);
   if (crlf !== null) notes.push(crlfNote(crlf));
   const anchorChecked = anchor !== undefined && anchor.count <= index;
+  const raw = verdict.reason ?? 'unknown';
+  const code = reasonCode(raw);
   if (anchor && anchorChecked) {
     const replaced = headMismatch(bytes, anchor, result);
     if (replaced) return replaced;
     if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
+  } else if (anchor && code === 'TORN_LAST_LINE') {
+    // The anchor proves the entries before its count were once whole: a log that ends inside one of them
+    // was cut short, not interrupted while writing (review round 12).
+    notes.push(`The anchor covers ${entries(anchor.count)}, but the log ends inside entry ${index}: it was cut short, and entries the anchor vouched for are gone.`);
   } else if (anchor) {
     notes.push('The anchor was not checked: the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked.');
   }
-  const raw = verdict.reason ?? 'unknown';
-  const code = reasonCode(raw);
   // The library's fixed reasons are short; a canonicalization error can quote a key name from the line,
   // so the reason is cut like any other text from the file.
   const reason = clip(raw, MAX_REASON);
@@ -232,9 +236,11 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const brk: AuditBreak = { entry_index: index, line, code, reason };
   const rawKeyId = code === 'UNKNOWN_KEY_ID' || code === 'HMAC_MISMATCH' ? writerKeyIdAt(bytes, index) : undefined;
   if (rawKeyId !== undefined) brk.writer_key_id = clip(rawKeyId, 64);
-  // An unknown key id, or a seal that fails from the first entry, is what a wrong key setting gives an
-  // untouched log (review round 11): say so, so that the setting is checked before tampering is reported.
-  if (code === 'UNKNOWN_KEY_ID' || (code === 'HMAC_MISMATCH' && index === 0)) notes.push(KEY_SETTING_NOTE);
+  // An unknown key id, or a seal that fails from the first entry of its key (the first entry, or the first
+  // after a key change), is what a wrong key setting gives an untouched log (review rounds 11 and 12):
+  // say so, so that the setting is checked before tampering is reported.
+  const firstOfItsKey = index === 0 || (rawKeyId !== undefined && writerKeyIdAt(bytes, index - 1) !== rawKeyId);
+  if (code === 'UNKNOWN_KEY_ID' || (code === 'HMAC_MISMATCH' && firstOfItsKey)) notes.push(KEY_SETTING_NOTE);
 
   const where = line === null ? `entry ${index}` : `entry ${index} (line ${line})`;
   let meaning: string;

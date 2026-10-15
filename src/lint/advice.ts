@@ -100,7 +100,8 @@ export function failure(script: Script, err: DbError, context: { available: read
     // A missing type is often a typo (intt) or an enum a later file creates (review round 10): those
     // first, the platform after. One migrations file has no order to get wrong.
     const type = err.code === '42704' && /^type "/.test(err.message);
-    const order = !context.single && (err.code === '42P01' || err.code === '42883' || type) ? `If one of your migrations creates it, the files ran out of order: ${ran}` : '';
+    // A schema too is often one a later migration creates (review round 12).
+    const order = !context.single && (err.code === '42P01' || err.code === '42883' || err.code === '3F000' || type) ? `If one of your migrations creates it, the files ran out of order: ${ran}` : '';
     fix =
       (type ? 'Check the spelling of the type. ' : '') +
       order +
@@ -114,11 +115,11 @@ export function failure(script: Script, err: DbError, context: { available: read
     fix = `The file holds table data after COPY ... FROM stdin (a pg_dump with data), which only psql can load. ${setup ? 'Take the data out of the setup file.' : 'Lint a schema-only dump (pg_dump --schema-only) or the migrations folder instead.'}`;
   } else if (err.code === '25001') {
     // Alone in its file such a statement runs (review round 11): it fails beside others in one script.
-    fix = `money-guard runs each file as one script, and this statement cannot run beside other statements in one (psql, which commits statement by statement, can). ${past({ setup: 'Take it out of the setup file.', folder: 'Move it to a file of its own, or leave the file out with files.', single: 'Lint a copy without it.' })}`;
+    fix = `money-guard runs each file as one script, and this statement cannot run beside other statements in one (psql, which commits statement by statement, can). ${past({ setup: 'Take it out of the setup file.', folder: 'Lint a copy of the folder in which it sits in a file of its own (alone, it runs): your own migrations need not change.', single: 'Lint a copy without it.' })}`;
   } else if (err.code === '0A000' && /^cannot alter type of a column used (?:by|in) /.test(err.message)) {
     fix = 'Something else uses this column (a view, a rule, a policy, a trigger, a generated column or a function with a BEGIN ATOMIC body): in the same migration, drop it before the ALTER and create it again after.';
   } else if (err.code === '55P04') {
-    fix = `money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). ${past({ setup: 'Take that part out of the setup file.', folder: 'Split the file in two, or leave it out with files.', single: 'Split the file in two, put both in a folder, and lint the folder.' })}`;
+    fix = `money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). ${past({ setup: 'Take that part out of the setup file.', folder: 'Lint a copy of the folder in which the file is split in two: your own migrations need not change.', single: 'Lint a copy: split it in two, put both in a folder, and lint the folder.' })}`;
   } else if (err.code === '53200' && /max_locks_per_transaction/.test(err.hint ?? '')) {
     // Out of lock slots, not of memory: one file creates more objects than one transaction may lock.
     fix = `The file creates more objects than one transaction can hold locks for (a schema dump of many thousands of tables, say). ${past({ setup: 'Make the setup file smaller.', folder: 'Split it into several files.', single: 'Split it into a folder of smaller files, and lint the folder.' })}`;

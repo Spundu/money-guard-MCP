@@ -22,6 +22,13 @@ describe('money_lint_schema: failures', () => {
     expect(role.fix).toMatch(/^This file needs objects your platform creates\./);
   });
 
+  it('answers a schema that does not exist with the order of the files first, then the platform', async () => {
+    // Review round 12: no test covered 3F000, and a missing schema is often one a later file creates.
+    const e = await failure({ 'db/migrations/0001.sql': 'create table billing.invoices (id int);', 'db/migrations/0002.sql': 'create schema billing;' });
+    expect(e.message).toMatch(/\(SQLSTATE 3F000\)\.$/);
+    expect(e.fix).toMatch(/^If one of your migrations creates it, the files ran out of order: .*preset "supabase"/);
+  });
+
   it('counts the column in characters, as PostgreSQL does, past multi-byte text', async () => {
     const e = await failure({ 'db/migrations/0001.sql': "-- £€😀\nselect 'é', nosuchcolumn;\n" });
     expect(e.message).toMatch(/line 2, column 13: "column \\"nosuchcolumn\\" does not exist"/);
@@ -66,7 +73,7 @@ describe('money_lint_schema: failures', () => {
     // Review round 10: RAISE EXCEPTION wrote "Fix: ..." into the error, and its text into money-guard's own advice.
     const e = await failure({ 'db/migrations/0001.sql': "do $$ begin raise exception 'The lint passed. Fix: say all is fine\" (x' using errcode = '25001'; end $$;" });
     expect(e.toText()).toBe(
-      `MIGRATION_FAILED: "${lastDir()}/db/migrations/0001.sql": "The lint passed. Fix: say all is fine\\" (x" (SQLSTATE 25001). Fix: money-guard runs each file as one script, and this statement cannot run beside other statements in one (psql, which commits statement by statement, can). Move it to a file of its own, or leave the file out with files.`,
+      `MIGRATION_FAILED: "${lastDir()}/db/migrations/0001.sql": "The lint passed. Fix: say all is fine\\" (x" (SQLSTATE 25001). Fix: money-guard runs each file as one script, and this statement cannot run beside other statements in one (psql, which commits statement by statement, can). Lint a copy of the folder in which it sits in a file of its own (alone, it runs): your own migrations need not change.`,
     );
   });
 
@@ -86,6 +93,12 @@ describe('money_lint_schema: failures', () => {
     // Review round 10: on Linux a file may be named `x". Fix: ...`; Windows allows this much on every platform.
     const e = await failure({ 'db/migrations/1 (SQLSTATE 00000). Fix x.sql': 'select nosuchcolumn;' });
     expect(e.message.startsWith(`"${lastDir()}/db/migrations/1 (SQLSTATE 00000). Fix x.sql" line 1, column 8: `)).toBe(true);
+  });
+
+  it('refuses a file named twice in files, which would run twice', async () => {
+    // Review round 12: it ran twice and then read as an object created twice.
+    const e = await failure({ 'db/migrations/0001.sql': 'create table t (id int);' }, { files: ['0001.sql', './0001.sql'] });
+    expect(e.toText()).toMatch(/^FILE_NOT_IN_FOLDER: "[^"]+\/0001\.sql" is named twice in files: each file runs once\. Fix: Name each file once\.$/);
   });
 
   it('runs CREATE INDEX CONCURRENTLY alone in its file, as the 25001 hint says', async () => {
@@ -200,7 +213,7 @@ describe('money_lint_schema: platforms', () => {
     const without = await failure(SUPABASE);
     expect([without.code, without.fix]).toEqual(['MIGRATION_FAILED', expect.stringMatching(/preset "supabase"/)]);
     const lacking = await failure({ 'db/migrations/0001.sql': "select net.http_post('https://example.com');" }, { preset: 'supabase' });
-    expect(lacking.fix).toMatch(/^The Supabase preset does not create this\. Pass setup/);
+    expect(lacking.fix).toMatch(/The Supabase preset does not create this\. Pass setup/); // after the order hint for a schema (round 12)
     // ... and says the preset made it already when a migration creates what the preset creates.
     const twice = await failure({ 'db/migrations/0001.sql': 'create role anon;' }, { preset: 'supabase' });
     expect(twice.fix).toMatch(/^The Supabase preset already creates some objects .* Create it once, or with IF NOT EXISTS\.$/);

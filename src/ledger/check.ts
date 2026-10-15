@@ -2,7 +2,7 @@
 // legs, no leg that moves nothing, whole minor units, legs netting to zero), applied to every
 // transaction of an export, returning every problem instead of throwing at the first.
 
-import { clip, cut, escapeUnsafe } from '../echo.js';
+import { clip, escapeUnsafe, quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { parseAmount, type AmountFormat } from '../money.js';
 import { JsonNumber, plainDecimal } from './json.js';
@@ -189,6 +189,13 @@ function shownValue(raw: unknown): string {
   return clip(String(raw));
 }
 
+/** The value as a finding's message shows it: in quotes, so a cell cannot read as money-guard's words (review round 12). */
+function valueInMessage(raw: unknown): string {
+  if (typeof raw === 'string') return quoted(raw.trim());
+  if (raw instanceof JsonNumber) return quoted(raw.text);
+  return shownValue(raw);
+}
+
 const SIDES: Readonly<Record<string, 1n | -1n>> = { D: 1n, DR: 1n, DEBIT: 1n, C: -1n, CR: -1n, CREDIT: -1n };
 
 /** One row's leg, or the findings that stop it being one. */
@@ -210,7 +217,7 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
       if (/[1-9]/.test(written)) tally.decimalPoint += 1;
     } else if (parsed.ok && parsed.minor !== 0n) tally.plain += 1;
     if (parsed.ok) return parsed.minor;
-    problem(parsed.problem, field, `${shownValue(raw)} ${parsed.why}`, raw);
+    problem(parsed.problem, field, `${valueInMessage(raw)} ${parsed.why}`, raw);
     return undefined;
   };
 
@@ -231,13 +238,13 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
         problem('MISSING_VALUE', 'side', 'no side');
         sign = undefined;
       } else if (side === undefined || !Object.hasOwn(SIDES, side)) {
-        problem('BAD_SIDE', 'side', `${shownValue(raw)} is not D, DR, DEBIT, C, CR or CREDIT`, raw);
+        problem('BAD_SIDE', 'side', `${valueInMessage(raw)} is not D, DR, DEBIT, C, CR or CREDIT`, raw);
         sign = undefined;
       } else {
         sign = SIDES[side];
       }
       if (typeof value === 'bigint' && value < 0n) {
-        problem('NEGATIVE_WITH_SIDE', 'amount', `${shownValue(row.values.amount)} is negative, but side already gives the direction`, row.values.amount);
+        problem('NEGATIVE_WITH_SIDE', 'amount', `${valueInMessage(row.values.amount)} is negative, but side already gives the direction`, row.values.amount);
         sign = undefined;
       }
     }
@@ -284,8 +291,16 @@ function idOf(raw: unknown): string | null | typeof UNREADABLE {
   return raw === undefined || raw === null ? null : UNREADABLE;
 }
 
+/** "\"GBP\" legs net to 5 and \"EUR\" legs net to -5, not 0", cut at a whole part to MAX_MESSAGE: each currency in quotes. */
 function netsText(nets: Net[]): string {
-  return nets.map((n) => `${n.currency === null ? 'legs' : `${n.currency} legs`} net to ${n.net}`).join(' and ');
+  const parts = nets.map((n) => `${n.currency === null ? 'legs' : `${n.currency} legs`} net to ${n.net}`);
+  let text = '';
+  for (const [i, part] of parts.entries()) {
+    const next = `${i === 0 ? '' : ' and '}${part}`;
+    if ([...text].length + [...next].length + [...', not 0'].length > MAX_MESSAGE) return `${text} and more…`;
+    text += next;
+  }
+  return `${text}, not 0`;
 }
 
 export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckOptions, hasCurrency: boolean): CheckOutcome {
@@ -339,10 +354,9 @@ export function checkLedger(rows: readonly LedgerRow[], mode: Mode, opts: CheckO
     if (off.length > 0) {
       // Grouping used the full currency text; the result shows it cut like any value from the file.
       const nets = off.slice(0, MAX_NETS).map(([currency, sum]) => ({ currency: currency === null ? null : clip(currency), net: sum.toString() }));
-      // The message is made safe once, from the raw currencies, each cut like any value from the file.
-      const raw = off.slice(0, MAX_NETS).map(([currency, sum]) => ({ currency: currency === null ? null : cut(currency), net: sum.toString() }));
-      const message =
-        off.length > MAX_NETS ? `${off.length} currencies do not net to 0; nets lists the first ${MAX_NETS}` : clip(`${netsText(raw)}, not 0`, MAX_MESSAGE);
+      // The message shows each currency in quotes, cut like any value from the file, and the whole cut at a part.
+      const shown = off.slice(0, MAX_NETS).map(([currency, sum]) => ({ currency: currency === null ? null : quoted(currency), net: sum.toString() }));
+      const message = off.length > MAX_NETS ? `${off.length} currencies do not net to 0; nets lists the first ${MAX_NETS}` : netsText(shown);
       findings.add({ ...at, code: 'UNBALANCED', severity: 'error', nets, message });
     } else {
       balanced += 1;

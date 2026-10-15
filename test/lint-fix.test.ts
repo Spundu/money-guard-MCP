@@ -2,6 +2,7 @@
 // none where a default, a CHECK or an index condition would keep the old unit; names quoted as
 // PostgreSQL quotes them, whatever a migration does to the database's own functions.
 import { describe, expect, it } from 'vitest';
+import { ExpressionReader, MAX_LINT_EXPR_CHARS } from '../src/lint/amounts.js';
 import { NULL_FIX_NOTE, holdsNoAmount, isZeroOrNullDefault } from '../src/lint/catalog.js';
 import { moneyByGuess } from '../src/lint/names.js';
 import { lint } from './support/lint.js';
@@ -137,7 +138,7 @@ describe('money_lint_schema: fix_sql', () => {
       '(scale((price)::numeric) = 2)', '(scale(total) = 1)',
       // review round 9: a cast of the column to a bounded type is a cap; a guard of fewer than two places
       // stops guarding once the column holds pence
-      '((amount)::numeric(5,2) = amount)', '((amount)::smallint IS NOT NULL)', '((amount)::integer = amount)', '(amount::int4 > 0)',
+      '((amount)::numeric(5,2) = amount)', '((amount)::smallint IS NOT NULL)', '(price = ((price)::bigint)::double precision)', '(fee = (fee)::int8)', '((amount)::integer = amount)', '(amount::int4 > 0)',
       '(amount = round(amount, 0))', '(amount = round(amount, 1))',
       // review round 11: the amount's text against a pattern
       "(((price)::text ~ '^-?\\d+\\.\\d\\d$'::text))", "((price)::text LIKE '%.__'::text)", "((price)::text SIMILAR TO '[0-9]+'::text)",
@@ -175,6 +176,20 @@ describe('money_lint_schema: fix_sql', () => {
     await expect(sql([...fixed, 'insert into s values (1, null, 1, 1, 1, 1, 500);'])).rejects.toThrow(/duplicate key/); // the index still holds
   });
 
+  it(`reads each expression of a lint once, and at most ${MAX_LINT_EXPR_CHARS} characters in all`, () => {
+    // Review round 12: 24,300 capped defaults from 80 inherited tables held the main thread 20 s.
+    const reader = new ExpressionReader();
+    const zero = `${'('.repeat(990)}0${')'.repeat(990)}`;
+    const started = performance.now();
+    for (let i = 0; i < 24_300; i += 1) expect(reader.isZeroOrNullDefault(zero)).toBe(true);
+    expect(performance.now() - started).toBeLessThan(1000);
+    // Distinct texts past the budget count as holding an amount, so the fix is withheld.
+    const distinct = (i: number) => `(amount >= 0 AND ${'x'.repeat(1900)}${i} IS NOT NULL)`;
+    const answers = Array.from({ length: 600 }, (_, i) => reader.holdsNoAmount(distinct(i)));
+    expect(answers.slice(0, 500).every((a) => a)).toBe(true);
+    expect(answers.slice(-50).every((a) => !a)).toBe(true);
+  });
+
   it('knows a zero or NULL default, however PostgreSQL writes it back, and nothing else', () => {
     for (const zero of ['0', '0.00', '0.0', "'0'::numeric", '(0)::numeric', "'0'::double precision", 'NULL::numeric', '-0.00',
       // review round 9: two casts, a plus sign, an exponent
@@ -209,6 +224,12 @@ describe('money_lint_schema: fix_sql', () => {
     // Review round 11: such a CHECK was never matched to the column; the ALTER then left a cap of £1,000 at £10.
     const r = await lint({ 'db/migrations/0001.sql': "create table x (id int, price numeric(10,2), constraint wr check ((to_jsonb(x.*) ->> 'price')::numeric <= 1000));" });
     expect(r.findings.map((f) => [f.column, f.fix_sql])).toEqual([['price', null]]);
+  });
+
+  it('offers fix_sql beside a unique index of another column\'s expression, and withholds it beside one of the whole row', async () => {
+    // Review round 12: lower(sku) also depends on the whole table, which round 11 read as the whole row.
+    const r = await lint({ 'db/migrations/0001.sql': 'create table products (id int, sku text, price double precision);\ncreate unique index products_sku on products (lower(sku));\ncreate table rows_hashed (id int, price double precision);\ncreate unique index rows_whole on rows_hashed (id) where rows_hashed is not null;' });
+    expect(r.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.products', false], ['public.rows_hashed', true]]);
   });
 
   it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {

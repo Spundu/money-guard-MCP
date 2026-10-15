@@ -282,6 +282,8 @@ test starts it the way its manifest says, but it has not yet been tried in Claud
   `price_per_month`, but not `price_id`, `tax_rate` or `total_count`), by the `money` type, or because
   you list it in `money_columns`. The rule and its word lists are in SPEC.md §3.5. Money kept in
   text or JSON columns is not checked, and the summary says how many such columns there are.
+- At most 50 findings a call: pass the `next_offset` a result gives as `offset` for more (each page runs
+  the lint again; the same files give the same findings in the same order).
 - Codes: `FLOAT_MONEY` and `MONEY_TYPE` are errors. `NUMERIC_MONEY` is a warning, which
   `accept_numeric: true` turns off. `SMALLINT_MONEY` is a warning (`smallint` holds at most £327.67 in
   pence).
@@ -340,7 +342,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   are refused even inside the project.
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
   cut to 40 characters (a few longer texts, such as a Postgres error, have their own limits: SPEC.md
-  §2.4). Table and column names stay whole, so the agent can act on them; a path over
+  §2.4). Paging through findings can still show one column of every row, 40 characters each, so a
+  secrets file the name list misses is not safe from the ledger tool. Table and column names stay whole, so the agent can act on them; a path over
   400 characters is cut in the middle. Characters that can hide text are escaped in money-guard's
   results and errors, by Unicode category: control characters, the zero-width and direction
   characters of the "Trojan Source" trick, and the invisible TAG characters that can spell out
@@ -378,7 +381,7 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 950 tests, about 500 of them rows of the column-name table. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 960 tests, about 500 of them rows of the column-name table. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.

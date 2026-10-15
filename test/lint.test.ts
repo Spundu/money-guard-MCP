@@ -244,7 +244,9 @@ describe('money_lint_schema: judging columns', () => {
     const second = await lint(files, { offset: 50 });
     expect([second.findings.length, second.findings_truncated, second.next_offset]).toEqual([10, true, null]);
     expect(new Set([...r.findings, ...second.findings].map((f) => f.column)).size).toBe(60);
-    expect(second.summary).toMatch(/ Not every finding is listed/);
+    // Review round 12: the last page says which findings these are, not to pass a next_offset that is null.
+    expect(second.summary).toMatch(/ These are findings 51-60 of 60, the last\.$/);
+    expect((await lint(files, { offset: 999 })).summary).toMatch(/ No findings from offset 999: there are 60\.$/);
     expect((await lint(files, { offset: 999 })).findings).toEqual([]);
     // Review round 9: the summary says so, as the ledger's does.
     expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);

@@ -138,8 +138,9 @@ describe('looksLikeMoney', () => {
     expect(looksLikeMoney(name)).toBe(false);
   });
 
-  it('has the table of about 490 names that SPEC.md §3.5 promises', () => {
-    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(480); // "about 490": the SPEC number moves with the table (review round 10)
+  it('has the table of about 500 names that SPEC.md §3.5 and the README promise', () => {
+    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(490);
+    expect(MONEY.length + NOT_MONEY.length).toBeLessThan(520); // "about 490": the SPEC number moves with the table (review round 10)
   });
 });
 
@@ -155,7 +156,9 @@ describe('moneyByGuess', () => {
     const sure = ['total', 'grand_total', 'total_paid', 'total_gbp', 'total_minor_units', 'net_amount', 'amount_due', 'order_total', 'total_jpy', 'credit_limit', 'hourly_rate',
       // Review round 10: past-tense money verbs say what the money is (Magento's total_refunded, total_invoiced).
       'total_refunded', 'total_invoiced', 'total_spent', 'total_charged', 'total_billed', 'total_earned', 'total_collected', 'total_withdrawn',
-      'total_deposited', 'interest_accrued', 'totalDeposited', 'totaldeposited', 'totalrefunded'];
+      'total_deposited', 'interest_accrued', 'totalDeposited', 'totaldeposited', 'totalrefunded',
+      // Review round 12: Prisma's subTotal, a cart's total, a running total, store credit.
+      'sub_total', 'subTotal', 'cart_total', 'basket_total', 'running_total', 'store_credit'];
     expect(sure.map(moneyByGuess)).toEqual(sure.map(() => false));
     expect(['total_mileage', 'weight_total', 'id'].map(moneyByGuess)).toEqual([false, false, false]); // not money at all
   });

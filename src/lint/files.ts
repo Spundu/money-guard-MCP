@@ -309,6 +309,11 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
         throw err;
       }
     });
+    // A file named twice would run twice, and then look as if it created its objects twice (review round 12).
+    const twice = chosen.find((f, i) => chosen.findIndex((g) => g.real === f.real) !== i);
+    if (twice !== undefined) {
+      throw new ToolError('FILE_NOT_IN_FOLDER', `${quotedPath(twice.rel)} is named twice in files: each file runs once.`, 'Name each file once.');
+    }
     if (chosen.length === 0) throw onlySetup('files names only');
   } else {
     const found: string[] = [];

@@ -119,10 +119,14 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   // The one that occurs most in the header, read as one column, is the likeliest delimiter.
   const count = (d: string) => (header[0] ?? '').split(d).length - 1;
   const other = header.length === 1 ? DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0] : undefined;
+  // Excel writes "sep=;" as a first line in some locales, before the header (review round 12).
+  const sep = /^sep=(.?)$/i.exec(header.join(delimiter).trim());
   throw new ToolError(
     'COLUMN_NOT_FOUND',
     `The CSV header has no column ${quoted(name)} (mapped as ${field}).${hint} The columns are: ${shown.join(', ')}${more}.`,
-    other === undefined
+    sep !== null
+      ? 'The first line is Excel\'s "sep=" line, not the header: delete that line, then call again.'
+      : other === undefined
       ? 'Map each field to one of the column names in the header.'
       : `The file looks separated by ${showDelimiter(other)}, not ${showDelimiter(delimiter)}: pass delimiter ${JSON.stringify(other)}.`,
   );
@@ -254,7 +258,7 @@ function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, fir
   for (const [field, name] of mappedEntries(columns)) {
     if (good.some((row) => row.values[field] !== undefined)) continue;
     const keys = Object.keys(first);
-    const near = name.startsWith('/') ? undefined : closest(name, keys);
+    const near = name.startsWith('/') ? undefined : (dottedPointer(name, first) ?? closest(name, keys));
     const hint = near === undefined ? '' : ` Did you mean ${quoted(near, NAME_MAX)}?`;
     const shown = keys.slice(0, 30).map((k) => `${quoted(k)}`).join(', ');
     const fields = keys.length === 0 ? 'The first record has no fields.' : `The first record's fields are: ${shown}${keys.length > 30 ? ` and ${keys.length - 30} more` : ''}.`;
@@ -264,6 +268,21 @@ function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, fir
       'Map each field to a field the records have, or to a JSON Pointer such as "/amount/value" for a nested one.',
     );
   }
+}
+
+/**
+ * A dotted name ("txn.id") whose parts are nested fields of the record, as the JSON Pointer that reaches
+ * them ("/txn/id"): the name a model tries first for a nested field (review round 12).
+ */
+function dottedPointer(name: string, record: Record<string, unknown>): string | undefined {
+  const parts = name.split('.');
+  if (parts.length < 2) return undefined;
+  let value: unknown = record;
+  for (const part of parts) {
+    if (!isRecord(value) || !(part in value)) return undefined;
+    value = value[part];
+  }
+  return `/${parts.map((p) => p.replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`;
 }
 
 function parseOrThrow(text: string): unknown {

@@ -108,6 +108,8 @@ export function leadsTo(p: string): string | null {
 export function isSensitive(rel: string): boolean {
   const segments = rel.split(/[\\/]/).map((s) => s.toLowerCase());
   if (segments.includes('.git')) return true;
+  // Azure Functions' local secrets, and Docker's registry logins (review round 12).
+  if (segments.at(-1) === 'local.settings.json' || (segments.at(-1) === 'config.json' && segments.at(-2) === '.docker')) return true;
   const base = segments.at(-1) ?? '';
   return (
     base === '.env' ||
@@ -117,7 +119,7 @@ export function isSensitive(rel: string): boolean {
     base.startsWith('id_ed25519') ||
     ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext)) ||
     (/\.(?:csv|json)$/.test(base) &&
-      (/credentials?|(?:^|[-_.])(?:secrets?|creds|private[-_]?keys?|secret[-_]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_]?tokens?)(?:[-_.]|$)|^\.?secrets[._-]|api[-_]?keys?|access[-_]?keys?|passwords?\.|keyfile|oauth[-_]?tokens?|accesstokens|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
+      (/credentials?|(?:^|[-_.])(?:secrets?|creds|logins?|keystore|wallet|bitwarden|lastpass|1password|keepass|dashlane|private[-_]?keys?|secret[-_]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_]?tokens?)(?:[-_.]|$)|^\.?secrets[._-]|api[-_]?keys?|access[-_]?keys?|passwords?\.|keyfile|oauth[-_]?tokens?|accesstokens|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
         // a Google Cloud key as downloaded: the project's name, then 12 hex digits with at least one letter
         /-(?=[0-9a-f]*[a-f])[0-9a-f]{12}\.json$/.test(base)))
   );
@@ -210,7 +212,9 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   const lexRel = path.relative(root.real, lexical);
   checkSensitive(input, lexRel);
   // A file rule refuses the wrong type before touching the disk; 'either' must first learn what it is.
-  if (rule.kind === 'file' && rule.extensions) checkExtension(root, input, lexRel, rule.extensions);
+  // A name with no extension at all may be a folder: the disk says which (NOT_A_FILE), and a file of that
+  // name is refused after it (review round 12: a folder was "not one of the file types").
+  if (rule.kind === 'file' && rule.extensions && path.extname(lexRel) !== '') checkExtension(root, input, lexRel, rule.extensions);
 
   let real: string;
   try {

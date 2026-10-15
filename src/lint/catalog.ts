@@ -5,7 +5,7 @@
 // (pg_dump output does) cannot change what these queries read.
 
 import { hasUnsafe } from '../echo.js';
-import { holdsNoAmount, isZeroOrNullDefault } from './amounts.js';
+import { ExpressionReader, holdsNoAmount, isZeroOrNullDefault } from './amounts.js';
 import { looksLikeMoney, moneyByGuess, unitOfName } from './names.js';
 
 export { holdsNoAmount, isZeroOrNullDefault };
@@ -104,7 +104,11 @@ export const DETAIL_SQL = `
     FROM pg_catalog.pg_index i
     JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
       AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = i.indrelid
-    JOIN members m ON m.rel = p.refobjid AND (m.attnum = p.refobjsubid OR p.refobjsubid = 0)
+    -- An index that reads the whole row ("WHERE t IS NOT NULL", written back as t.*) records no
+    -- dependency on it, and one of expressions (lower(sku)) records one on the whole table that reads no
+    -- other column: so the whole row is found in the text, not in pg_depend (review round 12).
+    JOIN members m ON m.rel = p.refobjid AND (m.attnum = p.refobjsubid OR pg_catalog.strpos(pg_catalog.concat_ws(' ',
+      pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid)), '.*') > 0)
     WHERE (i.indisunique OR i.indisexclusion) AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
     GROUP BY m.root, m.attname
   ),
@@ -273,7 +277,8 @@ export function quoteIdent(name: string, reserved: ReadonlySet<string>): string 
  * old unit (a default of 2.50 pounds becomes 3 pence), and the next lint could not see it. `reserved` is
  * PostgreSQL's list of keywords that must be quoted, read before any migration ran.
  */
-export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>, listed: ReadonlySet<string> = new Set()): string | null {
+/** `reader` is shared by every column of one lint, so the expressions it reads are bounded in all. */
+export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>, listed: ReadonlySet<string> = new Set(), reader = new ExpressionReader()): string | null {
   // A column a child inherits changes with its parent: ALTER refuses it on the child.
   if (row.domain_name !== null || row.via_array || row.generated !== '' || row.inherited) return null;
   // fix_sql is SQL to run, so it holds the name as it is: a backslash before "u" there would read as
@@ -283,9 +288,9 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   const head = `ALTER TABLE ${quoteIdent(row.schema_name, reserved)}.${quoteIdent(row.table_name, reserved)} ALTER COLUMN ${c} TYPE bigint`;
   const unit = unitOfName(row.column_name);
   const minor = unit === 'minor';
-  const checkHoldsAmount = (row.checks ?? []).some((expr) => expr === null || !holdsNoAmount(expr));
-  const indexHoldsAmount = (row.index_exprs ?? []).some((expr) => !holdsNoAmount(expr));
-  const keepsOldUnit = checkHoldsAmount || indexHoldsAmount || (row.defaults ?? []).some((expr) => !isZeroOrNullDefault(expr));
+  const checkHoldsAmount = (row.checks ?? []).some((expr) => expr === null || !reader.holdsNoAmount(expr));
+  const indexHoldsAmount = (row.index_exprs ?? []).some((expr) => !reader.holdsNoAmount(expr));
+  const keepsOldUnit = checkHoldsAmount || indexHoldsAmount || (row.defaults ?? []).some((expr) => !reader.isZeroOrNullDefault(expr));
   const times100 = (using: string) => (keepsOldUnit ? null : `${head} USING ${using};`);
   // A name that may or may not say minor units (price_minor, price_sat) needs the unit decided first;
   // one that is money only by a guess (total_passengers) needs deciding whether it is money, unless listed.

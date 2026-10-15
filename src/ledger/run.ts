@@ -124,7 +124,28 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
     page.pop();
     settle();
   }
+  // One finding can be too long on its own: 20 locations, each repeating a records_pointer of 256
+  // characters whose backslashes a result shows doubled (review round 12: 25,000 characters, and the
+  // call failed). Show fewer of its locations, counting the rest in more_rows, as for rows past 20.
+  const only = page[0];
+  const shown = only?.pointers ?? only?.lines ?? [];
+  for (let keep = shown.length - 1; only !== undefined && keep >= 1 && overBudget(result); keep -= 1) page[0] = fewerLocations(only, keep);
   return result;
+}
+
+/** The finding with only its first `keep` locations, the rest counted in more_rows, in the fields' order. */
+function fewerLocations(finding: Finding, keep: number): Finding {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(finding)) {
+    if (key === 'more_rows') continue;
+    if ((key === 'pointers' || key === 'lines') && Array.isArray(value)) {
+      out[key] = value.slice(0, keep);
+      out.more_rows = (finding.more_rows ?? 0) + value.length - keep;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out as unknown as Finding;
 }
 
 /** When at least as many amounts have a decimal point as not (zeros aside), the file most likely holds pounds read as pence: say how to read it. */
@@ -155,6 +176,8 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities']; // hledger, beancount: commodity
   const looksLikeCurrency = (name: string) => {
     const ws = wordsOf(name);
+    // A flag (is_foreign_currency) or a pair (ccy_pair, GBPUSD) is not the currency of a row (review round 12).
+    if (['is', 'has'].includes(ws[0] ?? '') || ws.includes('pair') || ws.includes('pairs')) return false;
     const currency = ws.some((w) => CURRENCY.includes(w)) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
     return currency && !ws.some((w) => AMOUNT_WORDS.includes(w));
   };

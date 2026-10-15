@@ -94,7 +94,7 @@ describe('failure', () => {
     expect(fixes[1]).toMatch(/^This file needs objects your platform creates\./);
     expect(fixes[2]).toMatch(/Lint a copy without that line\.$/);
     expect(fixes[3]).toMatch(/Lint a copy without it\.$/);
-    expect(fixes[4]).toMatch(/Split the file in two, put both in a folder, and lint the folder\.$/);
+    expect(fixes[4]).toMatch(/Lint a copy: split it in two, put both in a folder, and lint the folder\.$/);
     expect(fixes[5]).toMatch(/Lint a copy without the part that needs it \(a large data load, say\)\.$/);
   });
 });

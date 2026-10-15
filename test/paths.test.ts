@@ -142,6 +142,14 @@ describe('resolveInRoot', () => {
     );
   });
 
+  it('answers NOT_A_FILE for a folder where a file is expected, and still refuses a file of no type', () => {
+    // Review round 12: through the ledger's rule a folder was "not one of the file types this tool reads".
+    const dir = tempDir();
+    writeTree(dir, { 'exports/a.csv': 'a\n', 'noext': 'a\n' });
+    expect(codeOf(() => resolveInRoot(rootOf(dir), 'exports', CSV))).toBe('NOT_A_FILE');
+    expect(codeOf(() => resolveInRoot(rootOf(dir), 'noext', CSV))).toBe('FILE_TYPE_NOT_ALLOWED');
+  });
+
   it('refuses a folder link that leads outside the project', () => {
     // Folder links need no privilege (junctions on Windows), so this half never skips.
     expect(trySymlink(path.join(base, 'outside'), path.join(root.real, 'outdir'), 'dir')).toBe(true);
@@ -349,7 +357,9 @@ describe('isSensitive', () => {
       'passwords.csv', 'password.json', 'keyfile.json', 'oauth-token.json',
       // review round 11: a 40-character secret fits the echo limit whole, so these words count anywhere
       'app_secrets.json', 'prod-secrets.json', 'client-secrets.json', 'access_token.json', 'auth_token.json', 'github-token.json',
-      'credential.json', 'creds.csv', 'privatekey.json', 'secretkey.json']) {
+      'credential.json', 'creds.csv', 'privatekey.json', 'secretkey.json',
+      // review round 12: password-manager and wallet exports, Azure's and Docker's local secrets
+      'logins.csv', 'bitwarden_export_20240101.json', 'lastpass_export.csv', 'keystore.json', 'wallet.json', 'local.settings.json', 'home/.docker/config.json']) {
       expect(isSensitive(p), p).toBe(true);
     }
     for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv',
