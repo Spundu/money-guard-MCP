@@ -65,7 +65,8 @@ const MAX_LINK_HOPS = 64; // above Windows' 63 and Linux's 40: a chain realpath 
 export function leadsTo(p: string): string | null {
   // A link's text is taken part by part, never tidied first: ".." goes up from where the links before
   // it led, as Linux and macOS take it ("d/../x" through a link d to a folder outside is outside;
-  // path.resolve would have dropped "d/..", review round 10).
+  // path.resolve would have dropped "d/..", review round 10). Windows applies ".." in a symbolic link's
+  // text before following it; read this way, such a path only ends outside more often, never less.
   const split = (text: string) => text.split(process.platform === 'win32' ? /[\\/]/ : '/').filter((part) => part !== '' && part !== '.');
   const start = path.resolve(p);
   let resolved = path.parse(start).root;
@@ -123,7 +124,7 @@ export function isSensitive(rel: string): boolean {
 }
 
 function shown(input: string): string {
-  return `${quotedPath(input)}`;
+  return quotedPath(input);
 }
 
 function checkSyntax(input: string): void {

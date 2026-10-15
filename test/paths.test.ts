@@ -200,6 +200,15 @@ describe('resolveInRoot', () => {
       expect(new Set(answers.slice(0, 2)).size, `${length}`).toBe(1);
       expect(new Set(answers.slice(2)).size, `${length}`).toBe(1);
     }
+    // Review round 11: what the answer is, for a chain too long and for a loop, in both checks.
+    const tooMany = /^PATH_NOT_FOUND: "[^"]+" goes through more links than can be followed \(a loop, or a chain of more than 64\)\./;
+    expect(messageOf(() => resolveInRoot(r, 'e70_1', ANY))).toMatch(tooMany);
+    expect(trySymlink(path.join(project, 'loop_b'), path.join(project, 'loop_a'), 'dir')).toBe(true);
+    expect(trySymlink(path.join(project, 'loop_a'), path.join(project, 'loop_b'), 'dir')).toBe(true);
+    for (const p of ['loop_a', 'loop_a/x.csv']) expect(messageOf(() => resolveInRoot(r, p, p.endsWith('.csv') ? CSV : ANY)), p).toMatch(tooMany);
+    writeTree(project, { 'walk_loop/0001.sql': 'select 1;' });
+    expect(trySymlink(path.join(project, 'loop_a'), path.join(project, 'walk_loop', 'l'), 'dir')).toBe(true);
+    expect(messageOf(() => collectSources(r, { migrations: 'walk_loop' }))).toMatch(tooMany);
   });
 
   it('looks no deeper than 100 folders, links to folders included, instead of overflowing the stack', () => {

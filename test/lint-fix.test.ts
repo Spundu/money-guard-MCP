@@ -145,8 +145,8 @@ describe('money_lint_schema: fix_sql', () => {
       '(((fee)::character varying(5))::text = (fee)::text)', '((fee)::bpchar(4) IS NOT NULL)', '(scale(total) = 0)', '(scale(total) <= 0)', '(scale(total) <= 1)', '(scale(total) < 2)'];
     for (const expr of amounts) expect(holdsNoAmount(expr), expr).toBe(false);
     // Review round 10: past 2,000 characters a CHECK may hold anything, and is not read further.
-    const near = `(amount > 0 OR ${'x'.repeat(1970)} IS NULL)`;
-    expect([near.length <= 2000, holdsNoAmount(near), holdsNoAmount(`${near.slice(0, -1)} )`.padEnd(2001, ' '))]).toEqual([true, true, false]);
+    const near = `(amount > 0 OR ${'x'.repeat(1976)} IS NULL)`; // exactly 2,000 characters: still read (round 11)
+    expect([near.length === 2000, holdsNoAmount(near), holdsNoAmount(`${near.slice(0, -1)} )`.padEnd(2001, ' '))]).toEqual([true, true, false]);
   });
 
   it('reads a long CHECK in time that grows with its length, not its square', async () => {

@@ -192,11 +192,17 @@ describe('money_lint_schema: judging columns', () => {
     const [s, t] = ['s'.repeat(60), 't'.repeat(60)];
     const long = { 'db/migrations/0001.sql': `create schema ${s}; create table ${s}.${t} (price_total numeric(10,2));` };
     expect((await failure(long, { money_columns: [`${s}.${t}.price_totl`] })).message).toContain(`Did you mean "${s}.${t}.price_total"?`);
+    // Review round 11: an ignored numeric money column is counted, with accept_numeric left out.
+    const ignoredNumeric = await lint({ 'db/migrations/0001.sql': 'create table orders (price numeric(10,2), fee numeric(10,2));' }, { ignore_columns: ['orders.fee'] });
+    expect([ignoredNumeric.ignored_count, ignoredNumeric.summary.endsWith('1 ignored.')]).toEqual([1, true]);
     // Review round 11: the entry as written, and a table named instead of a column is told so.
     expect((await failure(files, { ignore_columns: ['public.orders'] })).message).toBe('ignore_columns names "public.orders", which is not a column of any table the migrations create. That is a table: name one of its columns.');
     // Review round 10: within a long-named table, the column names are compared, not the first 64 characters.
     const wide = { 'db/migrations/0001.sql': `create table ${t} (amount_aaa_refunded numeric(10,2), amount_zzz numeric(10,2));` };
     expect((await failure(wide, { ignore_columns: [`${t}.amount_zzx`] })).message).toContain(`Did you mean "public.${t}.amount_zzz"?`);
+    // Review round 11: the table compared in any case, and a mistyped table still gets the whole name.
+    expect((await failure(wide, { ignore_columns: [`${t.toUpperCase()}.amount_zzx`] })).message).toContain(`Did you mean "public.${t}.amount_zzz"?`);
+    expect((await failure(files, { money_columns: ['order.grossvalue'] })).message).toContain('Did you mean "public.orders.grossvalue"?');
     // Review round 9: a quote in a name is escaped in quotes, the entry's and the suggestion's alike.
     const quote = await failure({ 'db/migrations/0001.sql': 'create table t ("pri""ce" numeric(10,2));' }, { money_columns: ['t.pri"cee'] });
     expect(quote.message).toBe('money_columns names "t.pri\\"cee", which is not a column of any table the migrations create. Did you mean "public.t.pri\\"ce"?');

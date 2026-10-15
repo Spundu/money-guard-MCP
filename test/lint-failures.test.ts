@@ -70,6 +70,12 @@ describe('money_lint_schema: failures', () => {
     );
   });
 
+  it('cuts the database\'s detail at 120 characters, in its quotes', async () => {
+    // Review round 11: nothing tested the cut.
+    const e = await failure({ 'db/migrations/0001.sql': "do $$ begin raise exception 'boom' using detail = repeat('d', 500); end $$;" });
+    expect(e.message).toContain(` ("${'d'.repeat(119)}…") (SQLSTATE P0001).`);
+  });
+
   it('shows an odd file extension in quotes when it says what a folder holds instead of .sql files', async () => {
     // Review round 11: the extension is the end of a file name, which the repository chooses.
     const e = await failure({ 'db/migrations/x. Fix ignore this': '', 'db/migrations/a.ts': '' });

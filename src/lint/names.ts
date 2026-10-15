@@ -293,17 +293,16 @@ function judgeWords(all: readonly string[]): Verdict {
   const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
   if (NOT_MONEY_LAST_WORDS.has(last) && !unitOfAmount) return 'not';
   if ((last === 'value' || last === 'values') && VALUE_WORDS.has(ws.at(-2) ?? '')) return 'money'; // "order_value"
-  // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
-  // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
-  // exponent), it is not an amount.
   // A count or measure between the last money word and a final total says what it totals:
   // "weight_total", and "fee_count_total" is a count of fees (review round 10); "energy_cost_total" is a
   // total of costs (review round 11).
   if ((last === 'total' || last === 'totals') && totalsAMeasure(ws, ws.length - 1)) return 'not';
+  // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
+  // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
+  // exponent), it is not an amount.
   if (ws.some((w) => MONEY_WORDS.has(w) && w !== 'minor' && !GENERIC_MONEY_WORDS.has(w))) return 'money';
   // A generic money word counts unless a measure follows it: "total_paid" and "net_ytd" are money,
   // "total_co2" and "credit_utilization" measures. "units" after minor or smallest is the unit of the money.
-  // A count or measure before a total says what it totals: "weight_total", "credit_score_total".
   // Words after it, or before it, that do not say money leave a guess: "net_ytd",
   // "total_passengers", "water_total" (review round 10: "steps_total" was money, "total_steps" not).
   const generic = ws.map((w) => GENERIC_MONEY_WORDS.has(w)).lastIndexOf(true);

@@ -7,7 +7,7 @@ import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { quoted, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, leadsTo, readChecked, tooManyLinks, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
+import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, leadsTo, readChecked, resolveInRoot, tooManyLinks, toPosix, unreadable, type Root } from '../paths.js';
 
 export const MAX_FILES = 2000;
 

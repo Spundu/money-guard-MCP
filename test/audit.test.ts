@@ -150,6 +150,7 @@ describe('verifyAuditLog on a broken log', () => {
     expect(run(bytes(text(chain(DRAFTS, 'k1', OTHER_HEX)))).break?.writer_key_id).toBe('k1');
     const long = 'k'.repeat(100);
     expect([...(run(bytes(text(chain(DRAFTS, long)))).break?.writer_key_id ?? '')].length).toBe(64);
+    expect(run(bytes(text(chain(DRAFTS, long)))).summary).toContain(`("${'k'.repeat(63)}…")`); // cut in the summary too (round 11)
   });
 
   it('describes a cut tail with both counts', () => {

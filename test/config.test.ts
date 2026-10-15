@@ -122,7 +122,7 @@ describe('resolveConfig root', () => {
     expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: path.join(dir, 'file.txt') }, dir).root)).toMatch(/is not a folder/);
     expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: path.parse(dir).root }, dir).root)).toMatch(/is the root of a disk/);
     // Review round 10: "C:" is the current folder of drive C on Windows, not a folder of its own.
-    for (const drive of ['C:', 'd:project']) {
+    for (const drive of ['C:', 'd:project', 'C:.']) {
       expect(errorText(resolveConfig({ MONEY_GUARD_ROOT: drive }, dir).root), drive).toMatch(/^ROOT_INVALID: .* a drive letter without a backslash after it/);
     }
   });
