@@ -87,9 +87,16 @@ async function answer(tool: string, log: Log, signal: AbortSignal | undefined, w
       return { content: [{ type: 'text', text: escapeHidden(err.toText()) }], isError: true };
     }
     log(`${NAME}: ${tool} INTERNAL_ERROR ${ms()} ${trace(err)}`);
-    const internal = new ToolError('INTERNAL_ERROR', `money-guard failed unexpectedly (${err instanceof Error ? err.name : typeof err}).`, 'This is a bug in money-guard: please report it. The server log has the details.');
+    const internal = new ToolError('INTERNAL_ERROR', `money-guard failed unexpectedly (${err instanceof Error ? err.name : typeof err}).`, internalFix(err));
     return { content: [{ type: 'text', text: escapeHidden(internal.toText()) }], isError: true };
   }
+}
+
+/** The fix for an unexpected failure: a lint database that cannot start is most often a broken install. */
+export function internalFix(err: unknown): string {
+  return err instanceof Error && err.name === 'DatabaseStartError'
+    ? 'The lint database could not start, as after a broken install: reinstall money-guard (npm ci, or install the bundle again), and report it if that does not help. The server log has the details.'
+    : 'This is a bug in money-guard: please report it. The server log has the details.';
 }
 
 export function createServer(config: Config, log: Log = stderrLog): McpServer {

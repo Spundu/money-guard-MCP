@@ -2,7 +2,7 @@
 // that fits the script (the setup file, a migration in a folder, or the one file migrations names)
 // and what PostgreSQL said.
 
-import { clip } from '../echo.js';
+import { quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { DbError, Script } from './database.js';
 
@@ -64,9 +64,13 @@ export function failure(script: Script, err: DbError, context: { available: read
   const position = err.position === undefined ? Number.NaN : Number(err.position);
   const at = Number.isInteger(position) && position > 0 ? locate(script.text, position) : null;
   const where = at === null ? script.name : `${script.name} line ${at.line}, column ${at.column}`;
-  const detail = err.detail ? ` (${clip(err.detail, 120)})` : '';
+  // A migration writes these (RAISE EXCEPTION takes any text): in quotes, so they cannot close them
+  // and add a "Fix:" of their own (review round 10).
+  const detail = err.detail ? ` (${quoted(err.detail, 120)})` : '';
   const state = err.code ? ` (SQLSTATE ${err.code})` : '';
-  const message = `${where}: ${clip(err.message, 300)}${detail}${state}.`;
+  // money-guard's own text (an open transaction) is shown as it is: it is a fixed sentence.
+  const said = err.message === OPEN_TRANSACTION ? OPEN_TRANSACTION : quoted(err.message, 300);
+  const message = `${where}: ${said}${detail}${state}.`;
 
   const lines = script.text.split('\n');
   let fix: string;
@@ -93,9 +97,12 @@ export function failure(script: Script, err: DbError, context: { available: read
     const ran = context.filesGiven
       ? 'the files ran in the order files gives; put the file that creates it first. '
       : 'money-guard runs them in natural order of their paths; pass files to give the order your tool uses. ';
-    // One migrations file has no order to get wrong.
-    const order = !context.single && (err.code === '42P01' || err.code === '42883') ? `If one of your migrations creates it, the files ran out of order: ${ran}` : '';
+    // A missing type is often a typo (intt) or an enum a later file creates (review round 10): those
+    // first, the platform after. One migrations file has no order to get wrong.
+    const type = err.code === '42704' && /^type "/.test(err.message);
+    const order = !context.single && (err.code === '42P01' || err.code === '42883' || type) ? `If one of your migrations creates it, the files ran out of order: ${ran}` : '';
     fix =
+      (type ? 'Check the spelling of the type. ' : '') +
       order +
       (context.preset
         ? 'The Supabase preset does not create this. Pass setup: a .sql file that creates it (it runs after the preset).'
@@ -106,8 +113,7 @@ export function failure(script: Script, err: DbError, context: { available: read
     // pg_dump writes table rows after "COPY ... FROM stdin;" lines; only psql can feed them in.
     fix = `The file holds table data after COPY ... FROM stdin (a pg_dump with data), which only psql can load. ${setup ? 'Take the data out of the setup file.' : 'Lint a schema-only dump (pg_dump --schema-only) or the migrations folder instead.'}`;
   } else if (err.code === '25001') {
-    const statement = /^(.+?) cannot run inside a transaction block$/.exec(err.message)?.[1] ?? 'this statement';
-    fix = `money-guard runs each file as one script, where ${clip(statement, 60)} cannot run (psql, which commits statement by statement, can). ${past({ setup: 'Take it out of the setup file.', folder: 'If the file does nothing else, leave it out with files.', single: 'Lint a copy without it.' })}`;
+    fix = `money-guard runs each file as one script, where this statement cannot run (psql, which commits statement by statement, can). ${past({ setup: 'Take it out of the setup file.', folder: 'If the file does nothing else, leave it out with files.', single: 'Lint a copy without it.' })}`;
   } else if (err.code === '0A000' && /^cannot alter type of a column used (?:by|in) /.test(err.message)) {
     fix = 'Something else uses this column (a view, a rule, a policy, a trigger, a generated column or a function with a BEGIN ATOMIC body): in the same migration, drop it before the ALTER and create it again after.';
   } else if (err.code === '55P04') {

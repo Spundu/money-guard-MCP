@@ -48,6 +48,8 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
   const invalid = (why: string) => ({ ok: false as const, error: new ToolError('ROOT_INVALID', `The project root (from ${source}) ${why}.`, fix) });
   // Fail closed: a broken setting must not quietly widen or move what the tools can read.
   if (PLACEHOLDER.test(value)) return invalid(`is ${quoted(value, 80)}, a placeholder the MCP host did not fill in`);
+  // "C:" or "C:folder" means the current folder of drive C on Windows, wherever that is (review round 10).
+  if (/^[A-Za-z]:(?![\\/])/.test(value)) return invalid(`is ${quoted(value, 80)}, a drive letter without a backslash after it, which means whatever folder is current on that drive`);
 
   let real: string;
   try {

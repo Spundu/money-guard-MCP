@@ -129,7 +129,7 @@ describe('runScripts with a setup file that goes wrong', () => {
     try {
       await expect(runScripts([setup('select 1;'), migration], { timeoutMs: 30_000, preset: false, worker: new URL('./support/fake-worker.mjs', import.meta.url) })).rejects.toMatchObject({
         code: 'SETUP_FAILED',
-        message: 'setup.sql: the database stopped while running this file (the database thread died).',
+        message: 'setup.sql: the database stopped while running this file ("the database thread died").',
         fix: 'Take the statement that stops the database out of the setup file.',
       });
     } finally {
@@ -210,7 +210,7 @@ describe('runScripts with a database that misbehaves', () => {
   it('fails the file that was running when the database thread died, naming it', async () => {
     await expect(run('crash')).rejects.toMatchObject({
       code: 'MIGRATION_FAILED',
-      message: 'db/0001.sql: the database stopped while running this file (the database thread died).',
+      message: 'db/0001.sql: the database stopped while running this file ("the database thread died").',
     });
   });
 
@@ -252,7 +252,7 @@ describe('runScripts with a database that misbehaves', () => {
     });
     await expect(run('reading-crash')).rejects.toMatchObject({
       code: 'MIGRATION_FAILED',
-      message: 'db/0001.sql: the catalog could not be read after this file, the last one (the database thread died).',
+      message: 'db/0001.sql: the catalog could not be read after this file, the last one ("the database thread died").',
       fix: "Leave the file out with files, or lint it on its own to find the statement that breaks the read (one that replaces PostgreSQL's own functions, say).",
     });
   });

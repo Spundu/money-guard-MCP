@@ -123,7 +123,7 @@ const NOT_MONEY = [
   'net_torque', 'total_heat', 'net_flux', 'total_runtime', 'total_uptime', 'total_xp', 'total_damage', 'total_mins',
   'total_hrs', 'total_kw', 'total_mb', 'total_gb', 'total_bmi', 'total_goals', 'total_wins', 'total_players',
   // Review round 9 (tests): "totals" as well as "total"; folded names with a money word inside, not at an end.
-  'weight_totals', 'hours_totals', 'points_totals', 'days_total', 'nights_total', 'years_total', 'underpricedpct', 'nonrefundable', 'isrefundable', 'prepaidbalancecheck',
+  'charge_current', 'charge_voltage', 'total_watts', 'weight_totals', 'hours_totals', 'points_totals', 'fee_count_total', 'cash_count_total', 'shipping_weight_total', 'days_total', 'nights_total', 'years_total', 'underpricedpct', 'nonrefundable', 'isrefundable', 'prepaidbalancecheck',
 ];
 
 describe('looksLikeMoney', () => {
@@ -135,17 +135,24 @@ describe('looksLikeMoney', () => {
     expect(looksLikeMoney(name)).toBe(false);
   });
 
-  it('has the table of about 350 names that SPEC.md §3.5 promises', () => {
-    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(350);
+  it('has the table of about 490 names that SPEC.md §3.5 promises', () => {
+    expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(480); // "about 490": the SPEC number moves with the table (review round 10)
   });
 });
 
 describe('moneyByGuess', () => {
   it('marks a generic money word followed by a word that does not say money, so fix_sql withholds a ×100', () => {
     // Review round 9: round 8 took open-ended words after total as money; total_mileage then got a ×100 fix.
-    const guesses = ['total_deposited', 'net_ytd', 'credit_used', 'total_withdrawn', 'total_lifetime', 'totalDeposited'];
+    const guesses = ['net_ytd', 'credit_used', 'total_lifetime', 'total_passengers', 'total_elevation', 'total_kills', 'total_games',
+      // Review round 10: a word before total that does not say money, and total in a folded name that
+      // cannot be split, are guesses too (steps_total and totalco2 got a ×100 fix).
+      'water_total', 'sleep_total', 'steps_total', 'records_total', 'charge_cycles_total', 'totalco2', 'totalkills', 'stepstotal', 'flighttotal',
+      'battery_charge', 'state_of_charge', 'course_credits'];
     expect(guesses.map(moneyByGuess)).toEqual(guesses.map(() => true));
-    const sure = ['total', 'grand_total', 'total_paid', 'total_gbp', 'total_minor_units', 'net_amount', 'amount_due', 'order_total', 'total_jpy', 'credit_limit', 'hourly_rate'];
+    const sure = ['total', 'grand_total', 'total_paid', 'total_gbp', 'total_minor_units', 'net_amount', 'amount_due', 'order_total', 'total_jpy', 'credit_limit', 'hourly_rate',
+      // Review round 10: past-tense money verbs say what the money is (Magento's total_refunded, total_invoiced).
+      'total_refunded', 'total_invoiced', 'total_spent', 'total_charged', 'total_billed', 'total_earned', 'total_collected', 'total_withdrawn',
+      'total_deposited', 'interest_accrued', 'totalDeposited', 'totaldeposited', 'totalrefunded'];
     expect(sure.map(moneyByGuess)).toEqual(sure.map(() => false));
     expect(['total_mileage', 'weight_total', 'id'].map(moneyByGuess)).toEqual([false, false, false]); // not money at all
   });
@@ -159,7 +166,9 @@ describe('unitOfName', () => {
       // Review round 5: folded, inside a longer name or not.
       'amountminorunits', 'pricecentsusd', 'amountinsmallestunit', 'totalcentsdue', 'amountwei', 'centsamount'];
     expect(yes.map(unitOfName)).toEqual(yes.map(() => 'minor'));
-    const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent'];
+    const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent',
+      // Review round 10: a product's unit price, and what the amount is for after "per", are not the unit.
+      'lowest_unit_price', 'lowest_unit_cost', 'smallest_unit_price', 'lowestunitprice', 'price_per_subunit', 'price_per_cent'];
     expect(no.map(unitOfName)).toEqual(no.map(() => 'major'));
   });
 
@@ -183,7 +192,11 @@ describe('unitOfName', () => {
       // Review round 9: folded, as PostgreSQL writes an unquoted AmountKWD or AmountWon.
       'amountkwd', 'pricebhd', 'amountwon',
       // Review round 9: öre or iron ore, fen and sen or something else, milliseconds or thousandths.
-      'amount_ore', 'price_fen', 'price_sen', 'amount_millis'];
+      'amount_ore', 'price_fen', 'price_sen', 'amount_millis',
+      // Review round 10: a minor-unit word before the money word may name a product or a brand.
+      'subunit_price', 'subunit_cost', 'kobo_price', 'penny_stock_price', 'agora_cost',
+      // Review round 10: crypto coins have 8 or 18 decimals; x100 of 0.00012345 BTC was 0.
+      'amount_btc', 'amount_eth', 'price_usdc', 'amount_usdt', 'amount_sol', 'fee_xbt'];
     expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
     expect(['costmicros', 'pricemicros'].map(looksLikeMoney)).toEqual([true, true]);
     const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats', 'amount_yen', 'price_yen',
@@ -192,7 +205,10 @@ describe('unitOfName', () => {
       // Review round 9: the minor units of more currencies (Paystack's subunit, halalas, fils) were multiplied by 100.
       'amount_subunit', 'amount_in_subunit', 'amount_subunits', 'amount_pesewas', 'amount_halalas', 'amount_fils', 'amount_agorot',
       'amount_centimes', 'amount_rappen', 'amount_groszy', 'amount_stotinki', 'amount_santims', 'amount_kurus',
-      'amount_lowest_denomination', 'amount_in_lowest_denomination'];
+      'amount_lowest_denomination', 'amount_in_lowest_denomination',
+      // Review round 10: "lowest" before unit or units, as minor and smallest (it was not taken for money).
+      'amount_lowest_unit', 'amount_lowest_units', 'total_lowest_units'];
+    expect(['amount_lowest_unit', 'amount_lowest_units', 'total_lowest_units'].map(looksLikeMoney)).toEqual([true, true, true]);
     expect(minor.map(unitOfName)).toEqual(minor.map(() => 'minor'));
   });
 });

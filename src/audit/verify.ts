@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { GENESIS_HASH, jsonlEntryAt, jsonlLineCount, verifyJsonl } from 'sealed-audit-chain';
 import type { AuditKeys } from '../config.js';
-import { clip, escapeUnsafe } from '../echo.js';
+import { clip, escapeUnsafe, quoted } from '../echo.js';
 
 export type ReasonCode =
   | 'TORN_LAST_LINE'
@@ -112,7 +112,7 @@ function writerKeyIdAt(bytes: Uint8Array, index: number): string | undefined {
   const entry = jsonlEntryAt(bytes, index);
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return undefined;
   const id = (entry as Record<string, unknown>).writer_key_id;
-  return typeof id === 'string' ? clip(id, 64) : undefined;
+  return typeof id === 'string' ? id : undefined; // raw: clipped for the result, quoted for the summary
 }
 
 function entries(n: number): string {
@@ -228,10 +228,8 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const reason = clip(raw, MAX_REASON);
   const line = index < lineCount(bytes) ? index + 1 : null;
   const brk: AuditBreak = { entry_index: index, line, code, reason };
-  if (code === 'UNKNOWN_KEY_ID' || code === 'HMAC_MISMATCH') {
-    const id = writerKeyIdAt(bytes, index);
-    if (id !== undefined) brk.writer_key_id = id;
-  }
+  const rawKeyId = code === 'UNKNOWN_KEY_ID' || code === 'HMAC_MISMATCH' ? writerKeyIdAt(bytes, index) : undefined;
+  if (rawKeyId !== undefined) brk.writer_key_id = clip(rawKeyId, 64);
 
   const where = line === null ? `entry ${index}` : `entry ${index} (line ${line})`;
   let meaning: string;
@@ -242,6 +240,6 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   } else {
     meaning = ENTRY_MEANING[code];
   }
-  const keyId = code === 'UNKNOWN_KEY_ID' && brk.writer_key_id !== undefined ? ` ("${brk.writer_key_id}")` : '';
+  const keyId = code === 'UNKNOWN_KEY_ID' && rawKeyId !== undefined ? ` (${quoted(rawKeyId, 64)})` : '';
   return result(`The log does NOT verify: ${where} ${meaning}${keyId} (${code}).`, brk, null, anchorChecked);
 }

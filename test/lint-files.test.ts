@@ -278,7 +278,7 @@ describe('money_lint_schema: which files run', () => {
 
   it('keeps line numbers exact after a down part that comes first', async () => {
     const e = await failure({ 'db/migrations/0001.sql': '-- migrate:down\ndrop table x;\n-- migrate:up\ncreate table t (x nosuchtype);\n' });
-    expect(e.message).toMatch(/0001\.sql line 4, column 19: type "nosuchtype" does not exist/);
+    expect(e.message).toMatch(/0001\.sql" line 4, column 19: "type \\"nosuchtype\\" does not exist"/);
   });
 
   it('says plainly when no table is left to check, instead of reporting a clean schema', async () => {

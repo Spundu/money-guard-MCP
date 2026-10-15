@@ -5,14 +5,14 @@
 
 import process from 'node:process';
 import { Worker } from 'node:worker_threads';
-import { clip } from '../echo.js';
+import { quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { failedCode, failure, tooBig, wayPast } from './advice.js';
 import { formatMib } from '../paths.js';
 import { DETAIL_SQL, MARK_SQL, SNAPSHOT_SQL, isDetailRow, type DetailRow } from './catalog.js';
 
 export interface Script {
-  /** What messages call it, as they may show it: a path relative to the root (through clipPath), or "the Supabase preset". */
+  /** What messages call it, as they may show it: a path relative to the root, in quotes (quotedPath: a file name can hold ". Fix:"), or "the Supabase preset". */
   name: string;
   text: string;
   phase: 'setup' | 'migration';
@@ -217,6 +217,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
     // script ran, money-guard itself failed (a broken install, say): not a ToolError, so the server
     // answers INTERNAL_ERROR without detail and logs the type and code locations, the worker's error
     // as the cause (SPEC.md §2.1).
+    // `why` is shown as it is: money-guard's own words, or text from outside already in quotes.
     const stopped = (why: string, cause?: Error): Error => {
       if (running < 0) {
         const err = new Error('the lint database could not start', { cause });
@@ -231,7 +232,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
         single: `Lint parts of the file on their own to find ${culprit}.`,
       });
       const what = reading ? 'the catalog could not be read after this file, the last one' : 'the database stopped while running this file';
-      return new ToolError(failedCode(script), `${script.name}: ${what} (${clip(why, 200)}).`, fix);
+      return new ToolError(failedCode(script), `${script.name}: ${what} (${why}).`, fix);
     };
     // After a statement PGlite cannot carry out (COPY ... PROGRAM), the database answers wrongly or not at all.
     const stuck = (step: number, what: string): ToolError => {
@@ -325,7 +326,8 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           finish({ error: stuck(m.step, 'no longer answers correctly') });
           break;
         case 'crashed':
-          finish({ error: stopped(m.error.message, workerError(m.error)) });
+          // The database's own message may quote the migrations (RAISE EXCEPTION): in quotes.
+          finish({ error: stopped(quoted(m.error.message, 200), workerError(m.error)) });
           break;
         case 'done':
           // A migration that replaces one of PostgreSQL's own functions can make the read return NULL.
@@ -338,7 +340,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           break;
       }
     });
-    worker.on('error', (err) => finish({ error: stopped(err.message, err) }));
+    worker.on('error', (err) => finish({ error: stopped(quoted(err.message, 200), err) }));
     worker.on('exit', (code) => finish({ error: stopped(`the worker exited with code ${code}`) }));
   });
 }

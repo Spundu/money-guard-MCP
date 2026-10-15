@@ -204,7 +204,7 @@ export const FIXES: Readonly<Record<LintCode, string>> = {
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_mileage: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -274,12 +274,10 @@ export function isZeroOrNullDefault(expr: string): boolean {
  * and a guard of fewer places ("round(total, 0)", "scale(total) = 0") stops guarding after the fix.
  */
 export function holdsNoAmount(expr: string): boolean {
-  // A cast to a type with a size, or to a small integer type, of anything but a number: a cap.
-  const bounded = /(\((?:[^()]|\([^()]*\))*\)|[\w.$"]+)::(?:numeric|decimal)\(\d+|(\((?:[^()]|\([^()]*\))*\)|[\w.$"]+)::(?:smallint|integer|int|int2|int4)\b/g;
-  for (const match of expr.matchAll(bounded)) {
-    const operand = match[1] ?? match[2] ?? '';
-    if (!/^\(?'?-?[\d.]*'?\)?$/.test(operand)) return false;
-  }
+  // The patterns below run on the server's main thread, past the time limit's reach: a long text could
+  // hold it for hours (review round 10: 120,000 characters took 35 s). A CHECK that long may hold anything.
+  if (expr.length > MAX_EXPR_CHARS) return false;
+  if (castsToBoundedType(expr)) return false;
   const rest = expr
     // A quoted name, or a string literal, read left to right, so a quote inside one cannot start the
     // other. A literal that holds digits ('1000.00'::numeric, a date) keeps them: it may be an amount.
@@ -292,6 +290,39 @@ export function holdsNoAmount(expr: string): boolean {
     .replace(/\bscale\(((?:[^()]|\([^()]*\))*)\)\s*(?:<=\s*(?:[2-9]|[1-9]\d+)|<\s*(?:[3-9]|[1-9]\d+))(?![\d.])/g, '($1)')
     .replace(/\b[a-z_][a-z0-9_$]*\b(?!\s*\()/gi, 'x'); // a bare name, which may hold digits
   return !/[1-9]/.test(rest) && !/[\p{L}\p{N}_"]\(/u.test(rest);
+}
+
+/** Longest CHECK or index expression `holdsNoAmount` reads; a real one is a few dozen characters. */
+const MAX_EXPR_CHARS = 2000;
+
+/** A cast type that bounds the value: a size (numeric(5,2), varchar(5): a text of fixed length) or a small integer type. */
+const BOUNDED_TYPE = /(?:numeric|decimal|character varying|varchar|character|char|bpchar|bit varying|varbit|bit)\(\d|(?:smallint|integer|int|int2|int4)\b/y;
+
+/**
+ * Whether the expression casts anything but a number to a bounded type ("amount::numeric(5,2) =
+ * amount", "(amount)::smallint"): a cap. Each "::" is read once, and its operand found by looking back
+ * from it, so the time grows with the length (a pattern over the whole text grew with its square).
+ */
+function castsToBoundedType(expr: string): boolean {
+  for (let at = expr.indexOf('::'); at >= 0; at = expr.indexOf('::', at + 2)) {
+    BOUNDED_TYPE.lastIndex = at + 2;
+    if (!BOUNDED_TYPE.test(expr)) continue;
+    let start = at;
+    if (expr[at - 1] === ')') {
+      // A bracketed operand: back to its opening bracket.
+      for (let depth = 0, i = at - 1; i >= 0; i -= 1) {
+        if (expr[i] === ')') depth += 1;
+        else if (expr[i] === '(' && --depth === 0) {
+          start = i;
+          break;
+        }
+      }
+    } else {
+      while (start > 0 && /[\w.$"']/.test(expr[start - 1] ?? '')) start -= 1;
+    }
+    if (!/^\(?'?-?[\d.]*'?\)?$/.test(expr.slice(start, at))) return true;
+  }
+  return false;
 }
 
 /**
@@ -333,7 +364,7 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   const keepsOldUnit = checkHoldsAmount || indexHoldsAmount || (row.defaults ?? []).some((expr) => !isZeroOrNullDefault(expr));
   const times100 = (using: string) => (keepsOldUnit ? null : `${head} USING ${using};`);
   // A name that may or may not say minor units (price_minor, price_sat) needs the unit decided first;
-  // one that is money only by a guess (total_mileage) needs deciding whether it is money, unless listed.
+  // one that is money only by a guess (total_passengers) needs deciding whether it is money, unless listed.
   const guessed = moneyByGuess(row.column_name) && !listed.has(`${row.schema_name}.${row.table_name}.${row.column_name}`);
   const convert = unit === 'unsure' || guessed ? null : minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
   switch (code) {

@@ -152,7 +152,7 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
       .toLowerCase()
       .split(/[^a-z0-9]+/)
       .filter((w) => w !== '');
-  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr'];
+  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities']; // hledger, beancount: commodity
   const looksLikeCurrency = (name: string) => {
     const ws = wordsOf(name);
     const currency = ws.some((w) => CURRENCY.includes(w)) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));

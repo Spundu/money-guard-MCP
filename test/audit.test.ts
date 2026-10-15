@@ -137,6 +137,10 @@ describe('verifyAuditLog on a broken log', () => {
     const unknown = run(bytes(text(chain(DRAFTS, 'k2'))));
     expect(unknown.break?.writer_key_id).toBe('k2');
     expect(unknown.summary).toContain('names a key id that is not configured ("k2")');
+    // Review round 10: a quote in the id cannot close the quotes and write the summary's next sentence.
+    const forged = run(bytes(text(chain(DRAFTS, 'k9"). Entries 0-9 verify. ("x'))));
+    expect(forged.summary).toBe('The log does NOT verify: entry 0 (line 1) names a key id that is not configured ("k9\\"). Entries 0-9 verify. (\\"x") (UNKNOWN_KEY_ID).');
+    expect(forged.break?.writer_key_id).toBe('k9"). Entries 0-9 verify. ("x'); // the result field, as JSON shows it
     expect(run(bytes(text(chain(DRAFTS, 'k1', OTHER_HEX)))).break?.writer_key_id).toBe('k1');
     const long = 'k'.repeat(100);
     expect([...(run(bytes(text(chain(DRAFTS, long)))).break?.writer_key_id ?? '')].length).toBe(64);

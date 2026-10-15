@@ -7,7 +7,7 @@ import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { clip, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, leadsTo, readChecked, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
+import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, leadsTo, readChecked, tooManyLinks, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
 
 export const MAX_FILES = 2000;
 
@@ -195,7 +195,8 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       } catch (err) {
         // A broken link that leads outside gets the answer one to a place that exists there would.
         const target = leadsTo(full);
-        if (target === null || isInside(root.real, target)) {
+        if (target === null) throw tooManyLinks(toPosix(path.relative(root.real, full)));
+        if (isInside(root.real, target)) {
           if (deniedOrLocked(err)) throw unreadable(toPosix(path.relative(root.real, full)), err);
           throw new ToolError('PATH_NOT_FOUND', `${shown} is a link to something that does not exist.`, 'Remove the broken link, or pass files with the migrations to run.');
         }

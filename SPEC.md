@@ -144,7 +144,9 @@ Every path argument:
      (`credentials.csv`, AWS's `alice_credentials.csv`, `application_default_credentials.json`),
      `accesskeys`, `access_keys`, `rootkey`, `client_secret`, `service-account`, `serviceaccount`
      or `adminsdk` (AWS access-key downloads, Google OAuth, service-account and Firebase keys); names
-     starting `secrets` or `.secrets` (`secrets.json`); `accesstokens` (`accessTokens.json`);
+     starting `secrets` or `.secrets` (`secrets.json`), or named `secret` (`secret.json`, `app-secret.json`);
+     `apikey`, `api_key`, `api-keys`, `access-key`, `access_key`, `passwords`, `keyfile` and
+     `oauth_token` (`api_keys.json`, `aws_access_key.csv`, `passwords.csv`); `accesstokens` (`accessTokens.json`);
      `token.json`, `tokens.json` and `auth.json`; `key.json` and names ending `-key.json`, `_key.json`
      or `.key.json` (`sa-key.json`); and a Google Cloud key as
      downloaded, `<project>-<12 hex digits>.json` with at least one letter among the digits (so a
@@ -254,7 +256,7 @@ Shared error codes:
 | `FILE_TOO_LARGE` | Over the tool's size limit. | States the limit; suggests a smaller export. |
 | `FILE_UNREADABLE` | The file or folder passed the checks but cannot be read: another program has it locked (Windows), permission is denied, or it went away. | Locked: close the program that holds it. Permission denied: give the user that runs the server read access, and read and search (x) access to each folder on its path. Gone: check the path. Then call again. |
 | `BUSY` | A second `money_lint_schema`, or a ledger or audit check, while a lint runs (§2.6). | Retry after the running lint finishes: usually a few seconds, at most its time limit. |
-| `INTERNAL_ERROR` | A bug. | Details are in the server's log (stderr). |
+| `INTERNAL_ERROR` | A bug, or a lint database that cannot start (a broken install: the fix says to reinstall first). | Details are in the server's log (stderr). |
 
 ### 2.6 Limits and concurrency
 - At most **one** `money_lint_schema` runs at a time, because it starts a database: a second one gets
@@ -498,7 +500,7 @@ word**, with these refinements:
 - **An amount "in" a currency:** a name that ends in currency or ccy after "in" is judged by the words
   before "in": `debit_in_account_currency` is money; `amount_currency` and `payment_method_currency`
   are not.
-- **Units:** unit and units are non-money last words (`net_units`), except after minor or smallest,
+- **Units:** unit and units are non-money last words (`net_units`), except after minor, smallest or lowest,
   where they name the unit of an amount (`amount_minor_units`, `amount_in_smallest_unit`), and after
   price or cost, where they make a unit price (`price_unit`, Odoo's price on every order line).
 - **Generic money words:** total, net, gross, credit, charge, principal and interest also start many
@@ -509,15 +511,18 @@ word**, with these refinements:
   and `total_minor_units` are money; `total_co2` (co and 2), `total_tokens` and `net_units` are not.
   Words not in the lists count as money: a missed money column gets no warning at all, while a
   measure taken for money gets a finding someone can dismiss. But such a name is money only by a
-  guess when a word after the generic word is not a money, beside, unit or currency word
-  (`total_deposited`, but also `total_mileage`): its finding has `fix_sql` `null` unless the
+  guess when a word after the generic word, or before it, is not a money, beside, unit or currency
+  word (`total_deposited`, but also `total_passengers` and `water_total`), and so is a folded name
+  that cannot be split into known words and has total at one end (`totalco2`): its finding has `fix_sql` `null` unless the
   column is listed in `money_columns` (§3.6), so a measure is never multiplied by 100. Before total or totals, a count or a
   measure says what is totalled, so the name is not money: `weight_total`, `hours_total` and
   `credit_score_total` are read as `total_weight`. These words are the counts and the rates and
   measures among the non-money last words, the plural time words (days, nights, weeks, months, years,
   hours, minutes, seconds) and ms, and the measures after
   generic money words; not unit, units or margin, and not order words or things that have a price
-  (`units_total`, `margin_total`, `line_items_total`, `orders_total` and `tier_total` are money). Other generic words keep theirs: `usage_charge` is money.
+  (`units_total`, `margin_total`, `line_items_total`, `orders_total` and `tier_total` are money,
+  some as guesses). This holds even beside another money word: `fee_count_total` counts fees. Other
+  generic words keep theirs: `usage_charge` is money.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
   `totalamount`. Every word the rule does not know is first split into the words it knows (the money,
   non-money, unit, currency, ratio, rate, value and beside lists, all in this section), in as few words as
@@ -562,14 +567,14 @@ The word lists:
   chars, characters, likes, followers, rainfall, change, changes, flow, flows, utilization,
   utilisation, component, components, coverage, axis, investigator, meters, metres, liters, litres,
   tons, tonnes, grams, mass, force, torque, heat, flux, runtime, uptime, xp, damage, mins, hrs, secs,
-  kw, mb, gb, bmi, goals, wins, players, mileage
+  kw, mb, gb, bmi, goals, wins, players, mileage, current, voltage, amps, watts
 - **Words beside money words** (known for splitting folded names):
   platform, service, late, sales, sale, base, retail, wholesale, delivery, handling, processing,
   booking, cancellation, setup, transfer, exchange, monthly, annual, yearly, initial, final, original,
   max, min, limit, due, paid, owed, outstanding, remaining, pending, grand, line, item, order, invoice,
   account, opening, closing, current, available, card, per, in, value, after, before, smallest, lowest,
   denomination, unit,
-  old, new, prev, previous, holiday, sick, overtime, take, home
+  old, new, prev, previous, holiday, sick, overtime, take, home, refunded, invoiced, charged, billed, spent, earned, collected, withdrawn, deposited, accrued, credited, debited, settled, disbursed, reimbursed, received
 - **Non-money last words:**
   - identifiers and labels: id, ids, uuid, key, ref, code, currency, ccy, type, kind, status, state,
     method, mode, reason, note, notes, description, desc, label, name, title, text, url, hash, flag,
@@ -587,7 +592,10 @@ The word lists:
     calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
     power, usage, capacity, speed, temperature, precision, scale, growth
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
-- **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, paisa,
+- **Minor-unit words** (`fix_sql` only rounds; words after "per" do not count, and before the money
+  word only pence, cents and pennies do: `subunit_price` or `kobo_price` may name a product or a brand,
+  so the unit is unsure; "minor", "smallest" or "lowest" before unit, units or denomination count only
+  when no money word follows, as `lowest_unit_price` is a product's unit price): pence, penny, pennies, cent, cents, paise, paisa,
   kobo, sats, satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport,
   lamports, msat, msats, subunit, subunits, pesewa, pesewas, halala, halalas, fils, agora, agorot,
   centime, centimes, rappen, grosz, groszy, stotinka, stotinki, santim, santims, kurus; and "minor",
@@ -602,8 +610,8 @@ The word lists:
 - **Finer units** (`fix_sql` is `null`: `cost_micros` holds millionths, and a fix must choose the
   unit): micros, micro, millicents, millicent, mills, millis, gwei
 - **Currencies with more than two decimals** (`fix_sql` is `null`: a dinar has 1,000 fils, so
-  `amount_kwd` may hold dinars or fils, and neither takes ×100): bhd, iqd, jod, kwd, lyd, omr, tnd,
-  clf, uyw
+  `amount_kwd` may hold dinars or fils, and neither takes ×100; crypto coins have 8 or 18): bhd, iqd,
+  jod, kwd, lyd, omr, tnd, clf, uyw, btc, xbt, eth, sol, usdc, usdt, dai, ltc, xrp, ada, doge, bnb
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
   `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`,
   `amountdue`, `platformfee`, `totaldiscount`, `debit`, `credit_limit`, `net`, `hourly_rate`,
@@ -613,7 +621,7 @@ The word lists:
   `costcenter`, `gross_margin`, `credit_score`, `fee_per_txn_bps`, `payment_intent`, `totalqty`,
   `total_nights`, `revenue_share`, `minor_unit`, `rate_per_second`.
 
-The lists are tested against a table of about 430 column names, most of them real (Stripe, Shopify,
+The lists are tested against a table of about 490 column names, most of them real (Stripe, Shopify,
 Supabase templates, ledgers, payroll and the author's own apps), with look-alikes the rule must not
 take for money (coffee, syntax, discharge), in `test/names.test.ts`. A name rule cannot know every
 schema: a real money column it misses that is a float still shows in `other_float_columns`, which every
@@ -646,12 +654,14 @@ conversion follows the name and the declared scale; the test suite runs each kin
   less) holds whole numbers, which stay as they are (`... TYPE bigint;`); no declared scale rounds like
   a float. A column finer than a minor unit (more than 2 decimal places, or any decimals on a
   minor-unit name) gets `null`: the unit needs a decision first.
-- **`MONEY_TYPE`:** `... USING (<c>::numeric * 100)::bigint;` (the money type holds major units).
+- **`MONEY_TYPE`:** `... USING (<c>::numeric * 100)::bigint;` (the money type holds major units, with
+  the fraction digits of the database's `lc_monetary`: 2 in the lint database and most locales; check
+  a database set to a locale with 0 or 3, such as ja_JP, before running it).
   `null` when the default is written as a money value (`0::money`): PostgreSQL cannot cast it to
   bigint, so the ALTER would fail.
 - **`SMALLINT_MONEY`:** `... TYPE bigint;`
 - **`null`** for a conversion of `FLOAT_MONEY` or `NUMERIC_MONEY` when the name is money only by a
-  guess (§3.5: `total_mileage`, `total_deposited`) and the column is not in `money_columns`: a
+  guess (§3.5: `total_passengers`, `total_deposited`) and the column is not in `money_columns`: a
   measure must not be multiplied by 100. Widening a whole-number column (`... TYPE bigint;`) is still
   offered.
 - **`null`** also for domain, array and generated columns and for a column a child table inherits,
@@ -678,7 +688,8 @@ conversion follows the name and the declared scale; the test suite runs each kin
   holds for pence as it did for pounds (`trunc(total, 2)` and `scale(total) < 3` too, but not
   `scale(total) = 2`: a `bigint` has scale 0, so that guard would refuse every value; nor a guard of
   fewer places, `round(total, 0)`, `scale(total) = 0`, which would stop guarding; nor a cast of the
-  column to a bounded type, `amount::numeric(5,2) = amount` or `amount::smallint`, which is a cap); a
+  column to a bounded type, `amount::numeric(5,2) = amount`, `amount::smallint` or a text of fixed
+  length such as `amount::varchar(5)`, which is a cap); a
   unique index whose condition holds no amount (`WHERE
   deleted_at IS NULL`); and an ordinary index with a condition (it only decides which rows it speeds
   up). A `money` column whose default, CHECK or index condition holds a money value (`0::money`) gets
@@ -691,7 +702,7 @@ shows it: the tool runs the new migration too.
 ### 3.7 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found). "N money columns in M tables" counts only the tables that hold a money column. When not every finding is listed (more than 50, or cut to fit 20,000 characters), it ends: "Not every finding is listed (findings_truncated): fix those listed, then run again." |
+| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found). "N money columns in M tables" counts only the tables that hold a money column. When not every finding is listed (more than 50, or cut to fit 20,000 characters), it ends: "Not every finding is listed (findings_truncated), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns." |
 | `migrations` | string | The path as given, normalised. |
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
@@ -721,7 +732,7 @@ shows it: the tool runs the new migration too.
 ### 3.8 Errors (besides §2.5)
 | Code | When | Message contents |
 |---|---|---|
-| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, leaves the database unusable or silent, or ends inside a transaction it opened (BEGIN with no COMMIT: the files after it would run inside it); or the catalog cannot be read after the last file (§3.4). | The file; the line and column where Postgres gives a `position` (a syntax error or an unknown name does; a missing role or schema, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
+| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, leaves the database unusable or silent, or ends inside a transaction it opened (BEGIN with no COMMIT: the files after it would run inside it); or the catalog cannot be read after the last file (§3.4). | The file; the line and column where Postgres gives a `position` (a syntax error or an unknown name does; a missing role or schema, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message, in quotes, a quote inside it escaped (≤ 300 characters; it can quote the migration's own text, as RAISE EXCEPTION writes any, so it can never add a "Fix:" of its own). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
 | `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, more than 10,000 files and folders to look through for them (listing them blocks the server), or folders (or links to folders) nested more than 100 deep. | Points at the folder of migrations, or `files`. |
@@ -731,7 +742,8 @@ shows it: the tool runs the new migration too.
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
-  **42883** (no such function): "use `preset` or `setup`". For a table or a function it first says
+  **42883** (no such function): "use `preset` or `setup`". For a type it first says to check its
+  spelling (`intt`). For a table, a function or a type it first says
   that the files may have run out of order (pass `files`, or, when `files` set the order, put the
   file that creates it first): such objects are often the project's own, made by a file that sorts
   later (Flyway's `R__` files sort before `V1__`).
@@ -769,8 +781,8 @@ files, and the hint that the files ran out of order is not given. A setup file o
 told to keep only what the migrations need.
 
 **Example** (a migration that grants to a role only Supabase creates; PostgreSQL gives no position for
-it): `MIGRATION_FAILED: db/migrations/0004_rls.sql: role "authenticated"
-does not exist (SQLSTATE 42704). Fix: This file needs objects your platform creates. For a Supabase
+it): `MIGRATION_FAILED: "db/migrations/0004_rls.sql": "role \"authenticated\"
+does not exist" (SQLSTATE 42704). Fix: This file needs objects your platform creates. For a Supabase
 project call again with preset "supabase"; otherwise pass setup: a .sql file that creates them (CREATE
 ROLE ..., CREATE SCHEMA ...).`
 
@@ -846,7 +858,7 @@ When a code has a finding whose `fix_sql` is null, its text ends with: "Where fi
 change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element
 type), a generated column (change its expression), a column a child table inherits (change it on the
 parent), amounts finer than a penny (choose the unit first), a name that may not say its unit
-(amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_mileage: if it is, list it in money_columns), a default, CHECK constraint or unique index
+(amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index
 condition that may hold amounts in the old unit (convert
 those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand)."
 
@@ -1006,7 +1018,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy or curr anywhere in it, or cur alone or before code, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio or "in": `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities anywhere in it, or cur alone or before code, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio or "in": `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -1240,7 +1252,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 920); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 930); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
@@ -1278,7 +1290,7 @@ The tests are in `test/` (Vitest, about 920); each file starts with a comment sa
   anchors from an earlier run (grown, emptied, replaced, broken at the last entry the anchor covers,
   and broken at the entry right after it, honestly or after a replacement); and a scan of the library's code that fails if it can
   return a reason this server does not map.
-- **Every error code** and every finding code is produced by a test. **Names:** about 430 column names,
+- **Every error code** and every finding code is produced by a test. **Names:** about 490 column names,
   most of them real, with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (and, through such a link,
   the same answer whether the path behind it exists or not) (the file-link cases skip

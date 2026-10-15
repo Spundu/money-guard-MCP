@@ -53,7 +53,7 @@ export function isInside(root: string, candidate: string): boolean {
 }
 
 /** Most links followed by `leadsTo`, as the systems' own limits on a chain of links. */
-const MAX_LINK_HOPS = 40;
+const MAX_LINK_HOPS = 64; // above Windows' 63 and Linux's 40: a chain realpath follows, this follows too
 
 /**
  * Where `p` leads: its links followed one part at a time by what they say, as realpath does, but
@@ -107,7 +107,7 @@ export function isSensitive(rel: string): boolean {
     base.startsWith('id_ed25519') ||
     ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext)) ||
     (/\.(?:csv|json)$/.test(base) &&
-      (/credentials|^\.?secrets[._-]|accesskeys|access_keys|accesstokens|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
+      (/credentials|^\.?secrets[._-]|(?:^|[-_.])secret\.(?:csv|json)$|api[-_]?keys?|access[-_]?keys?|passwords?\.|keyfile|oauth[-_]?tokens?|accesstokens|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
         // a Google Cloud key as downloaded: the project's name, then 12 hex digits with at least one letter
         /-(?=[0-9a-f]*[a-f])[0-9a-f]{12}\.json$/.test(base)))
   );
@@ -170,6 +170,11 @@ function nearestExisting(root: Root, lexical: string): { shown: string; real: st
   return { shown: '.', real: root.real };
 }
 
+/** For a path whose links go round, or chain past MAX_LINK_HOPS: nothing about where they lead. */
+export function tooManyLinks(input: string): ToolError {
+  return new ToolError('PATH_NOT_FOUND', `${shown(input)} goes through more links than can be followed (a loop, or a chain of more than ${MAX_LINK_HOPS}).`, 'Remove the loop, or shorten the chain of links.');
+}
+
 function linkOutside(root: Root, input: string): ToolError {
   return new ToolError('PATH_OUTSIDE_ROOT', `${shown(input)} is a link to a place outside the project folder (${root.name}).`, 'Pass a file or folder that really lives inside the project.');
 }
@@ -205,7 +210,8 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     // is there: the answer is the same either way.
     const near = nearestExisting(root, lexical);
     const target = leadsTo(lexical);
-    if (!isInside(root.real, near.real) || (target !== null && !isInside(root.real, target))) throw linkOutside(root, input);
+    if (target === null) throw tooManyLinks(input); // the same answer, wherever the chain ends (review round 10)
+    if (!isInside(root.real, near.real) || !isInside(root.real, target)) throw linkOutside(root, input);
     if (deniedOrLocked(err)) throw unreadable(toPosix(lexRel), err);
     throw new ToolError(
       'PATH_NOT_FOUND',

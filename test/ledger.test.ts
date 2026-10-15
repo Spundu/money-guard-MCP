@@ -222,6 +222,10 @@ describe('money_check_double_entry: the rules', () => {
     for (const header of ['txn_cur', 'net_in_account_currency']) {
       expect(check('.csv', `t,a,${header}\nT1,1,5\nT1,-1,5\n`, { columns }).summary, header).not.toMatch(/looks like a currency/);
     }
+    // Review round 10: hledger and beancount call the currency a commodity.
+    expect(check('.csv', 'txnidx,amount,commodity\n1,100,EUR\n1,-100,USD\n', { columns: { transaction_id: 'txnidx', amount: 'amount' } }).summary).toContain(
+      ' "commodity" looks like a currency and is not mapped',
+    );
     // Review round 9: "cur" alone or before code; "Cur Acct" is a current account.
     for (const header of ['Cur', 'cur_code']) {
       expect(check('.csv', `t,a,${header}\nT1,1,GBP\nT1,-1,EUR\n`, { columns }).summary, header).toContain(` "${header}" looks like a currency`);

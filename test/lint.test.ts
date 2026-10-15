@@ -191,6 +191,9 @@ describe('money_lint_schema: judging columns', () => {
     const [s, t] = ['s'.repeat(60), 't'.repeat(60)];
     const long = { 'db/migrations/0001.sql': `create schema ${s}; create table ${s}.${t} (price_total numeric(10,2));` };
     expect((await failure(long, { money_columns: [`${s}.${t}.price_totl`] })).message).toContain(`Did you mean "${s}.${t}.price_total"?`);
+    // Review round 10: within a long-named table, the column names are compared, not the first 64 characters.
+    const wide = { 'db/migrations/0001.sql': `create table ${t} (amount_aaa_refunded numeric(10,2), amount_zzz numeric(10,2));` };
+    expect((await failure(wide, { ignore_columns: [`${t}.amount_zzx`] })).message).toContain(`Did you mean "public.${t}.amount_zzz"?`);
     // Review round 9: a quote in a name is escaped in quotes, the entry's and the suggestion's alike.
     const quote = await failure({ 'db/migrations/0001.sql': 'create table t ("pri""ce" numeric(10,2));' }, { money_columns: ['t.pri"cee'] });
     expect(quote.message).toBe('money_columns names "public.t.pri\\"cee", which is not a column of any table the migrations create. Did you mean "public.t.pri\\"ce"?');
@@ -229,7 +232,7 @@ describe('money_lint_schema: judging columns', () => {
     const r = await lint(files);
     expect([r.findings.length, r.findings_truncated, r.error_count]).toEqual([50, true, 60]);
     // Review round 9: the summary says so, as the ledger's does.
-    expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): fix those listed, then run again\.$/);
+    expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns\.$/);
     expect([r.files_applied.length, r.files_applied_truncated, r.files_applied_count]).toEqual([30, true, 35]);
     expect([r.other_float_columns.length, r.other_float_columns_count]).toEqual([30, 32]);
     expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
@@ -256,11 +259,11 @@ describe('money_lint_schema: judging columns', () => {
     expect(r.findings.length).toBeGreaterThan(20);
     expect(r.findings.length).toBeLessThan(50);
     expect([r.findings_truncated, r.error_count]).toEqual([true, 60]);
-    expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): fix those listed, then run again\.$/);
+    expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns\.$/);
     // Fewer than 50, cut only to fit: the summary says so too (review round 9).
     const fewer = await lint({ [`db/migrations/${'d'.repeat(100)}/0001.sql`]: `create table t_${'y'.repeat(61)} (${columns.slice(0, 45).join(', ')});` });
     expect([fewer.findings.length < 45, fewer.findings_truncated, fewer.error_count]).toEqual([true, true, 45]);
-    expect(fewer.summary).toMatch(/ Not every finding is listed \(findings_truncated\): fix those listed, then run again\.$/);
+    expect(fewer.summary).toMatch(/ Not every finding is listed \(findings_truncated\), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns\.$/);
     expect(r.findings[0]?.column).toBe(`price_00_${'x'.repeat(54)}`);
   });
 

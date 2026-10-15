@@ -3,6 +3,7 @@
 // PostgreSQL quotes them, whatever a migration does to the database's own functions.
 import { describe, expect, it } from 'vitest';
 import { NULL_FIX_NOTE, holdsNoAmount, isZeroOrNullDefault } from '../src/lint/catalog.js';
+import { moneyByGuess } from '../src/lint/names.js';
 import { lint } from './support/lint.js';
 import { sql } from './support/sql.js';
 
@@ -137,8 +138,22 @@ describe('money_lint_schema: fix_sql', () => {
       // review round 9: a cast of the column to a bounded type is a cap; a guard of fewer than two places
       // stops guarding once the column holds pence
       '((amount)::numeric(5,2) = amount)', '((amount)::smallint IS NOT NULL)', '((amount)::integer = amount)', '(amount::int4 > 0)',
-      '(amount = round(amount, 0))', '(amount = round(amount, 1))', '(scale(total) = 0)', '(scale(total) <= 0)', '(scale(total) <= 1)', '(scale(total) < 2)'];
+      '(amount = round(amount, 0))', '(amount = round(amount, 1))',
+      // review round 10: a text of fixed length is a cap too
+      '(((fee)::character varying(5))::text = (fee)::text)', '((fee)::bpchar(4) IS NOT NULL)', '(scale(total) = 0)', '(scale(total) <= 0)', '(scale(total) <= 1)', '(scale(total) < 2)'];
     for (const expr of amounts) expect(holdsNoAmount(expr), expr).toBe(false);
+    // Review round 10: past 2,000 characters a CHECK may hold anything, and is not read further.
+    const near = `(amount > 0 OR ${'x'.repeat(1970)} IS NULL)`;
+    expect([near.length <= 2000, holdsNoAmount(near), holdsNoAmount(`${near.slice(0, -1)} )`.padEnd(2001, ' '))]).toEqual([true, true, false]);
+  });
+
+  it('reads a long CHECK in time that grows with its length, not its square', async () => {
+    // Review round 10: 120,000 characters with no "::" took 35 s on the server's main thread, where
+    // neither the time limit nor a cancellation can stop it, and nothing else was answered meanwhile.
+    const started = performance.now();
+    const r = await lint({ 'db/migrations/0001.sql': `create table orders (id int, amount double precision check (amount > 0 or '${'a'.repeat(120_000)}' = 'x'));` });
+    expect(performance.now() - started).toBeLessThan(15_000);
+    expect(r.findings.map((f) => [f.column, f.fix_sql])).toEqual([['amount', null]]);
   });
 
   it('offers fix_sql beside a digit in a name or a type size, a two-decimal guard and a soft-delete index, and the fixes run', async () => {
@@ -212,19 +227,22 @@ describe('money_lint_schema: fix_sql', () => {
   });
 
   it('multiplies no name that is money only by a guess, unless money_columns lists it', async () => {
-    // Review round 9: total_deposited and total_mileage look alike to the name rule; a ×100 of miles
+    // Review round 9: total_passengers and total_paid look alike to the name rule; a ×100 of a count
     // would be wrong, so a guessed name gets no conversion. Widening a smallint is still safe.
-    const table = 'create table t (total_deposited double precision, total_paid double precision, net_ytd smallint);';
+    const table = 'create table t (total_passengers double precision, total_paid double precision, net_ytd smallint);';
     const r = await lint({ 'db/migrations/0001.sql': table });
     expect(Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]))).toEqual({
-      total_deposited: null,
+      total_passengers: null,
       total_paid: 'ALTER TABLE public.t ALTER COLUMN total_paid TYPE bigint USING round(total_paid * 100)::bigint;',
       net_ytd: 'ALTER TABLE public.t ALTER COLUMN net_ytd TYPE bigint;',
     });
-    expect(r.fixes.FLOAT_MONEY).toContain('a name that may not be money (total_mileage: if it is, list it in money_columns)');
-    const listed = await lint({ 'db/migrations/0001.sql': table }, { money_columns: ['t.total_deposited'] });
-    expect(listed.findings.find((f) => f.column === 'total_deposited')?.fix_sql).toBe(
-      'ALTER TABLE public.t ALTER COLUMN total_deposited TYPE bigint USING round(total_deposited * 100)::bigint;',
+    expect(r.fixes.FLOAT_MONEY).toContain('a name that may not be money (total_passengers: if it is, list it in money_columns)');
+    // Review round 10: the example the note gives must itself be a guess (total_mileage became a measure).
+    const example = /a name that may not be money \((\w+):/.exec(r.fixes.FLOAT_MONEY ?? '')?.[1] ?? '';
+    expect([example, moneyByGuess(example)]).toEqual(['total_passengers', true]);
+    const listed = await lint({ 'db/migrations/0001.sql': table }, { money_columns: ['t.total_passengers'] });
+    expect(listed.findings.find((f) => f.column === 'total_passengers')?.fix_sql).toBe(
+      'ALTER TABLE public.t ALTER COLUMN total_passengers TYPE bigint USING round(total_passengers * 100)::bigint;',
     );
   });
 });

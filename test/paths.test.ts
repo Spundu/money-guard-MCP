@@ -28,7 +28,7 @@ beforeAll(() => {
     'project/.env': 'SECRET=1\n',
     'project/.git/config': '[core]\n',
     'project/keys/server.pem': 'pem\n',
-    'outside/secret.csv': 'a,b\n',
+    'outside/other.csv': 'a,b\n',
   });
   root = rootOf(path.join(base, 'project'));
 });
@@ -72,10 +72,10 @@ describe('resolveInRoot', () => {
   });
 
   it('refuses a path outside the project before touching the disk (no existence oracle)', () => {
-    expect(codeOf(() => resolveInRoot(root, '../outside/secret.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
+    expect(codeOf(() => resolveInRoot(root, '../outside/other.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
     expect(codeOf(() => resolveInRoot(root, '../outside/does-not-exist.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
-    expect(codeOf(() => resolveInRoot(root, path.join(base, 'outside', 'secret.csv'), CSV))).toBe('PATH_OUTSIDE_ROOT');
-    expect(codeOf(() => resolveInRoot(root, 'exports/../../outside/secret.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
+    expect(codeOf(() => resolveInRoot(root, path.join(base, 'outside', 'other.csv'), CSV))).toBe('PATH_OUTSIDE_ROOT');
+    expect(codeOf(() => resolveInRoot(root, 'exports/../../outside/other.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
     // The parent folder itself, as a folder argument (migrations: ".."), is outside too.
     for (const parent of ['..', '../', 'exports/../..', path.dirname(root.real)]) {
       expect(codeOf(() => resolveInRoot(root, parent, ANY)), parent).toBe('PATH_OUTSIDE_ROOT');
@@ -88,7 +88,7 @@ describe('resolveInRoot', () => {
     expect(text).toMatch(/^PATH_OUTSIDE_ROOT: /);
     expect(text).toContain('Git Bash paths such as /c/Users/... are not understood.');
     expect(messageOf(() => resolveInRoot(root, '/tmp/exports/ledger.csv', CSV))).toContain('Git Bash paths'); // any path starting with "/"
-    expect(messageOf(() => resolveInRoot(root, path.join(base, 'outside', 'secret.csv'), CSV))).not.toContain('Git Bash');
+    expect(messageOf(() => resolveInRoot(root, path.join(base, 'outside', 'other.csv'), CSV))).not.toContain('Git Bash');
   });
 
   it('refuses empty, over-long, NUL, network and device paths', () => {
@@ -123,7 +123,7 @@ describe('resolveInRoot', () => {
   });
 
   it('never shows the absolute path of the project, only its folder name', () => {
-    const text = messageOf(() => resolveInRoot(root, '../outside/secret.csv', CSV));
+    const text = messageOf(() => resolveInRoot(root, '../outside/other.csv', CSV));
     expect(text).toContain(`(${root.name})`);
     expect(text).not.toContain(root.real);
   });
@@ -145,7 +145,7 @@ describe('resolveInRoot', () => {
   it('refuses a folder link that leads outside the project', () => {
     // Folder links need no privilege (junctions on Windows), so this half never skips.
     expect(trySymlink(path.join(base, 'outside'), path.join(root.real, 'outdir'), 'dir')).toBe(true);
-    expect(codeOf(() => resolveInRoot(root, 'outdir/secret.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
+    expect(codeOf(() => resolveInRoot(root, 'outdir/other.csv', CSV))).toBe('PATH_OUTSIDE_ROOT');
     expect(codeOf(() => resolveInRoot(root, 'outdir', ANY))).toBe('PATH_OUTSIDE_ROOT');
     // Whether a path behind the link exists must not show: missing files and folders get the same answer.
     for (const missing of ['outdir/missing.csv', 'outdir/no/such/folder/x.csv', 'outdir/nope']) {
@@ -179,6 +179,29 @@ describe('resolveInRoot', () => {
     }
   });
 
+  it('answers a chain of more links than can be followed the same way, wherever it ends', () => {
+    // Review round 10: past 40 links the answer said whether a folder outside existed (Windows follows 63).
+    const dir = tempDir();
+    writeTree(dir, { 'project/x.csv': 'a\n', 'outside/real/x.csv': 'a\n' });
+    const project = path.join(dir, 'project');
+    const chain = (name: string, end: string, length: number) => {
+      for (let i = length; i >= 1; i -= 1) expect(trySymlink(i === length ? end : path.join(project, `${name}${i + 1}`), path.join(project, `${name}${i}`), 'dir')).toBe(true);
+    };
+    // 50 links: Windows follows them to a place that exists (it stops at 63, Linux at 40); 70: nobody does.
+    for (const length of [50, 70]) {
+      chain(`e${length}_`, path.join(dir, 'outside', 'real'), length);
+      chain(`m${length}_`, path.join(dir, 'outside', 'no-such-folder'), length);
+    }
+    const r = rootOf(project);
+    for (const length of [50, 70]) {
+      const answers = [`e${length}_1`, `m${length}_1`, `e${length}_1/x.csv`, `m${length}_1/x.csv`].map((p) =>
+        messageOf(() => resolveInRoot(r, p, p.endsWith('.csv') ? CSV : ANY)).replace(/"[em]\d+_1/, '"?'),
+      );
+      expect(new Set(answers.slice(0, 2)).size, `${length}`).toBe(1);
+      expect(new Set(answers.slice(2)).size, `${length}`).toBe(1);
+    }
+  });
+
   it('looks no deeper than 100 folders, links to folders included, instead of overflowing the stack', () => {
     // Review round 9: a chain of 3,000 folder links (git checks them out on Linux) gave INTERNAL_ERROR.
     const dir = tempDir();
@@ -204,7 +227,7 @@ describe('resolveInRoot', () => {
   });
 
   it('refuses a file link that leads outside the project', (ctx) => {
-    if (!trySymlink(path.join(base, 'outside', 'secret.csv'), path.join(root.real, 'exports', 'out.csv'), 'file')) {
+    if (!trySymlink(path.join(base, 'outside', 'other.csv'), path.join(root.real, 'exports', 'out.csv'), 'file')) {
       console.warn('SKIPPED: this machine cannot create file symlinks (Windows without Developer Mode).');
       ctx.skip();
     }
@@ -301,7 +324,10 @@ describe('isSensitive', () => {
       'alice_credentials.csv', 'application_default_credentials.json', 'serviceAccountKey.json', 'myapp-firebase-adminsdk-x1y2z-0123456789.json',
       'my-project-1a2b3c4d5e6f.json', 'token.json',
       // review round 5: key files, a secrets file with a dot, access tokens, auth.json
-      'key.json', 'sa-key.json', 'firebase-key.json', '.secrets.json', 'accessTokens.json', 'auth.json']) {
+      'key.json', 'sa-key.json', 'firebase-key.json', '.secrets.json', 'accessTokens.json', 'auth.json',
+      // review round 10: more credential names
+      'secret.json', 'app-secret.json', '.secret.json', 'apikeys.json', 'api_keys.json', 'api-key.json', 'access-keys.csv', 'aws_access_key.csv',
+      'passwords.csv', 'password.json', 'keyfile.json', 'oauth-token.json']) {
       expect(isSensitive(p), p).toBe(true);
     }
     for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv',

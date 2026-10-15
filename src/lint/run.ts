@@ -3,7 +3,7 @@
 
 import { overBudget } from '../budget.js';
 import { closest } from '../closest.js';
-import { clip, clipPath, escapeUnsafe, quoted } from '../echo.js';
+import { clip, clipPath, escapeUnsafe, quoted, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { Root } from '../paths.js';
 import { FIXES, NULL_FIX_NOTE, baseType, displayType, fixSql, isMoneyColumn, judge, type DetailRow, type LintCode, type LintFinding } from './catalog.js';
@@ -17,7 +17,7 @@ const MAX_FINDINGS = 50;
 const MAX_LISTED = 30;
 
 /** Ends the summary when the findings list is cut: lint findings come in one page, not several. */
-const NOT_ALL_LISTED = ' Not every finding is listed (findings_truncated): fix those listed, then run again.';
+const NOT_ALL_LISTED = ' Not every finding is listed (findings_truncated), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns.';
 /** Longest column type a finding shows: a schema-qualified domain and its base type fit. */
 const MAX_TYPE_CHARS = 200;
 
@@ -101,8 +101,8 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
 
   const scripts: Script[] = [];
   if (params.preset === 'supabase') scripts.push({ name: 'the Supabase preset', text: SUPABASE_PRESET, phase: 'setup' });
-  if (sources.setup) scripts.push({ name: clipPath(sources.setup.rel), text: sources.setup.text, phase: 'setup' });
-  for (const f of sources.files) scripts.push({ name: clipPath(f.rel), text: f.text, phase: 'migration' });
+  if (sources.setup) scripts.push({ name: quotedPath(sources.setup.rel), text: sources.setup.text, phase: 'setup' });
+  for (const f of sources.files) scripts.push({ name: quotedPath(f.rel), text: f.text, phase: 'migration' });
 
   const db = await runScripts(scripts, {
     timeoutMs: (params.timeout_seconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000,
@@ -274,7 +274,14 @@ function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string,
       'Leave the entry out: setup and the preset stand for what your platform provides, and their columns are not checked.',
     );
   }
-  const near = closest(entry, known);
+  // Within the table the entry names, compare the column names alone: whole names share their schema
+  // and table, and only their first 64 characters are compared (review round 10: a long table name made
+  // every column look alike). A table the migrations do not create: compare whole names.
+  const tableOf = (name: string) => name.slice(0, name.lastIndexOf('.') + 1).toLowerCase();
+  const columnOf = (name: string) => name.slice(name.lastIndexOf('.') + 1);
+  const same = known.filter((k) => tableOf(k) === tableOf(entry));
+  const column = same.length > 0 ? closest(columnOf(entry), same.map(columnOf)) : undefined;
+  const near = same.length > 0 ? same.find((k) => columnOf(k) === column) : closest(entry, known);
   const hint = near === undefined ? '' : ` Did you mean "${escapeUnsafe(near, true)}"?`; // a database name: whole, as findings show it, a quote escaped
   return new ToolError(
     'BAD_COLUMN_NAME',

@@ -307,7 +307,7 @@ function describe(value: unknown): string {
   if (value === null) return 'null';
   if (isRecord(value)) {
     const keys = Object.keys(value);
-    const shown = keys.slice(0, 20).map((k) => clip(k)).join(', ');
+    const shown = keys.slice(0, 20).map((k) => quoted(k)).join(', '); // in quotes: a key can hold ". Fix:"
     return keys.length === 0 ? 'an empty object' : `an object with keys ${shown}${keys.length > 20 ? ', …' : ''}`;
   }
   return value instanceof JsonNumber ? 'a number' : Array.isArray(value) ? 'an array' : `a ${typeof value}`;

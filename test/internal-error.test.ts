@@ -7,7 +7,7 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import { describe, expect, it, vi } from 'vitest';
 import { SHOP } from '../scripts/fixtures.mjs';
 import { resolveConfig } from '../src/config.js';
-import { createServer, trace } from '../src/server.js';
+import { createServer, internalFix, trace } from '../src/server.js';
 
 vi.mock('../src/ledger/run.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/ledger/run.js')>()),
@@ -41,6 +41,13 @@ describe('a bug inside a tool', () => {
       await client.close();
       await handler.close();
     }
+  });
+
+  it('says to reinstall first when the lint database cannot start, which a broken install causes', () => {
+    // Review round 10: "This is a bug" sent the user to report what reinstalling fixes.
+    const start = Object.assign(new Error('the lint database could not start'), { name: 'DatabaseStartError' });
+    expect(internalFix(start)).toMatch(/^The lint database could not start, as after a broken install: reinstall money-guard \(npm ci/);
+    expect(internalFix(new TypeError('x'))).toBe('This is a bug in money-guard: please report it. The server log has the details.');
   });
 
   it('describes something thrown that is not an Error by its type alone', () => {

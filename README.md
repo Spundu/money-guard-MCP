@@ -25,7 +25,8 @@ tested](#how-it-is-tested)). macOS is untested.
 
 Why run the migrations instead of reading them? Patterns over SQL text easily miss a later `ALTER
 COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database that ran the migrations
-does not. It reads SQL text in one place only: to decide whether to offer `fix_sql`, it looks at
+does not. It reads the SQL text only for file-format markers (the up and down parts of dbmate,
+goose and the like) and for its error hints; and, to decide whether to offer `fix_sql`, it looks at
 the defaults, CHECK constraints and index conditions as PostgreSQL writes them back, with simple,
 cautious patterns that withhold the fix when in doubt.
 
@@ -189,7 +190,7 @@ agent adds it as a new migration and runs the check again, and the check runs th
 It is `null` where the change needs a decision or the agent's own migration:
 - the unit is unclear: a column with four decimal places, or a name such as `amount_minor`,
   `price_sat` (Saturday?), `cost_micros` or `amount_kwd` (a dinar has 1,000 fils);
-- the name is money only by a guess: `total_mileage` may be miles (list it in `money_columns` if it
+- the name is money only by a guess: `total_passengers` may be a count (list it in `money_columns` if it
   is money);
 - a default, a CHECK constraint or a unique index condition may hold amounts in pounds, in the table
   or in a partition or child table: Postgres's type change would leave those unconverted (a CHECK
@@ -375,7 +376,7 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 920 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 930 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.
@@ -404,7 +405,7 @@ Development needs Node.js 22.13 or newer (ESLint 10 does); the server itself run
 
 ```sh
 npm ci && npm run typecheck && npm run lint && npm test
-bash scripts/inspector-smoke.sh   # the MCP Inspector, in both protocol eras
+bash scripts/inspector-smoke.sh   # the MCP Inspector, in both protocol eras (it needs Node.js 22.19+)
 ```
 
 [CLAUDE.md](CLAUDE.md) has the rules for changing the code. [SPEC.md](SPEC.md) is the contract: a

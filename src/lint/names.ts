@@ -94,10 +94,13 @@ const ZERO_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Currencies with more than two decimals (ISO 4217 exponent 3, and 4 for CLF and UYW): a dinar has
- * 1,000 fils, so x100 is wrong, and whether the column holds dinars or fils needs a decision.
+ * Currencies with more than two decimals (ISO 4217 exponent 3, and 4 for CLF and UYW; crypto coins, 8 or
+ * 18): a dinar has 1,000 fils, so x100 is wrong, and whether the column holds dinars or fils needs a
+ * decision. x100 of 0.00012345 BTC, rounded, was 0 (review round 10).
  */
-const MORE_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set(['bhd', 'iqd', 'jod', 'kwd', 'lyd', 'omr', 'tnd', 'clf', 'uyw']);
+const MORE_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set([
+  'bhd', 'iqd', 'jod', 'kwd', 'lyd', 'omr', 'tnd', 'clf', 'uyw', 'btc', 'xbt', 'eth', 'sol', 'usdc', 'usdt', 'dai', 'ltc', 'xrp', 'ada', 'doge', 'bnb',
+]);
 
 /** Units finer than a minor unit ("cost_micros", Google Ads' millionths): the fix needs the unit decided. */
 const FINER_UNIT_WORDS: ReadonlySet<string> = new Set(['micros', 'micro', 'millicents', 'millicent', 'mills', 'millis', 'gwei']);
@@ -137,6 +140,7 @@ const OTHER_WORDS: ReadonlySet<string> = new Set([
   'limit', 'due', 'paid', 'owed', 'outstanding', 'remaining', 'pending', 'grand', 'line', 'item', 'order', 'invoice', 'account',
   'opening', 'closing', 'current', 'available', 'card', 'per', 'in', 'value', 'after', 'before', 'smallest', 'lowest', 'denomination',
   'unit', 'old', 'new', 'prev', 'previous', 'holiday', 'sick', 'overtime', 'take', 'home',
+  'refunded', 'invoiced', 'charged', 'billed', 'spent', 'earned', 'collected', 'withdrawn', 'deposited', 'accrued', 'credited', 'debited', 'settled', 'disbursed', 'reimbursed', 'received',
 ]);
 
 /**
@@ -151,7 +155,7 @@ const GENERIC_MEASURE_WORDS: ReadonlySet<string> = new Set([
   'rainfall', 'change', 'changes', 'flow', 'flows', 'utilization', 'utilisation', 'component', 'components', 'coverage',
   'axis', 'investigator', 'meters', 'metres', 'liters', 'litres', 'tons', 'tonnes', 'grams', 'mass', 'force', 'torque',
   'heat', 'flux', 'runtime', 'uptime', 'xp', 'damage', 'mins', 'hrs', 'secs', 'kw', 'mb', 'gb', 'bmi', 'goals', 'wins',
-  'players', 'mileage',
+  'players', 'mileage', 'current', 'voltage', 'amps', 'watts',
 ]);
 
 /**
@@ -246,7 +250,7 @@ const SAYS_MONEY: ReadonlySet<string> = new Set([
 
 /**
  * "money"; "guess" when only a generic money word says so, followed by a word that does not say
- * money ("total_deposited", but also "total_mileage"); "not".
+ * money ("total_deposited", but also "total_passengers"); "not".
  */
 type Verdict = 'money' | 'guess' | 'not';
 
@@ -256,7 +260,7 @@ export function looksLikeMoney(name: string): boolean {
 
 /**
  * Whether a name is money only by a guess: a generic money word followed by a word the rule does not
- * know as money. Its fix_sql must not multiply by 100 (SPEC.md §3.5): "total_mileage" may be miles.
+ * know as money. Its fix_sql must not multiply by 100 (SPEC.md §3.5): "total_passengers" may be a count.
  */
 export function moneyByGuess(name: string): boolean {
   return judgeWords(knownWords(name)) === 'guess';
@@ -276,31 +280,39 @@ function judgeWords(all: readonly string[]): Verdict {
   if (last === undefined) return 'not';
   // "amount_minor_units", "amount_in_smallest_unit": the unit of an amount, not a count of units;
   // "price_unit" (Odoo's unit price on every order line): a price per unit.
-  const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'price', 'cost'].includes(ws.at(-2) ?? '');
+  const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
   if (NOT_MONEY_LAST_WORDS.has(last) && !unitOfAmount) return 'not';
   if ((last === 'value' || last === 'values') && VALUE_WORDS.has(ws.at(-2) ?? '')) return 'money'; // "order_value"
   // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
   // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
   // exponent), it is not an amount.
+  // A count or measure before a total says what it totals, whatever else the name holds: "weight_total",
+  // and "fee_count_total" is a count of fees (review round 10).
+  if ((last === 'total' || last === 'totals') && ws.slice(0, -1).some((w) => TOTALLED_WORDS.has(w))) return 'not';
   if (ws.some((w) => MONEY_WORDS.has(w) && w !== 'minor' && !GENERIC_MONEY_WORDS.has(w))) return 'money';
   // A generic money word counts unless a measure follows it: "total_paid" and "net_ytd" are money,
   // "total_co2" and "credit_utilization" measures. "units" after minor or smallest is the unit of the money.
   // A count or measure before a total says what it totals: "weight_total", "credit_score_total".
-  // Words after it that do not say money leave a guess: "total_deposited" or "total_mileage".
+  // Words after it, or before it, that do not say money leave a guess: "total_deposited",
+  // "total_passengers", "water_total" (review round 10: "steps_total" was money, "total_steps" not).
   const generic = ws.map((w) => GENERIC_MONEY_WORDS.has(w)).lastIndexOf(true);
   if (generic >= 0) {
     if ((ws[generic] === 'total' || ws[generic] === 'totals') && ws.slice(0, generic).some((w) => TOTALLED_WORDS.has(w))) return 'not';
     const after = ws.slice(generic + 1);
-    const unitOfMoney = (w: string, i: number) => (w === 'unit' || w === 'units') && ['minor', 'smallest'].includes(after[i - 1] ?? '');
+    const unitOfMoney = (w: string, i: number) => (w === 'unit' || w === 'units') && ['minor', 'smallest', 'lowest'].includes(after[i - 1] ?? '');
     if (after.some((w, i) => GENERIC_MEASURE_WORDS.has(w) || (NOT_MONEY_LAST_WORDS.has(w) && !unitOfMoney(w, i)))) return 'not';
-    return after.every((w, i) => SAYS_MONEY.has(w) || unitOfMoney(w, i)) ? 'money' : 'guess';
+    const before = ws.slice(0, generic).filter((w) => !GENERIC_MONEY_WORDS.has(w));
+    return after.every((w, i) => SAYS_MONEY.has(w) || unitOfMoney(w, i)) && before.every((w) => SAYS_MONEY.has(w)) ? 'money' : 'guess';
   }
   if (ws.length !== 1 || last === 'minor') return 'not';
-  // A folded name the known words cannot split: the long money words at either end.
+  // A folded name the known words cannot split: the long money words at either end. Total, a generic
+  // word, beside words the rule cannot read is a guess ("totalco2", "stepstotal"), as in snake_case.
   const word = withoutUnit(last);
-  if (FOLDED_MONEY_ENDINGS.some((ending) => word.endsWith(ending))) return 'money';
-  const starts = FOLDED_MONEY_ENDINGS.some((start) => word.startsWith(start)) && !FOLDED_NOT_MONEY_ENDINGS.some((ending) => word.endsWith(ending));
-  return starts ? 'money' : 'not';
+  const ending = FOLDED_MONEY_ENDINGS.find((e) => word.endsWith(e));
+  if (ending !== undefined) return ending === 'total' && word !== 'total' ? 'guess' : 'money';
+  const start = FOLDED_MONEY_ENDINGS.find((s) => word.startsWith(s));
+  if (start === undefined || FOLDED_NOT_MONEY_ENDINGS.some((e) => word.endsWith(e))) return 'not';
+  return start === 'total' ? 'guess' : 'money';
 }
 
 
@@ -314,12 +326,22 @@ function judgeWords(all: readonly string[]): Verdict {
  * first; "major" otherwise.
  */
 export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
-  const ws = knownWords(name);
+  // Review round 10: three ways a name seemed to say minor units when it did not.
+  // Words after "per" say what the amount is for, not its unit ("price_per_cent", as the money rule reads it).
+  const all = knownWords(name);
+  const per = all.indexOf('per');
+  const ws = per > 0 ? all.slice(0, per) : all;
   if (ws.some((w) => FINER_UNIT_WORDS.has(w) || MORE_DECIMAL_CURRENCIES.has(w))) return 'unsure';
-  const unitAfter = (i: number) => ['unit', 'units', 'denomination'].includes(ws[i + 1] ?? '');
+  // "minor unit", "smallest unit", "lowest denomination", when no money word follows: "lowest_unit_price"
+  // is the lowest price of a product's unit, in pounds.
+  const unitAfter = (i: number) => ['unit', 'units', 'denomination'].includes(ws[i + 1] ?? '') && !ws.slice(i + 2).some((w) => MONEY_WORDS.has(w));
   if (ws.some((w, i) => ['minor', 'smallest', 'lowest'].includes(w) && unitAfter(i))) return 'minor';
-  if (ws.some((w) => MINOR_UNIT_WORDS.has(w) && !UNSURE_UNIT_WORDS.has(w))) return 'minor';
-  if (ws.some((w) => UNSURE_UNIT_WORDS.has(w))) return 'unsure';
+  // Before the money word, only pence, cents and pennies plainly give the unit ("pence_total"); others
+  // may name a product or a brand ("subunit_price", "kobo_price", "penny_stock_price"): unsure.
+  const money = ws.findIndex((w) => MONEY_WORDS.has(w) && !MINOR_UNIT_WORDS.has(w));
+  const leading = (w: string, i: number) => i < money && !['pence', 'cents', 'pennies'].includes(w);
+  if (ws.some((w, i) => MINOR_UNIT_WORDS.has(w) && !UNSURE_UNIT_WORDS.has(w) && !leading(w, i))) return 'minor';
+  if (ws.some((w, i) => UNSURE_UNIT_WORDS.has(w) || (MINOR_UNIT_WORDS.has(w) && leading(w, i)))) return 'unsure';
   if (ws.some((w) => ZERO_DECIMAL_CURRENCIES.has(w))) return 'minor'; // whole yen are its smallest unit
   // A folded name the known words cannot split, ending in a unit word ("grossamountpence").
   const only = ws.length === 1 ? ws[0] : undefined;
