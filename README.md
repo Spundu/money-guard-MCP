@@ -407,17 +407,18 @@ of [integer-pence-ledger](https://github.com/Spundu/integer-pence-ledger) and th
 Before publishing, it went through rounds of review by AI agents: Claude, each in a fresh session that
 saw only the code and the docs, each with one lens (security, the checkers' correctness, MCP and
 agent use, tests and CI, and the docs as a hiring manager would read them). Round 1 found about 45
-problems, round 2 about 50, round 3 about 40 and round 4 about 50, among them hidden characters
-reaching the model, a `fix_sql` that broke column defaults, a server that spun when its host closed
-stderr, migrations that a security fix had quietly skipped, a catalog query that grew with the square
-of the schema, and a Node.js 24 crash that two overlapping database threads can set off. Every finding
-was reproduced before it was fixed, with two exceptions: one finding that could not be reproduced
-was answered instead, and that crash, which the reviewer saw twice but this machine never did, was
-matched to its upstream bug report. Fixes came with tests shown to fail without them. The tests reviewer also plants bugs to
-test the tests: 29 of 115 went uncaught in round 3, and 40 of 121 in round 4; tests now catch each of
-them that changes an answer (two change nothing a test can see, and 10 are caught only where the tests
-run on Linux). The rounds go on until one finds no high-severity problem. It has had no independent
-human review yet.
+problems, round 2 about 50, round 3 about 40, and rounds 4 and 5 about 50 each, among them hidden
+characters reaching the model, a `fix_sql` that broke column defaults, a server that spun when its
+host closed stderr, migrations that a security fix had quietly skipped, a catalog query that grew with
+the square of the schema, a Node.js 24 crash that two overlapping database threads can set off, a
+`fix_sql` that multiplied amounts already in pence by 100, and a ledger file built to exhaust the
+server's memory. Every finding was reproduced before it was fixed, with two exceptions: one finding
+that could not be reproduced was answered instead, and that crash, which the reviewer saw twice but
+this machine never did, was matched to its upstream bug report. Fixes came with tests shown to fail
+without them. The tests reviewer also plants bugs to test the tests: 29 of 115 went uncaught in round
+3, 40 of 121 in round 4 and 22 of 102 in round 5; tests now catch each of them that changes an answer
+(nine change nothing a test can see, and 11 are caught only where the tests run on Linux). The rounds
+go on until one finds no high-severity problem. It has had no independent human review yet.
 
 ## License
 
