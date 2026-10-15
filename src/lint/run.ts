@@ -116,6 +116,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   let moneyChecked = 0;
   let moneyOther = 0;
   let ignoredCount = 0;
+  let ignoredMoney = 0; // money columns ignore_columns left out, with a finding or not
   for (const row of db.detail) {
     const since = db.since.get(row.col);
     if (since === undefined || since < 0) continue; // made by the preset or the setup file, never changed since
@@ -126,6 +127,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     const money = isMoneyColumn(row, listed);
     if (ignored.has(key)) {
       if (judge(row, money, params.accept_numeric ?? false) !== null) ignoredCount += 1;
+      if (money || base === 'money') ignoredMoney += 1;
       continue;
     }
     if (base !== null && (money || base === 'money')) {
@@ -167,7 +169,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const applied = sources.files.map((f) => clipPath(f.rel));
 
   const result: LintResult = {
-    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }),
+    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }),
     migrations: clipPath(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -204,6 +206,8 @@ interface Counts {
   errors: number;
   warnings: number;
   ignored: number;
+  /** Money columns that ignore_columns left out, whatever their type. */
+  ignoredMoney: number;
   money: number;
   moneyTables: number;
   moneyOther: number;
@@ -237,7 +241,7 @@ function summarise(c: Counts): string {
   if (c.money > 0) return `No problems: ${plural(c.money, 'money column')} in ${plural(c.moneyTables, 'table')} ${c.money === 1 ? 'uses a safe type' : 'use safe types'}. ${applied}${ignoredNote}${otherNote}${floatsNote}`;
   // Ignored columns and money-named columns of other types were money columns too: say what was not found.
   const which = c.moneyOther > 0 ? 'No money columns of a number type' : 'No money columns';
-  return `${which} ${c.ignored > 0 ? 'left to check' : 'found'} in ${plural(c.tables, 'table')}. ${applied}${ignoredNote}${otherNote}${floatsNote}`;
+  return `${which} ${c.ignoredMoney > 0 ? 'left to check' : 'found'} in ${plural(c.tables, 'table')}. ${applied}${ignoredNote}${otherNote}${floatsNote}`;
 }
 
 /** Money-named columns of these types hold amounts the lint does not check: text, JSON, a composite, an extension's type (citext). Not booleans, dates or ids. */

@@ -48,6 +48,9 @@ const SANITY_MS = 5000;
  */
 export const MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024;
 
+/** From this many migration files on, a TIMEOUT blames the size of the folder rather than one slow file. */
+const MANY_FILES = 300;
+
 /** How often the memory is checked. One statement can allocate more between two checks. */
 const MEMORY_CHECK_MS = 100;
 
@@ -253,10 +256,16 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
     const overall = setTimeout(() => {
       const script = running >= 0 ? scriptAt(running) : undefined;
       const doing = script === undefined ? 'starting the database' : reading ? 'reading the catalog, after every file had run' : `running ${script.name}`;
+      // A folder of hundreds of files takes time even when no file is slow: say that, not that one file is.
+      const migrations = scripts.filter((s) => s.phase === 'migration').length;
+      const folder =
+        migrations >= MANY_FILES
+          ? `The folder holds ${migrations} migration files, each run and checked in turn: lint them in smaller groups with files, or pass a larger timeout_seconds.`
+          : 'Leave slow data-loading files out with files.';
       const slow =
         script === undefined
           ? ''
-          : `${wayPast(script, options.single, { setup: 'Take slow data loading out of the setup file.', folder: 'Leave slow data-loading files out with files.', single: 'If the file loads data, lint a schema-only copy (pg_dump --schema-only).' })} `;
+          : `${wayPast(script, options.single, { setup: 'Take slow data loading out of the setup file.', folder, single: 'If the file loads data, lint a schema-only copy (pg_dump --schema-only).' })} `;
       finish({ error: new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while ${doing}.`, `${slow}A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.`) });
     }, Math.max(0, options.timeoutMs - (Date.now() - calledAt)));
     const onAbort = () => finish({ error: options.signal?.reason ?? new Error('cancelled') });

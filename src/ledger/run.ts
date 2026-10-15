@@ -9,7 +9,7 @@ import { clip, clipPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
 import { readChecked, resolveInRoot, type Root } from '../paths.js';
-import { checkLedger, mappingMode, type Finding, type FindingCode } from './check.js';
+import { MAX_LISTED_FINDINGS, checkLedger, mappingMode, type Finding, type FindingCode } from './check.js';
 import { readLedger, type ColumnMap, type LedgerFormat } from './read.js';
 
 export const LEDGER_EXTENSIONS: readonly string[] = ['.csv', '.tsv', '.json', '.jsonl', '.ndjson'];
@@ -90,7 +90,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
   const result: LedgerResult = {
-    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names),
+    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names) + (total > MAX_LISTED_FINDINGS ? ` Only the first ${MAX_LISTED_FINDINGS.toLocaleString('en-GB')} findings can be paged; the counts cover all ${total.toLocaleString('en-GB')}.` : ''),
     file: clipPath(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -125,7 +125,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
 /** When at least as many amounts have a decimal point as not (zeros aside), the file most likely holds pounds read as pence: say how to read it. */
 function poundsHint(format: AmountFormat, amounts: { decimalPoint: number; plain: number }): string {
   return format === 'minor_units' && amounts.decimalPoint > 0 && amounts.decimalPoint >= amounts.plain
-    ? ' Most amounts have a decimal point: if the file holds pounds or dollars (12.34), call again with amount_format "decimal".'
+    ? ' Half or more of the amounts have a decimal point: if the file holds pounds or dollars (12.34), call again with amount_format "decimal".'
     : '';
 }
 
@@ -134,13 +134,27 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   if (columns.currency !== undefined) return '';
   // "Currency", "Gross Currency", "Currency ISO Code", "Currency (ISO)", "iso_currency_code",
   // "baseCurrency", "txn_ccy", "curr", "/amount/currency": a currency word anywhere ("cur" only first,
-  // as "balance_cur" may be current), unless the name ends in a word that makes it a rate or an amount.
+  // as "balance_cur" may be current). Not a name that also holds an amount word ("amount_currency", an
+  // amount in another currency; "Cur Balance"; "debit_in_account_currency") or a period ("cur_period"),
+  // nor one that ends in a rate or a ratio. A name that ends in its currency word or in "code" is
+  // preferred to the others.
+  const AMOUNT_WORDS = ['amount', 'amounts', 'balance', 'balances', 'debit', 'credit', 'total', 'price', 'fee', 'value', 'values', 'period', 'rate', 'rates', 'factor', 'ratio', 'in'];
+  // For a JSON Pointer, the field's own name: "/amount/currency" is a currency beside an amount.
+  const wordsOf = (name: string) =>
+    (name.startsWith('/') ? name.slice(name.lastIndexOf('/') + 1) : name)
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w !== '');
+  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr'];
   const looksLikeCurrency = (name: string) => {
-    const ws = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w !== '');
-    const currency = ws.some((w) => ['currency', 'currencies', 'ccy', 'curr'].includes(w)) || ws[0] === 'cur';
-    return currency && !['rate', 'rates', 'amount', 'amounts', 'value', 'values', 'factor', 'ratio'].includes(ws.at(-1) ?? '');
+    const ws = wordsOf(name);
+    const currency = ws.some((w) => CURRENCY.includes(w)) || ws[0] === 'cur';
+    return currency && !ws.some((w) => AMOUNT_WORDS.includes(w));
   };
-  const name = names.find(looksLikeCurrency);
+  const endsLikeOne = (name: string) => [...CURRENCY, 'cur', 'code'].includes(wordsOf(name).at(-1) ?? '');
+  const candidates = names.filter(looksLikeCurrency);
+  const name = candidates.find(endsLikeOne) ?? candidates[0];
   return name === undefined ? '' : ` "${clip(name)}" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }
 

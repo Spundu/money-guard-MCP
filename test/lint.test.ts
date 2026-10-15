@@ -148,6 +148,9 @@ describe('money_lint_schema: judging columns', () => {
   it('does not say no money column was found when one was ignored, or held as text', async () => {
     const ignored = await lint({ 'db/migrations/0001.sql': 'create table o (total double precision);' }, { ignore_columns: ['o.total'] });
     expect(ignored.summary).toBe('No money columns left to check in 1 table. 1 migration file applied. 1 ignored.');
+    // A money column of a safe type, ignored, is left out too: none is "found" (review round 6).
+    const safe = await lint({ 'db/migrations/0001.sql': 'create table o (amount_pence bigint);' }, { ignore_columns: ['o.amount_pence'] });
+    expect(safe.summary).toBe('No money columns left to check in 1 table. 1 migration file applied.');
     const text = await lint({ 'db/migrations/0001.sql': 'create table o (total text);' });
     expect(text.summary).toBe('No money columns of a number type found in 1 table. 1 migration file applied. 1 money-named column of text, JSON or another type was not checked.');
   });

@@ -44,10 +44,11 @@ describe('locate', () => {
 
 describe('failure', () => {
   const context = { available: ['citext', 'pgcrypto'], preset: false };
-  const fix = (text: string, err: { message: string; code?: string; position?: string }) =>
+  const fix = (text: string, err: { message: string; code?: string; position?: string; hint?: string }) =>
     failure({ name: 'db/0001.sql', text, phase: 'migration' }, err, context).toText().replace(/^.*? Fix: /s, '');
 
   it('fits the hint to the error', () => {
+    expect(fix('create table t1 (id int);', { message: 'out of shared memory', code: '53200', hint: 'You might need to increase "max_locks_per_transaction".' })).toMatch(/^The file creates more objects than one transaction can hold locks for/);
     expect(fix('create tabel b (id int);', { message: 'syntax error at or near "tabel"', code: '42601', position: '8' })).toBe('Fix the SQL at that place: PostgreSQL could not read it as written.');
     const dump = 'CREATE TABLE public.t (a integer);\nCOPY public.t (a) FROM stdin;\n1\n\\.\n';
     expect(fix(dump, { message: 'syntax error at or near "1"', code: '42601', position: String(dump.indexOf('\n1\n') + 2) })).toMatch(/^The file holds table data after COPY \.\.\. FROM stdin \(a pg_dump with data\)/);
@@ -277,6 +278,15 @@ describe('runScripts with a database that misbehaves', () => {
       code: 'TIMEOUT',
       message: 'The lint ran out of time (3 s) while running setup.sql.',
       fix: 'Take slow data loading out of the setup file. A larger timeout_seconds (at most 300) helps only with a client that waits longer than 60 seconds for an answer.',
+    });
+  });
+
+  it('says, when time runs out in a folder of hundreds of files, that the folder is large, not that a file is slow', async () => {
+    process.env.MONEY_GUARD_TEST_WORKER = 'hang';
+    const many = Array.from({ length: 300 }, (_, i) => ({ name: `db/${String(i).padStart(4, '0')}.sql`, text: 'select 1;', phase: 'migration' as const }));
+    await expect(runScripts(many, { timeoutMs: 2000, preset: false, worker: FAKE })).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      fix: expect.stringMatching(/^The folder holds 300 migration files, each run and checked in turn: lint them in smaller groups with files, or pass a larger timeout_seconds\./),
     });
   });
 

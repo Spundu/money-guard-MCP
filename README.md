@@ -13,7 +13,7 @@ network.
 **Status:** 0.1.0. Not on npm yet: run it from a clone (below). It speaks MCP 2026-07-28, and the 2025
 protocol versions for older clients. [SPEC.md](SPEC.md) fixes every parameter, result field, code and
 limit. Its CI has not run yet; the tests pass on Windows and Linux machines ([How it is
-tested](#how-it-is-tested)). macOS is untested.
+tested](#how-it-is-tested)). macOS is untested, though nothing in it is specific to Windows or Linux.
 
 ## What it checks
 
@@ -38,7 +38,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   and makes every answer safe and small on the way out.
 - **Schema lint** (`src/lint/`): the migrations run one file at a time in PGlite, inside a worker
   thread, so a stuck or runaway migration can be stopped without stopping the server. After each file
-  the worker notes every column's type, and after the last it reads the catalog in full; the main
+  the worker notes the type of every column that file created or changed, and after the last it reads
+  the catalog in full; the main
   thread judges each column (`names.ts`, `catalog.ts`) and writes `fix_sql` itself. A new lint's
   thread starts only once the last one has ended: on Node.js 24, one that starts while another is
   being torn down can crash the process (a V8 bug, fixed upstream).
@@ -195,8 +196,8 @@ same JSON is also sent as text, for clients that ignore structured results. This
   "other_float_columns": [],
   "other_float_columns_count": 0,
   "fixes": {
-    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear.",
-    "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead."
+    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.",
+    "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are."
   }
 }
 ```
@@ -406,19 +407,15 @@ of [integer-pence-ledger](https://github.com/Spundu/integer-pence-ledger) and th
 
 Before publishing, it went through rounds of review by AI agents: Claude, each in a fresh session that
 saw only the code and the docs, each with one lens (security, the checkers' correctness, MCP and
-agent use, tests and CI, and the docs as a hiring manager would read them). Round 1 found about 45
-problems, round 2 about 50, round 3 about 40, and rounds 4 and 5 about 50 each, among them hidden
-characters reaching the model, a `fix_sql` that broke column defaults, a server that spun when its
-host closed stderr, migrations that a security fix had quietly skipped, a catalog query that grew with
-the square of the schema, a Node.js 24 crash that two overlapping database threads can set off, a
-`fix_sql` that multiplied amounts already in pence by 100, and a ledger file built to exhaust the
-server's memory. Every finding was reproduced before it was fixed, with two exceptions: one finding
-that could not be reproduced was answered instead, and that crash, which the reviewer saw twice but
-this machine never did, was matched to its upstream bug report. Fixes came with tests shown to fail
-without them. The tests reviewer also plants bugs to test the tests: 29 of 115 went uncaught in round
-3, 40 of 121 in round 4 and 22 of 102 in round 5; tests now catch each of them that changes an answer
-(nine change nothing a test can see, and 11 are caught only where the tests run on Linux). The rounds
-go on until one finds no high-severity problem. It has had no independent human review yet.
+agent use, tests and CI, and the docs as a hiring manager would read them). Each round found tens of
+problems, among them hidden characters reaching the model, a `fix_sql` that broke column defaults, a
+server that spun when its host closed stderr, a catalog query that grew with the square of the schema,
+a Node.js 24 crash that two overlapping database threads can set off, a `fix_sql` that multiplied
+amounts already in pence by 100, and a ledger file built to exhaust the server's memory. The tests
+reviewer also planted bugs to test the tests. The fixes are the commits marked "(review round N)":
+their messages say what was found, how it was checked and what the new tests prove, and each new test
+was shown to fail on the code before its fix. The rounds go on until one finds no high-severity
+problem. It has had no independent human review yet.
 
 ## License
 

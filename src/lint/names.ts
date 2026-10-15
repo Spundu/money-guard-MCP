@@ -26,6 +26,7 @@ const MONEY_WORDS: ReadonlySet<string> = new Set([
   'penalties', 'pnl', 'cogs', 'shipping', 'tip', 'tips', 'pay', 'cashback', 'copay', 'copays', 'reimbursement',
   'reimbursements', 'installment', 'installments', 'instalment', 'instalments', 'dividend', 'dividends', 'royalty',
   'royalties', 'arrears', 'overdraft', 'overdrafts', 'payable', 'payables', 'receivable', 'receivables', 'spending',
+  'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi',
   // minor units of other currencies
   'paisa', 'kobo', 'sats', 'satoshi', 'satoshis', 'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck',
   'kopecks', 'wei', 'lamport', 'lamports',
@@ -87,7 +88,7 @@ const OTHER_WORDS: ReadonlySet<string> = new Set([
   'platform', 'service', 'late', 'sales', 'sale', 'base', 'retail', 'wholesale', 'delivery', 'handling', 'processing', 'booking',
   'cancellation', 'setup', 'transfer', 'exchange', 'monthly', 'annual', 'yearly', 'initial', 'final', 'original', 'max', 'min',
   'limit', 'due', 'paid', 'owed', 'outstanding', 'remaining', 'pending', 'grand', 'line', 'item', 'order', 'invoice', 'account',
-  'opening', 'closing', 'current', 'available', 'card', 'cash', 'per', 'in', 'value', 'after', 'before', 'smallest',
+  'opening', 'closing', 'current', 'available', 'card', 'per', 'in', 'value', 'after', 'before', 'smallest',
   'unit', 'old', 'new', 'prev', 'previous', 'holiday', 'sick', 'overtime', 'take', 'home',
 ]);
 
@@ -192,15 +193,29 @@ function judgeWords(all: readonly string[]): boolean {
   return FOLDED_MONEY_ENDINGS.some((start) => word.startsWith(start)) && !FOLDED_NOT_MONEY_ENDINGS.some((ending) => word.endsWith(ending));
 }
 
+/** Minor-unit words that also mean something else: "price_sat" may be Saturday's price, "price_minor" a child's. */
+const UNSURE_UNIT_WORDS: ReadonlySet<string> = new Set(['sat', 'minor']);
+
 /**
- * Whether a money column's name says it holds minor units already: a minor-unit word anywhere
- * ("amount_pence", "price_cents_usd", "amount_minor_units", "totalMinor"), or a folded name ending in one
- * ("amountminor").
+ * What a money column's name says about its unit: "minor" when it says minor units plainly (a
+ * minor-unit word: "amount_pence", "price_cents_usd", "amount_sats"; "minor" or "smallest" before unit
+ * or units: "amount_minor_units", "amount_in_smallest_unit"); "unsure" when it holds a word that may
+ * mean minor units or something else ("amount_minor", "price_minor", "price_sat"): a fix needs that
+ * decided first; "major" otherwise.
  */
-export function namesMinorUnits(name: string): boolean {
+export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   const ws = knownWords(name);
-  if (ws.some((w) => MINOR_UNIT_WORDS.has(w))) return true;
-  if (ws.includes('smallest') && (ws.includes('unit') || ws.includes('units'))) return true; // "amount_in_smallest_unit"
+  const unitAfter = (i: number) => ws[i + 1] === 'unit' || ws[i + 1] === 'units';
+  if (ws.some((w, i) => (w === 'minor' || w === 'smallest') && unitAfter(i))) return 'minor';
+  if (ws.some((w) => MINOR_UNIT_WORDS.has(w) && !UNSURE_UNIT_WORDS.has(w))) return 'minor';
+  if (ws.some((w) => UNSURE_UNIT_WORDS.has(w))) return 'unsure';
+  // A folded name the known words cannot split, ending in a unit word ("grossamountpence").
   const only = ws.length === 1 ? ws[0] : undefined;
-  return only !== undefined && withoutUnit(only) !== only;
+  if (only === undefined || withoutUnit(only) === only) return 'major';
+  return UNSURE_UNIT_WORDS.has(only.slice(withoutUnit(only).length)) ? 'unsure' : 'minor';
+}
+
+/** Whether a money column's name says plainly that it holds minor units already (unitOfName). */
+export function namesMinorUnits(name: string): boolean {
+  return unitOfName(name) === 'minor';
 }

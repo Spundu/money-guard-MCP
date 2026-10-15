@@ -288,6 +288,16 @@ describe('money_lint_schema: which files run', () => {
     expect(e.toText()).toBe(
       `NO_SQL_FILES: "${lastDir()}/db/migrations" holds no migrations to run: the setup file runs once, as setup. Fix: Point migrations at the folder of up migrations, or pass files with the ones to run.`,
     );
+    // Named as the migrations, or as the only entry of files, it is not run twice, nor as nothing (review round 6).
+    const dir = lastDir();
+    await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations/setup.sql`, setup: `${dir}/db/migrations/setup.sql` })).rejects.toMatchObject({
+      code: 'NO_SQL_FILES',
+      message: `"${dir}/db/migrations/setup.sql" holds no migrations to run: it is the setup file, which runs once, as setup.`,
+    });
+    await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations`, files: ['setup.sql'], setup: `${dir}/db/migrations/setup.sql` })).rejects.toMatchObject({
+      code: 'NO_SQL_FILES',
+      message: `"${dir}/db/migrations" holds no migrations to run: files names only the setup file, which runs once, as setup.`,
+    });
   });
 
   it('runs exactly the files given, in the order given', async () => {

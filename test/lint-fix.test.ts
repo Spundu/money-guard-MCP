@@ -170,6 +170,15 @@ describe('money_lint_schema: fix_sql', () => {
     expect(await sql([created, ...r.findings.map((f) => f.fix_sql ?? 'fix_sql missing')], 'select total::text, "q""price"::text as q from "user"')).toEqual([{ total: '150', q: '225' }]);
   });
 
+  it('gives no fix_sql where "minor" or "sat" may not name the unit: price_sat may be Saturday\'s price', async () => {
+    const r = await lint({ 'db/migrations/0001.sql': 'create table t (price_sat double precision, price_mon double precision, amount_minor_units double precision);' });
+    expect(Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]))).toEqual({
+      amount_minor_units: 'ALTER TABLE public.t ALTER COLUMN amount_minor_units TYPE bigint USING round(amount_minor_units)::bigint;',
+      price_mon: 'ALTER TABLE public.t ALTER COLUMN price_mon TYPE bigint USING round(price_mon * 100)::bigint;',
+      price_sat: null,
+    });
+  });
+
   it('gives no fix_sql for a name holding a backslash before "u": in the SQL it would read as an escape', async () => {
     const r = await lint({ 'db/migrations/0001.sql': 'create table t ("price_\\u202e_total" double precision, total double precision);' });
     expect(r.findings.map((f) => [f.column, f.fix_sql === null])).toEqual([

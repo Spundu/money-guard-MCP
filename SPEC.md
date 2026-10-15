@@ -38,7 +38,7 @@ internet and never touches a real database.
 | 3 | Does Claude Code speak 2026-07-28? | **Yes.** Since v2.1.292 it asks local (stdio) servers for 2026-07-28 by default (`MCP_PROTOCOL_NEGOTIATION=legacy` opts out). Since v2.1.139 stdio servers get `CLAUDE_PROJECT_DIR`. Output: warning above 10,000 tokens, cap 25,000 (`MAX_MCP_OUTPUT_TOKENS`); a result over 50,000 characters is saved to a file unless the tool sets `_meta["anthropic/maxResultSizeChars"]`. With tool search (the default) only tool **names and server instructions** load at start; descriptions are cut at 4,096 characters (loaded up front) or 16,384 (loaded by search); server instructions at 4,096. The Claude API refuses `anyOf`/`oneOf`/`allOf` at the **root** of an input schema (Claude Code flattens them); property names must be 1-64 characters of `A-Za-z0-9_.-`; schemas must pass the JSON Schema 2020-12 meta-schema. | [CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (2.1.292, 2.1.139, 2.1.91), [Claude Code MCP docs](https://code.claude.com/docs/en/mcp) | Server instructions must say when to use the tools. No root-level unions in input schemas. Every result stays under 20,000 characters. |
 | 4 | SDK v2 version and API? | **`@modelcontextprotocol/server` 2.3.1** (2026-10-05), Node ≥ 20, zod ^4.2, Apache-2.0. `registerTool(name, { title, description, inputSchema, outputSchema, annotations, icons, _meta }, handler(args, ctx))`; `ctx.mcpReq.signal` reports cancellation. Arguments that fail the schema come back as an `isError` result before the handler runs; a thrown error becomes an `isError` result; output validation is skipped on `isError`. `maxToolInputElements` caps argument size. **Correction to the plan:** `serveStdio(factory, { legacy })` takes a **factory**, and its default is already `'serve'` (it also serves 2025 clients). **Testing correction:** `InMemoryTransport.createLinkedPair()` connects **2025-era** instances only; 2026-era in-process tests go through `createMcpHandler(factory)` + `handler.fetch`; stdio via `StdioClientTransport`; a client picks the era with `versionNegotiation` (`'auto'` or a pin on `'2026-07-28'`; the default is the 2025 handshake). | npm registry; SDK docs: [tools](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/tools.md), [errors](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/errors.md), [stdio](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/stdio.md), [legacy clients](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/legacy-clients.md), [testing](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/testing.md), [protocol versions](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/protocol-versions.md); the installed `.d.ts` | Entry point is `serveStdio(createServer)`. Tests cover both eras (§7). |
 | 5 | Inspector CLI flags? | **v2.11.0** (Node ≥ 22.19); the v1 flags changed. `npx --yes @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list --format json`; `--method tools/call --tool-name X --tool-args-json '{...}'`; `--protocol-era legacy\|auto\|modern`; `--strict` checks schema portability (exit 6). Exit codes: 0 ok, 1 usage, 4 unreachable, 5 tool error. | [Inspector README](https://github.com/modelcontextprotocol/inspector), [CLI smoke-testing guide](https://github.com/modelcontextprotocol/inspector/blob/main/docs/cli-smoke-testing.md), [CLI README](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md) | CI smoke test in both eras, `--strict` must report nothing (§7). |
-| 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib extensions ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start). pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code`, and a 1-based `position` when the error points at a place in the text (a syntax error, an unknown name; not a missing role or schema, or a duplicate table). A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
+| 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib extensions ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start); with pgvector and plpgsql, §3.4 lists what `CREATE EXTENSION` can load (auto_explain is a module, not an extension). pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code`, and a 1-based `position` when the error points at a place in the text (a syntax error, an unknown name; not a missing role or schema, or a duplicate table). A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
 | 7 | Can one process start a PGlite thread while another ends? | **Not safely on Node.js 24.** Its V8 (13.6) can free a wasm-to-JS import wrapper twice when a thread with WebAssembly is torn down while another thread looks the wrapper up, and then aborts the whole process (`Check failed: jit_page_->allocations_.erase(addr) == 1`). Fixed in V8 (9b8ca54d5a, 68210d500a); the Node.js 24 backport is still open; Node.js 22 and 26 are not affected. Review round 4 saw it twice in nine full test runs. | [nodejs/node#66366](https://github.com/nodejs/node/issues/66366), [nodejs/node#66376](https://github.com/nodejs/node/pull/66376) | One database thread at a time (§3.4). |
 | 8 | Other | `money-guard-mcp` and `sealed-audit-chain` are both **still free on npm**. `csv-parse` 7.0.3 is MIT with no dependencies. The 2026-07-28 security page: servers meant to run locally "SHOULD ... use the `stdio` transport to limit access to just the MCP client". | npm registry; [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) | stdio only. |
 
@@ -184,7 +184,7 @@ already read the files).
   - `money_lint_schema`: first `files_applied`, then `other_float_columns`, then `findings` (never
     below one). The counts still cover everything, and the `..._truncated` flags and `other_float_columns_count` say what was cut.
   - `money_check_double_entry`: a shorter page (never empty). `next_offset` continues from the first
-    finding left out, so paging still reaches every finding.
+    finding left out, so paging still reaches every finding it keeps (the first 10,000, §4.8).
 
   Each field that can be long is bounded first, so one finding always fits. As a last guard, the
   server never sends a result over the budget: should a tool's own shortening ever fail, the model gets
@@ -194,8 +194,9 @@ already read the files).
 - **Data minimisation.** A value copied from a data file into a result (a ledger cell, a header name,
   a transaction id, a currency) is cut at 40 characters, `…` marking the cut. A few things are cut at
   other lengths: a log entry's `writer_key_id` at 64, a library reason at 120, a finding's `message` at
-  120, and a Postgres error message at 300 (it can quote the migration's own text, such as a path the
-  migration names), and a CSV header read as one column is shown up to 40 characters, though that can
+  120, a Postgres error message at 300 (it can quote the migration's own text, such as a path the
+  migration names) and its detail at 120 (it can quote a row's values, as a unique-key violation does),
+  the reason a lint database stopped at 200, a statement's name in a hint at 60, and a CSV header read as one column is shown up to 40 characters, though that can
   be all of a short file's first line. Database table and column names stay whole, so the model can act on them
   (PostgreSQL caps a name at 63 bytes). A column's type is cut at 200 characters: PostgreSQL's
   `format_type` writes it, and a migration can replace that function. A path inside the project stays whole up to 400 characters; a
@@ -212,10 +213,10 @@ already read the files).
   Mongolian fillers); and four characters drawn blank that no category gives away (U+2800, U+16FE4,
   U+13440, U+1D159). Each appears as `\uXXXX`, or `\u{XXXXX}` above U+FFFF, in every result and
   error money-guard writes: each tool escapes what it copies, and the server escapes every result and
-  error once more on the way out. In text copied from a project or a file, a backslash before `u`, or
-  before a character that is escaped, appears doubled: the six characters `\u200b` show as `\\u200b`,
-  and a backslash followed by a real U+200B as `\\\u200b`, so text that looks like an escape and an
-  escape never look alike. Other
+  error once more on the way out. In text copied from a project or a file, every backslash appears
+  doubled, as JSON shows one: a single backslash always starts an escape, so no two texts look alike.
+  The six characters `\u200b` show as `\\u200b`, a backslash followed by a real U+200B as `\\\u200b`,
+  and `\\u200b` typed as text as `\\\\u200b`. Other
   blank-looking characters, such as wide spaces, are ordinary text and appear as they are. (Text the SDK writes itself, such as an input validation error that
   quotes the model's own argument, is not money-guard's.) Names that hold such characters get no
   `fix_sql` (§3.6).
@@ -540,8 +541,11 @@ word**, with these refinements:
     power, usage, capacity, speed, temperature, precision, scale
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
 - **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, paisa, kobo,
-  sat, sats, satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport,
-  lamports, minor; and "smallest" beside unit or units (`amount_in_smallest_unit`).
+  sats, satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport, lamports;
+  and "minor" or "smallest" before unit or units (`amount_minor_units`, `amount_in_smallest_unit`).
+  "minor" and "sat" without unit after them may say the unit or something else (`amount_minor`, but
+  also `price_minor`, a child's price, and `price_sat`, Saturday's): `fix_sql` is `null` for them,
+  the unit needs a decision.
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
   `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`,
   `amountdue`, `platformfee`, `totaldiscount`, `debit`, `credit_limit`, `net`, `hourly_rate`,
@@ -551,7 +555,7 @@ word**, with these refinements:
   `costcenter`, `gross_margin`, `credit_score`, `fee_per_txn_bps`, `payment_intent`, `totalqty`,
   `total_nights`, `revenue_share`, `minor_unit`, `rate_per_second`.
 
-The lists are tested against a table of about 250 column names, most of them real (Stripe, Shopify,
+The lists are tested against a table of about 300 column names, most of them real (Stripe, Shopify,
 Supabase templates, ledgers, payroll and the author's own apps), with look-alikes the rule must not
 take for money (coffee, syntax, discharge), in `test/names.test.ts`. A name rule cannot know every
 schema: a real money column it misses that is a float still shows in `other_float_columns`, which every
@@ -649,13 +653,13 @@ shows it: the tool runs the new migration too.
 ### 3.8 Errors (besides §2.5)
 | Code | When | Message contents |
 |---|---|---|
-| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, or leaves the database unusable or silent; or the catalog cannot be read after the last file (§3.4). | The file; the line and column where Postgres gives a `position` (a syntax error or an unknown name does; a missing role or schema, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
+| `MIGRATION_FAILED` | A migration file fails, is not UTF-8, leaves the database unusable or silent, or ends inside a transaction it opened (BEGIN with no COMMIT: the files after it would run inside it); or the catalog cannot be read after the last file (§3.4). | The file; the line and column where Postgres gives a `position` (a syntax error or an unknown name does; a missing role or schema, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message (≤ 300 characters; it can quote the migration's own text). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
-| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup). |
+| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, or more than 10,000 files and folders to look through for them (listing them blocks the server). | Points at the folder of migrations, or `files`. |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, or `files` is given with a single `.sql` file. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
-| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy), and that a larger limit helps only with a client that waits longer than 60 seconds. |
+| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: lint them in smaller groups, or pass a larger `timeout_seconds`), and that a larger limit helps only with a client that waits longer than 60 seconds. |
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
@@ -668,6 +672,13 @@ The `MIGRATION_FAILED` hints by SQLSTATE:
 - **0A000 when a column's type cannot change** because a view, a rule, a policy, a trigger or a
   generated column uses it (as after a `fix_sql`): "drop it before the ALTER and create it again
   after, in the same migration".
+- **A transaction left open** (BEGIN with no COMMIT): "add the COMMIT it lacks, or take out its BEGIN".
+- **53200 with PostgreSQL's hint to raise max_locks_per_transaction:** "the file creates more objects
+  than one transaction can hold locks for": split it (the lint database already allows 4,096 locks per
+  transaction, against PostgreSQL's default of 64, so a one-file dump of thousands of tables runs).
+- **42P07, 42710, 42P06, 42723** (a table, a role or extension, a schema or a function that already
+  exists): "something creates this object twice: create it once, or with IF NOT EXISTS"; with the
+  Supabase preset, that the preset already makes some objects (roles such as anon).
 - **Extension not available:** the list of available extensions, and that a whole-database dump
   (`pg_dump`, `supabase db dump`) should be linted as its migrations folder instead.
 - **42601** (syntax error) on a line starting with `\`: "psql meta-command"; after a
@@ -746,13 +757,13 @@ shortened):
   "other_float_columns": [],
   "other_float_columns_count": 0,
   "fixes": {
-    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear.",
-    "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead."
+    "FLOAT_MONEY": "real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.",
+    "NUMERIC_MONEY": "numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are."
   }
 }
 ```
 `fixes` text for the other two codes:
-- **`MONEY_TYPE`:** "Postgres's money type depends on the lc_monetary setting, has a fixed number of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the currency in its own column. Constraints and defaults that use the money type must change in the same migration."
+- **`MONEY_TYPE`:** "Postgres's money type depends on the lc_monetary setting, has a fixed number of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the currency in its own column. Constraints and defaults that use the money type must change in the same migration. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are."
 - **`SMALLINT_MONEY`:** "smallint holds at most 32,767 minor units (£327.67); a larger amount fails
   with an out-of-range error. Widen it to bigint; no data conversion is needed."
 
@@ -761,8 +772,7 @@ change needs a decision or belongs elsewhere: a domain or array type (change the
 type), a generated column (change its expression), a column a child table inherits (change it on the
 parent), amounts finer than a penny (choose the unit first), a default, CHECK constraint or unique index
 condition that may hold amounts in the old unit (convert
-those in the same migration: ALTER COLUMN ... TYPE does not), or a name holding hidden characters
-(write it by hand)."
+those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand)."
 
 ---
 
@@ -856,7 +866,7 @@ Those functions throw at the first problem. This tool returns **every** problem.
     says so ("12.00 has a decimal point; minor units are whole numbers without one"). When at least as
     many amounts are plain decimals such as `12.34` as are whole numbers (zeros aside; a JSON `12.00`
     counts, though it is read as 12; `£12.00` and `1,234.50` do not, as `decimal` refuses them too),
-    the summary adds: "Most amounts have a decimal point: if the file holds pounds or dollars (12.34),
+    the summary adds: "Half or more of the amounts have a decimal point: if the file holds pounds or dollars (12.34),
     call again with amount_format "decimal"." With amount_format `decimal` it never does. A file of
     mostly whole pounds with a few decimals gets no hint: it looks the same as a pence file with a few
     wrong rows, and read as pounds that file would balance, hiding its errors.
@@ -918,7 +928,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy or curr anywhere in it, or cur first, unless it ends in rate, amount, value, factor or ratio: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy or curr anywhere in it, or cur first, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio or "in": `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name that ends in its currency word or in "code" is named first; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -927,7 +937,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 | `counts_by_code` | object | e.g. `{ "UNBALANCED": 1 }`, over all pages. |
 | `findings` | Finding[] | This page: at most `limit` findings, fewer if the result would pass its budget (§2.4). |
 | `offset`, `limit`, `total_findings` | integer | `limit` as asked (default 20). |
-| `next_offset` | integer or null | The first finding not on this page; null on the last page. |
+| `next_offset` | integer or null | The first finding not on this page; null on the last page of the findings kept (the first 10,000, §4.8). When there are more, the summary says so: "Only the first 10,000 findings can be paged; the counts cover all N." |
 
 ### 4.7 Errors (besides §2.5)
 | Code | When |
@@ -1167,8 +1177,11 @@ The tests are in `test/` (Vitest, about 700); each file starts with a comment sa
   every kind of `fix_sql` run on stored rows, with names quoted as `quote_ident` quotes them, and
   none offered while a default, a CHECK constraint, or a unique or exclusion index's condition or
   expression would keep amounts in pounds (in the table, or in a partition or child at any depth),
-  while an ordinary index's condition does not count; none for a name with a backslash before "u";
-  and the check after each file reads only the columns that file created or changed.
+  while an ordinary index's condition does not count; none for a name with a backslash before "u",
+  or with "minor" or "sat" that may not name the unit (`price_sat`); the check after each file reads
+  only the columns that file created or changed; a file that leaves a transaction open fails; each
+  file may lock thousands of objects; an object created twice gets its own hint; and the setup file
+  named as the migrations or in `files` says so, as when it is found in the folder.
 - **Ledger cases:** the §4.9 example; every finding code; the three column shapes; decimal mode and
   when the summary suggests it; header names matched exactly before letter case; CSV line numbers
   (quoted line breaks, CR LF, a lone CR, a BOM, blank lines); JSON Pointers; JSONL with a bad line;
@@ -1177,13 +1190,15 @@ The tests are in `test/` (Vitest, about 700); each file starts with a comment sa
   for currency words anywhere in a name and fields the first record lacks; a numeric currency grouped
   by its value; the delimiter that occurs most; pagination and the result budget; hostile files kept
   small and fast (the first 10,000 findings kept, all counted; a CSV row of more than 1 MiB of values;
-  more than 7,000,000 JSON values; an object of more than 10,000 keys).
+  more than 7,000,000 JSON values; an object of more than 10,000 keys; the summary says when paging
+  stops at 10,000); an amount in a currency (`amount_currency`) not taken for the currency column; zeros
+  left aside by the pounds hint.
 - **Audit cases:** a valid log; one log per reason a log can trigger (tampered, reordered, an entry
   deleted, a cut tail, a torn line, a wrong key, a forged seal, a rewritten line, CR LF line ends);
   anchors from an earlier run (grown, emptied, replaced, broken at the last entry the anchor covers,
   and broken at the entry right after it, honestly or after a replacement); and a scan of the library's code that fails if it can
   return a reason this server does not map.
-- **Every error code** and every finding code is produced by a test. **Names:** about 250 column names,
+- **Every error code** and every finding code is produced by a test. **Names:** about 300 column names,
   most of them real, with the expected answer.
 - **Security:** `..`, absolute paths and links leading out of the project (and, through such a link,
   the same answer whether the path behind it exists or not) (the file-link cases skip

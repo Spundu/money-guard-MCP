@@ -155,13 +155,16 @@ describe('money_check_double_entry: the rules', () => {
       '19.99 is not a whole number of minor units',
       '-19.99 is not a whole number of minor units',
     ]);
-    expect(r.summary).toMatch(/ Most amounts have a decimal point: if the file holds pounds or dollars \(12\.34\), call again with amount_format "decimal"\.$/);
+    expect(r.summary).toMatch(/ Half or more of the amounts have a decimal point: if the file holds pounds or dollars \(12\.34\), call again with amount_format "decimal"\.$/);
     // Half of the amounts with a decimal point, and a leg of 0, which says nothing: still worth the hint.
     const excel = check('.csv', 't,a\nA,12.5\nA,-12.5\nB,3\nB,-3\nB,0\n', { columns: { transaction_id: 't', amount: 'a' } });
-    expect(excel.summary).toMatch(/ Most amounts have a decimal point/);
+    expect(excel.summary).toMatch(/ Half or more of the amounts have a decimal point/);
     // JSON as PostgreSQL's json_agg writes numeric(10,2): 12.00 is a whole number, but written in pounds.
     const json = check('.json', '[{"t":"A","a":12.00},{"t":"A","a":-12.00}]', { columns: { transaction_id: 't', amount: 'a' } });
-    expect(json.summary).toMatch(/^Balanced: .* Most amounts have a decimal point/);
+    expect(json.summary).toMatch(/^Balanced: .* Half or more of the amounts have a decimal point/);
+    // Zeros are left aside: a pence file in debit/credit form with 0.00 placeholders gets no hint.
+    const placeholders = check('.csv', 't,d,c\nT1,1000,0.00\nT1,0.00,1000\n', { columns: { transaction_id: 't', debit: 'd', credit: 'c' } });
+    expect(placeholders.summary).not.toMatch(/amount_format/);
     // A pence file with one bad transaction keeps the plain summary: most of its amounts are whole.
     const pence = check('.csv', 't,a\nA,1000\nA,-1000\nC,250\nC,-250\nB,10.5\nB,-10.5\n', { columns: { transaction_id: 't', amount: 'a' } });
     expect(pence.summary).not.toMatch(/amount_format/);
@@ -195,6 +198,13 @@ describe('money_check_double_entry: the rules', () => {
     // A field the first record lacks still counts.
     const later = check('.jsonl', '{"t":"T0","a":5}\n{"t":"T0","a":-5}\n{"t":"T1","a":10000,"ccy":"GBP"}\n{"t":"T1","a":-10000,"ccy":"EUR"}\n', { columns });
     expect(later.summary).toMatch(/ "ccy" looks like a currency and is not mapped/);
+    // Review round 6: an amount in a currency is not the currency (Odoo's amount_currency, ERPNext's
+    // debit_in_account_currency, "Cur Balance"), and the currency column is named even after one of them.
+    for (const header of ['amount_currency', 'debit_in_account_currency', 'Cur Balance', 'Curr Balance', 'cur_period']) {
+      expect(check('.csv', `t,a,${header}\nT1,1,5\nT1,-1,5\n`, { columns }).summary, header).not.toMatch(/looks like a currency/);
+    }
+    const odoo = check('.csv', 't,a,amount_currency,currency_id\nT1,1,5,GBP\nT1,-1,5,EUR\n', { columns });
+    expect(odoo.summary).toContain(' "currency_id" looks like a currency and is not mapped');
     // "cur" after another word may be current, not a currency.
     expect(check('.csv', 't,a,balance_cur\nT1,1,5\nT1,-1,5\n', { columns }).summary).not.toMatch(/looks like a currency/);
     // A rate or an amount named after a currency is not one.

@@ -39,17 +39,16 @@ function shown(char: string): [piece: string, width: number] {
 }
 
 /**
- * Raw text as the model may see it, one character at a time: `shown`, and a backslash doubled where it
- * stands before "u" or before a character that is escaped, so text that looks like an escape and an
- * escape after a backslash always show differently: the six characters `\u200b` show as `\\u200b`, and a
- * backslash followed by a real U+200B as `\\\u200b`.
+ * Raw text as the model may see it, one character at a time: `shown`, and every backslash doubled. So
+ * the shown text reads back one way only, as JSON's escapes do: a single backslash always starts an
+ * escape, and a doubled one is a backslash of the text (`\u200b` typed as text shows as `\\u200b`, a
+ * backslash followed by a real U+200B as `\\\u200b`, and `\\u200b` typed as text as `\\\\u200b`).
  */
 function* piecesOf(text: string): Generator<[piece: string, width: number]> {
   for (let i = 0; i < text.length; ) {
     const char = String.fromCodePoint(text.codePointAt(i) ?? 0);
     i += char.length;
-    const next = String.fromCodePoint(text.codePointAt(i) ?? 0);
-    yield char === '\\' && i < text.length && (next === 'u' || UNSAFE.test(next)) ? ['\\\\', 2] : shown(char);
+    yield char === '\\' ? ['\\\\', 2] : shown(char);
   }
 }
 
@@ -59,8 +58,8 @@ export function hasUnsafe(text: string): boolean {
 }
 
 /**
- * Raw `text` with every character that must not reach the model raw escaped, a backslash before "u" or
- * before an escaped character doubled (`piecesOf`), and nothing cut. For names a result must show whole so the model can act on them: database
+ * Raw `text` with every character that must not reach the model raw escaped, every backslash doubled
+ * (`piecesOf`), and nothing cut. For names a result must show whole so the model can act on them: database
  * identifiers (PostgreSQL caps them at 63 bytes). Apply it once, to raw text: a second pass would double
  * the backslashes of its own escapes.
  */

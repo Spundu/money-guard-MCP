@@ -58,6 +58,9 @@ const extensions = {
   tablefunc, tcn, tsm_system_rows, tsm_system_time, unaccent, uuid_ossp, vector,
 };
 
+/** The failure for a file that ends inside a transaction it opened; src/lint/advice.ts matches this text for its hint. */
+const OPEN_TRANSACTION = 'the file ends inside a transaction it opened (BEGIN with no COMMIT or ROLLBACK)';
+
 /** @param {unknown} message */
 function send(message) {
   parentPort?.postMessage(message);
@@ -81,7 +84,9 @@ function dbError(err) {
 
 async function main() {
   const job = /** @type {Job} */ (workerData);
-  const db = await PGlite.create({ extensions });
+  // Each file runs as one transaction, which locks every table, sequence and index it creates: a one-file
+  // schema dump of a few thousand tables needs more locks than PostgreSQL's default 64 per transaction.
+  const db = await PGlite.create({ extensions, postgresqlconf: 'max_locks_per_transaction = 4096' });
   const version = /** @type {{ v: string }} */ ((await db.query('SELECT pg_catalog.version() AS v')).rows[0]).v;
   const available = (await db.query('SELECT name FROM pg_catalog.pg_available_extensions ORDER BY name')).rows.map(
     (r) => /** @type {{ name: string }} */ (r).name,
@@ -108,6 +113,17 @@ async function main() {
     const sane = await db.query('SELECT 1 AS ok').catch(() => null);
     if (/** @type {{ ok?: unknown } | undefined} */ (sane?.rows?.[0])?.ok !== 1) {
       send({ type: 'unusable', step });
+      return;
+    }
+    // A file that ends inside a transaction it opened (BEGIN with no COMMIT) would make the next files
+    // run inside it, and the check after them could not tell what they changed. A savepoint can only
+    // be set inside a transaction.
+    const open = await db.query('SAVEPOINT money_guard_open').then(
+      async () => (await db.query('RELEASE SAVEPOINT money_guard_open'), true),
+      () => false,
+    );
+    if (open) {
+      send({ type: 'failed', step, error: { message: OPEN_TRANSACTION } });
       return;
     }
     const rows = (await db.query(job.snapshotSql, [mark])).rows.map((r) => {

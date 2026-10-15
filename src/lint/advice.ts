@@ -6,6 +6,9 @@ import { clip } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { DbError, Script } from './database.js';
 
+/** What the database thread (worker.js) says of a file that ends inside a transaction it opened: the same text there. */
+const OPEN_TRANSACTION = 'the file ends inside a transaction it opened (BEGIN with no COMMIT or ROLLBACK)';
+
 /** A setup script (the preset or the setup file) fails as SETUP_FAILED, a migration as MIGRATION_FAILED. */
 export function failedCode(script: Script): 'SETUP_FAILED' | 'MIGRATION_FAILED' {
   return script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
@@ -49,6 +52,9 @@ export function locate(text: string, position: number): { line: number; column: 
 
 const MISSING_OBJECT = new Set(['42704', '3F000', '42883', '42P01']);
 
+/** Duplicate table, object (a role, an extension), schema and function. */
+const ALREADY_EXISTS = new Set(['42P07', '42710', '42P06', '42723']);
+
 /** The ToolError for a script that PostgreSQL refused, with a hint fitted to the error. `single`: migrations is this one file. */
 export function failure(script: Script, err: DbError, context: { available: readonly string[]; preset: boolean; filesGiven?: boolean; single?: boolean }): ToolError {
   const code = failedCode(script);
@@ -64,12 +70,17 @@ export function failure(script: Script, err: DbError, context: { available: read
 
   const lines = script.text.split('\n');
   let fix: string;
-  if (/^extension ".*" is not available$/.test(err.message)) {
+  if (err.message === OPEN_TRANSACTION) {
+    fix = `money-guard runs each file as one script, and a file must not leave a transaction open: add the COMMIT it lacks, or take out its BEGIN. ${past({ setup: 'Fix the setup file.', folder: 'Then lint again.', single: 'Then lint again.' })}`;
+  } else if (/^extension ".*" is not available$/.test(err.message)) {
     fix =
       `PGlite does not have that extension. It has: ${context.available.join(', ')}. If the file uses it for something unrelated to money, ${past({ setup: 'take that part out of the setup file', folder: 'leave the file out with files', single: 'lint a copy of the file without that part' })}. ` +
       'A whole-database dump (pg_dump, supabase db dump) also creates the extensions a platform provides: lint the migrations folder instead (supabase/migrations for Supabase).';
   } else if (err.code === '42883' && err.message.startsWith('operator does not exist')) {
     fix = 'The two sides of an operator have types that do not go together (uuid and text, say): cast one side, or fix the column type.';
+  } else if (err.code !== undefined && ALREADY_EXISTS.has(err.code)) {
+    // setup or a preset cannot help here: they may be what made it first.
+    fix = `${context.preset ? 'The Supabase preset already creates some objects (roles such as anon, the auth and extensions schemas): leave those out here, or create them with IF NOT EXISTS. ' : ''}Something creates this object twice: the setup file and a migration, two migrations, or files run out of order. Create it once, or with IF NOT EXISTS.`;
   } else if (setup && err.code !== undefined && MISSING_OBJECT.has(err.code)) {
     fix = context.preset
       ? 'The Supabase preset does not create this: create it earlier in the setup file.'
@@ -99,6 +110,9 @@ export function failure(script: Script, err: DbError, context: { available: read
     fix = 'Something else uses this column (a view, a rule, a policy, a trigger or a generated column): in the same migration, drop it before the ALTER and create it again after.';
   } else if (err.code === '55P04') {
     fix = `money-guard runs each file as one transaction, and a new enum value cannot be used in the transaction that adds it (psql, which commits statement by statement, can). ${past({ setup: 'Take that part out of the setup file.', folder: 'Split the file in two, or leave it out with files.', single: 'Split the file in two, put both in a folder, and lint the folder.' })}`;
+  } else if (err.code === '53200' && /max_locks_per_transaction/.test(err.hint ?? '')) {
+    // Out of lock slots, not of memory: one file creates more objects than one transaction may lock.
+    fix = `The file creates more objects than one transaction can hold locks for (a schema dump of many thousands of tables, say). ${past({ setup: 'Make the setup file smaller.', folder: 'Split it into several files.', single: 'Split it into a folder of smaller files, and lint the folder.' })}`;
   } else if (err.code !== undefined && /^5[34]/.test(err.code)) {
     fix = tooBig(script, context.single);
   } else if (setup) {

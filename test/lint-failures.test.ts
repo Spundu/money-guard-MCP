@@ -26,7 +26,7 @@ describe('money_lint_schema: failures', () => {
 
   it('points at psql meta-commands', async () => {
     const e = await failure({ 'db/migrations/0001.sql': 'select 1;\n\\connect other\n' });
-    expect(e.message).toMatch(/line 2, column 1: syntax error at or near "\\"/);
+    expect(e.message).toMatch(/line 2, column 1: syntax error at or near "\\\\"/); // the backslash shown doubled
     expect(e.fix).toMatch(/psql meta-command/);
   });
 
@@ -48,12 +48,26 @@ describe('money_lint_schema: failures', () => {
     ['an operator between types that do not go together', { 'db/migrations/0001.sql': "create table t (id uuid, user_id text);\nselect * from t where id = user_id;" }, '42883', /^The two sides of an operator have types that do not go together/],
     ['VACUUM', { 'db/migrations/0001.sql': 'create table t (id int);\nvacuum t;' }, '25001', /^money-guard runs each file as one script, where VACUUM cannot run/],
     ['a view of the column', { 'db/migrations/0001.sql': 'create table t (price double precision);\ncreate view v as select price from t;\nalter table t alter column price type bigint;' }, '0A000', /^Something else uses this column \(a view, a rule/],
+    ['a table created twice', { 'db/migrations/0001.sql': 'create table t (id int);', 'db/migrations/0002.sql': 'create table t (id int);' }, '42P07', /^Something creates this object twice: .* Create it once, or with IF NOT EXISTS\.$/],
     // As money-guard's own fix_sql meets it on a table with row-level security.
     ['a policy on the column', { 'db/migrations/0001.sql': 'create table t (price double precision, owner text);\nalter table t enable row level security;\ncreate policy cheap on t using (price < 10);\nalter table t alter column price type bigint;' }, '0A000', /^Something else uses this column \(a view, a rule, a policy/],
   ])('fits the hint to what real PostgreSQL reports: %s', async (_what, files, state, hint) => {
     const e = await failure(files);
     expect(e.message).toContain(`(SQLSTATE ${state})`);
     expect(e.fix).toMatch(hint);
+  });
+
+  it('gives each file locks for a schema dump of thousands of tables (PostgreSQL allows 64 per transaction)', async () => {
+    // Review round 6: a one-file dump of about 2,000 tables ran out of lock slots ("out of shared memory").
+    const check = "do $$ begin if current_setting('max_locks_per_transaction')::int < 4096 then raise exception 'only % locks', current_setting('max_locks_per_transaction'); end if; end $$;";
+    expect((await lint({ 'db/migrations/0001.sql': `${check}\ncreate table t (total bigint);` })).error_count).toBe(0);
+  });
+
+  it('fails a file that leaves a transaction open, which would hide what the files after it do', async () => {
+    const e = await failure({ 'db/migrations/0001.sql': 'create table a (total double precision);\nbegin;\n', 'db/migrations/0002.sql': 'create table b (total double precision);' });
+    expect(e.code).toBe('MIGRATION_FAILED');
+    expect(e.message).toBe(`${lastDir()}/db/migrations/0001.sql: the file ends inside a transaction it opened (BEGIN with no COMMIT or ROLLBACK).`);
+    expect(e.fix).toMatch(/^money-guard runs each file as one script, and a file must not leave a transaction open: add the COMMIT it lacks, or take out its BEGIN\./);
   });
 
   it('says the files ran in the order files gave, when files gave it', async () => {
@@ -123,6 +137,9 @@ describe('money_lint_schema: platforms', () => {
     expect([without.code, without.fix]).toEqual(['MIGRATION_FAILED', expect.stringMatching(/preset "supabase"/)]);
     const lacking = await failure({ 'db/migrations/0001.sql': "select net.http_post('https://example.com');" }, { preset: 'supabase' });
     expect(lacking.fix).toMatch(/^The Supabase preset does not create this\. Pass setup/);
+    // ... and says the preset made it already when a migration creates what the preset creates.
+    const twice = await failure({ 'db/migrations/0001.sql': 'create role anon;' }, { preset: 'supabase' });
+    expect(twice.fix).toMatch(/^The Supabase preset already creates some objects .* Create it once, or with IF NOT EXISTS\.$/);
   });
 
   it('runs a setup file before the migrations and does not check what it creates', async () => {

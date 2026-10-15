@@ -71,14 +71,17 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
     expect([escapeUnsafe(fake), escapeUnsafe(real)]).toEqual([`pay${'\\\\'}u200b`, `pay${'\\'}u200b`]);
     expect(clip(fake)).toBe(escapeUnsafe(fake));
     expect(clipPath(`db/${fake}.sql`)).toBe(`db/${escapeUnsafe(fake)}.sql`);
-    expect(escapeUnsafe(`C:${'\\'}x`)).toBe(`C:${'\\'}x`); // a backslash before anything else stays one
+    expect(escapeUnsafe(`C:${'\\'}x`)).toBe(`C:${'\\\\'}x`); // every backslash, as JSON shows one
   });
 
-  it('doubles a backslash before a hidden character too, so it never shows like text that looks like an escape', () => {
+  it('shows every raw text differently: a backslash before a hidden character, or before a backslash, is doubled too', () => {
     const fake = `pay${'\\'}u200b`; // six plain characters
     const real = `pay${'\\'}\u{200b}`; // a backslash, then a real U+200B
+    const twice = `pay${'\\\\'}u200b`; // two backslashes, then u200b (review round 6)
     expect(escapeUnsafe(real)).toBe(`pay${'\\\\'}${'\\'}u200b`);
-    for (const show of [escapeUnsafe, (t: string) => clip(t), (t: string) => clipPath(t)]) expect(show(real)).not.toBe(show(fake));
+    for (const show of [escapeUnsafe, (t: string) => clip(t), (t: string) => clipPath(t)]) {
+      expect(new Set([show(real), show(fake), show(twice)]).size).toBe(3);
+    }
   });
 
   it('cuts raw text without escaping it, for a value that becomes part of a longer text clipped as a whole', () => {

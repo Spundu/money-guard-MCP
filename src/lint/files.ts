@@ -266,8 +266,12 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     setupReal = s.real;
   }
 
+  // The setup file runs once, as setup, never as a migration too, however it is named.
+  const onlySetup = (where: string) =>
+    new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${where} the setup file, which runs once, as setup.`, 'Point migrations at the migrations, and setup at the file to run before them.');
   let chosen: Array<{ real: string; rel: string; size: number }>;
   if (!target.isDirectory) {
+    if (target.real === setupReal) throw onlySetup('it is');
     if (args.files !== undefined) {
       throw new ToolError('FILE_NOT_IN_FOLDER', 'files can only be given when migrations is a folder.', 'Leave files out, or point migrations at the folder that holds them.');
     }
@@ -281,12 +285,12 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
         const f = resolveInRoot(root, toPosix(path.relative(root.real, lexical)), { kind: 'file', extensions: ['.sql'] });
         if (!isInside(target.real, f.real)) throw notInFolder;
         return f.real === setupReal ? [] : [f]; // the setup file runs once, as setup
-
       } catch (err) {
         if (err instanceof ToolError && (err.code === 'PATH_NOT_FOUND' || err.code === 'NOT_A_FILE')) throw notInFolder;
         throw err;
       }
     });
+    if (chosen.length === 0) throw onlySetup('files names only');
   } else {
     const found: string[] = [];
     const seen: Seen = { down: 0, setup: setupReal, setupFound: false, entries: 0, others: new Map() };

@@ -250,6 +250,7 @@ describe('money_check_double_entry: arguments', () => {
     expect([r.total_findings, r.error_count, r.findings.length, r.next_offset]).toEqual([12_000, 12_000, 10, null]);
     expect(Object.values(r.counts_by_code).reduce((a, b) => a + b, 0)).toBe(12_000);
     expect(r.findings.at(-1)?.lines).toEqual([3335]); // the 10,000th finding: on row 3,334, line 3,335
+    expect(r.summary).toMatch(/ Only the first 10,000 findings can be paged; the counts cover all 12,000\.$/);
   });
 
   it('refuses a JSON file of more than 7,000,000 values, or with an object of more than 10,000 keys', () => {

@@ -5,7 +5,7 @@
 // (pg_dump output does) cannot change what these queries read.
 
 import { hasUnsafe } from '../echo.js';
-import { looksLikeMoney, namesMinorUnits } from './names.js';
+import { looksLikeMoney, unitOfName } from './names.js';
 
 /** Ordinary and partitioned tables in non-system schemas: the relations whose columns are checked. */
 const USER_TABLES = `
@@ -173,17 +173,17 @@ export interface LintFinding {
 /** One plain explanation per code (SPEC.md §3.10), returned once for each code present. */
 export const FIXES: Readonly<Record<LintCode, string>> = {
   FLOAT_MONEY:
-    'real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear.',
+    'real and double precision are binary floating point: most decimal amounts (0.10, 19.99) cannot be stored exactly, and sums drift by fractions of a penny. Store integer minor units (pence, cents) in bigint: add a NEW migration with fix_sql and update the code that reads and writes the column. fix_sql takes the column to hold pounds or dollars and multiplies by 100, rounding to whole pence; when the name says the amounts are minor units already (pence, cents, minor), it only rounds. Renaming the column to <column>_pence makes the unit clear. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.',
   MONEY_TYPE:
-    "Postgres's money type depends on the lc_monetary setting, has a fixed number of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the currency in its own column. Constraints and defaults that use the money type must change in the same migration.",
+    "Postgres's money type depends on the lc_monetary setting, has a fixed number of decimals and no currency, and rounds silently. Store integer minor units in bigint, with the currency in its own column. Constraints and defaults that use the money type must change in the same migration. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.",
   NUMERIC_MONEY:
-    'numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead.',
+    'numeric is exact, so this is not a rounding bug, but amounts with decimals are not integer minor units: every piece of code must round the same way. Convert to bigint minor units, or pass accept_numeric: true if numeric is a deliberate choice. fix_sql multiplies by 100 for 2 decimal places, keeps whole numbers (scale 0) as they are, and rounds to whole pence where no scale is declared; if a scale-0 column holds whole pounds rather than pence, multiply by 100 instead. Before running a fix that multiplies by 100, check the triggers and functions that compare the column with an amount: the ALTER leaves them as they are.',
   SMALLINT_MONEY: 'smallint holds at most 32,767 minor units (£327.67); a larger amount fails with an out-of-range error. Widen it to bigint; no data conversion is needed.',
 };
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), or a name holding hidden characters (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -287,12 +287,14 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   if ([row.schema_name, row.table_name, row.column_name].some((name) => hasUnsafe(name) || name.includes('\\u'))) return null;
   const c = quoteIdent(row.column_name, reserved);
   const head = `ALTER TABLE ${quoteIdent(row.schema_name, reserved)}.${quoteIdent(row.table_name, reserved)} ALTER COLUMN ${c} TYPE bigint`;
-  const minor = namesMinorUnits(row.column_name);
+  const unit = unitOfName(row.column_name);
+  const minor = unit === 'minor';
   const checkHoldsAmount = (row.checks ?? []).some((expr) => expr === null || !holdsNoAmount(expr));
   const indexHoldsAmount = (row.index_exprs ?? []).some((expr) => !holdsNoAmount(expr));
   const keepsOldUnit = checkHoldsAmount || indexHoldsAmount || (row.defaults ?? []).some((expr) => !isZeroOrNullDefault(expr));
   const times100 = (using: string) => (keepsOldUnit ? null : `${head} USING ${using};`);
-  const convert = minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
+  // A name that may or may not say minor units (price_minor, price_sat) needs the unit decided first.
+  const convert = unit === 'unsure' ? null : minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
   switch (code) {
     case 'SMALLINT_MONEY':
       return `${head};`;

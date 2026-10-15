@@ -1,7 +1,7 @@
 // Which column names count as money (src/lint/names.ts, SPEC.md §3.5), against a table of real column
 // names, and which names say the amounts are minor units already.
 import { describe, expect, it } from 'vitest';
-import { looksLikeMoney, namesMinorUnits, words } from '../src/lint/names.js';
+import { looksLikeMoney, namesMinorUnits, unitOfName, words } from '../src/lint/names.js';
 
 describe('words', () => {
   it('splits snake_case, kebab-case, camelCase, acronyms and digits', () => {
@@ -52,6 +52,9 @@ const MONEY = [
   'base_pay', 'holiday_pay', 'sick_pay', 'overtime_pay', 'take_home_pay', 'basepay', 'market_value', 'book_value',
   'fair_value', 'face_value', 'par_value', 'line_value', 'cashback', 'copay', 'reimbursement', 'installment',
   'instalment', 'dividends', 'royalty', 'arrears', 'overdraft_limit', 'payable', 'spending_limit', 'price2',
+  // Review round 6: contributions, proceeds, UK retail, cash and sales metrics.
+  'pension_contribution', 'employer_contribution', 'proceeds', 'sale_proceeds', 'postage', 'rrp', 'cash', 'cash_on_hand',
+  'petty_cash', 'gmv', 'aov', 'arpu', 'notional', 'emi',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -100,13 +103,20 @@ describe('looksLikeMoney', () => {
 
 describe('namesMinorUnits', () => {
   it('spots names that already hold minor units', () => {
-    const yes = ['amount_pence', 'amountMinor', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'amountminor', 'totalpence', 'pricecents', 'amount_pennies', 'amount_paise',
+    const yes = ['amount_pence', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'totalpence', 'pricecents', 'amount_pennies', 'amount_paise',
       'amount_kobo', 'amount_paisa', 'amount_sats', 'amount_satoshis', 'amount_centavos', 'amount_kopecks', 'amount_wei', 'totalpennies', 'amountinpaise', 'amount_in_smallest_unit',
       'amount_in_smallest_units',
       // Review round 5: folded, inside a longer name or not.
-      'amountminorunits', 'pricecentsusd', 'amountinsmallestunit', 'totalcentsdue', 'amountsat', 'amountwei', 'centsamount'];
+      'amountminorunits', 'pricecentsusd', 'amountinsmallestunit', 'totalcentsdue', 'amountwei', 'centsamount'];
     expect(yes.map(namesMinorUnits)).toEqual(yes.map(() => true));
     const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent'];
     expect(no.map(namesMinorUnits)).toEqual(no.map(() => false));
+  });
+
+  it('is unsure of "minor" and "sat" without "unit" after them: they may name the unit, or a child\'s price or Saturday\'s', () => {
+    // Review round 6: price_sat and price_minor would have been rounded as pence, losing a factor of 100.
+    const unsure = ['price_sat', 'price_minor', 'fare_minor', 'pricesat', 'feesat', 'priceminor', 'amount_minor', 'amountMinor', 'amountminor', 'totalMinor', 'amountsat'];
+    expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
+    expect(['amount_minor_units', 'amount_sats', 'total', 'price_mon'].map(unitOfName)).toEqual(['minor', 'minor', 'major', 'major']);
   });
 });
