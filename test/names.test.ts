@@ -85,6 +85,8 @@ const NOT_MONEY = [
   // card; a precision; when and how often pay comes.
   'revenue_split', 'commission_split', 'fee_split', 'payment_sessions', 'total_bytes', 'total_pages', 'totalhits',
   'totalrows', 'credit_card_last4', 'amount_precision', 'pay_frequency', 'pay_period', 'pay_date', 'pay_grade',
+  // Review round 6: a folded percent split in the fewest pieces (per + cent would make it pence).
+  'discountpercent', 'feepercent', 'taxpercent', 'chargepercent',
 ];
 
 describe('looksLikeMoney', () => {

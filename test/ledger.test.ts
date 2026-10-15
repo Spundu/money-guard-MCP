@@ -198,6 +198,9 @@ describe('money_check_double_entry: the rules', () => {
     // A field the first record lacks still counts.
     const later = check('.jsonl', '{"t":"T0","a":5}\n{"t":"T0","a":-5}\n{"t":"T1","a":10000,"ccy":"GBP"}\n{"t":"T1","a":-10000,"ccy":"EUR"}\n', { columns });
     expect(later.summary).toMatch(/ "ccy" looks like a currency and is not mapped/);
+    const laterJson = check('.json', '[{"t":"T0","a":5},{"t":"T0","a":-5},{"t":"T1","a":10000,"ccy":"GBP"},{"t":"T1","a":-10000,"ccy":"EUR"}]', { columns });
+    expect(laterJson.summary).toMatch(/ "ccy" looks like a currency and is not mapped/);
+    expect(check('.csv', 't,a,currency_amount\nT1,1,5\nT1,-1,5\n', { columns }).summary).not.toMatch(/looks like a currency/);
     // Review round 6: an amount in a currency is not the currency (Odoo's amount_currency, ERPNext's
     // debit_in_account_currency, "Cur Balance"), and the currency column is named even after one of them.
     for (const header of ['amount_currency', 'debit_in_account_currency', 'Cur Balance', 'Curr Balance', 'cur_period']) {

@@ -82,6 +82,63 @@ describe('runScripts, waiting for the last database thread to end', () => {
   });
 });
 
+describe('runScripts, the time spent waiting and the order kept', () => {
+  it('counts the time limit from the call, waiting included, and starts no thread before a held one ends', async () => {
+    let letGo = () => {};
+    const held = new Promise<void>((resolve) => (letGo = resolve));
+    const terminate = Worker.prototype.terminate;
+    let first = true;
+    const spy = vi.spyOn(Worker.prototype, 'terminate').mockImplementation(function (this: Worker) {
+      if (!first) return terminate.call(this);
+      first = false;
+      return held.then(() => terminate.call(this));
+    });
+    const started = path.join(tempDir(), 'started');
+    try {
+      process.env.MONEY_GUARD_TEST_WORKER = 'unusable';
+      await expect(runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE })).rejects.toMatchObject({ code: 'MIGRATION_FAILED' });
+      // Gives up waiting: its place in the queue still ends only when the held thread does.
+      await expect(runScripts([script], { timeoutMs: 500, preset: false, worker: FAKE })).rejects.toMatchObject({ code: 'TIMEOUT' });
+      process.env.MONEY_GUARD_TEST_WORKER = 'slow';
+      process.env.MONEY_GUARD_TEST_HEARTBEAT = started;
+      const third = runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE });
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(existsSync(started)).toBe(false); // not started while the first thread is held
+      letGo();
+      await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 15_000 });
+      writeFileSync(`${started}.go`, '');
+      await expect(third).resolves.toMatchObject({ postgres: 'PostgreSQL 0 (fake)' });
+    } finally {
+      letGo();
+      spy.mockRestore();
+    }
+  });
+
+  it('counts the time limit from the call: a lint that waited does not get the whole limit again', async () => {
+    let letGo = () => {};
+    const held = new Promise<void>((resolve) => (letGo = resolve));
+    const terminate = Worker.prototype.terminate;
+    let first = true;
+    const spy = vi.spyOn(Worker.prototype, 'terminate').mockImplementation(function (this: Worker) {
+      if (!first) return terminate.call(this);
+      first = false;
+      return held.then(() => terminate.call(this));
+    });
+    try {
+      process.env.MONEY_GUARD_TEST_WORKER = 'unusable';
+      await expect(runScripts([script], { timeoutMs: 30_000, preset: false, worker: FAKE })).rejects.toMatchObject({ code: 'MIGRATION_FAILED' });
+      setTimeout(letGo, 1500); // the next lint waits 1.5 s of its 4 s
+      process.env.MONEY_GUARD_TEST_WORKER = 'hang';
+      const calledAt = performance.now();
+      await expect(runScripts([script], { timeoutMs: 4000, preset: false, worker: FAKE })).rejects.toMatchObject({ code: 'TIMEOUT' });
+      expect(performance.now() - calledAt).toBeLessThan(5000); // 4 s from the call, not 1.5 + 4
+    } finally {
+      letGo();
+      spy.mockRestore();
+    }
+  });
+});
+
 describe('the real database thread', () => {
   it('says when each file runs, has run and has been read, so the 5-second check follows every file', async () => {
     const types: string[] = [];

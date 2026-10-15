@@ -2,13 +2,15 @@
 // built server, so they must run what ships, built from the current source (dist/ is emptied first, so
 // no file of a deleted source is left to test); one build also avoids two test files writing dist/ at
 // the same time. It also says, where everyone sees it, when this machine cannot run the file-link tests
-// (they skip here and run on Linux CI), or runs the tests as root, for whom the permission tests skip.
+// (they skip here and run on Linux CI), runs the tests as root or on Windows, where the permission tests
+// skip, or runs a Node.js too old to measure one thread's memory.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { Worker } from 'node:worker_threads';
 
 function canLinkFiles(): boolean {
   const dir = mkdtempSync(path.join(tmpdir(), 'money-guard-link-'));
@@ -38,5 +40,11 @@ export default function build(): void {
   }
   if (process.getuid?.() === 0) {
     console.warn('\nNOTE: the tests run as root, who may read any file, so the 3 tests of files nobody may read skip here. CI runs them as an ordinary user.\n');
+  }
+  if (process.platform === 'win32') {
+    console.warn('\nNOTE: Windows has no POSIX file permissions, so the 3 tests of files nobody may read skip here, and 1 Linux-only test of the piped stderr. CI runs them on Linux.\n');
+  }
+  if (!('getHeapStatistics' in Worker.prototype)) {
+    console.warn("\nNOTE: this Node.js cannot measure one thread's memory (22.16 and later can), so the 2 tests of that measure skip here.\n");
   }
 }

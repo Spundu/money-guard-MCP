@@ -253,6 +253,17 @@ describe('money_check_double_entry: arguments', () => {
     expect(r.summary).toMatch(/ Only the first 10,000 findings can be paged; the counts cover all 12,000\.$/);
   });
 
+  it('keeps the first findings in order even when an early transaction is judged after 10,000 later row findings', () => {
+    // T0 is unbalanced on its first rows; its finding is made only once every row has been read.
+    const rows = ['T0,100', 'T0,-50', ...Array.from({ length: 12_000 }, (_, i) => `B${i},1.5`)].join('\n');
+    const r = check('.csv', `t,a\n${rows}\n`, { columns: { transaction_id: 't', amount: 'a' }, limit: 2 });
+    expect(r.findings.map((f) => [f.code, f.transaction_id])).toEqual([['UNBALANCED', 'T0'], ['FRACTIONAL_MINOR_UNITS', 'B0']]);
+    // Each code in the order its first finding sorts.
+    expect(Object.keys(r.counts_by_code)).toEqual(['UNBALANCED', 'FRACTIONAL_MINOR_UNITS']);
+    const mixed = check('.csv', 't,a\nA,1.5\nB,\nC,2.5\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(Object.keys(mixed.counts_by_code)).toEqual(['FRACTIONAL_MINOR_UNITS', 'MISSING_VALUE']);
+  });
+
   it('refuses a JSON file of more than 7,000,000 values, or with an object of more than 10,000 keys', () => {
     const columns = { transaction_id: 't', amount: 'a' };
     const keys = `[{${Array.from({ length: 10_001 }, (_, i) => `"k${i}":1`).join(',')}}]`;

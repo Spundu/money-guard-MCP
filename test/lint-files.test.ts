@@ -152,6 +152,12 @@ describe('money_lint_schema: which files run', () => {
     expect(collectSources(rootOf(dir), { migrations: 'db' }).files.map((f) => f.rel)).toEqual(['db/01_a.sql', 'db/2_b.sql', 'db/010_c.sql']);
   });
 
+  it('puts 1 before 01 when the values are equal, whatever follows, so the order is total', () => {
+    const dir = tempDir();
+    writeTree(dir, { 'db/01_a.sql': '', 'db/1_b.sql': '' });
+    expect(collectSources(rootOf(dir), { migrations: 'db' }).files.map((f) => f.rel)).toEqual(['db/1_b.sql', 'db/01_a.sql']);
+  });
+
   it('walks sub-folders (Prisma), skips down steps, and stops a dbmate file at its down marker', async () => {
     const r = await lint({
       'db/migrations/20240101_init/migration.sql': 'create table a (price double precision);',
@@ -168,6 +174,16 @@ describe('money_lint_schema: which files run', () => {
   it('reads goose markers in any letter case, as goose does', () => {
     const sql = prepareSql('-- +goose up\ncreate table a (price double precision);\n-- +goose down\ndrop table a;\n');
     expect([sql.includes('create table a'), sql.includes('drop table a')]).toEqual([true, false]);
+  });
+
+  it("reads tern's marker only at the start of a line: quoted after SQL, it hides nothing", () => {
+    const sql = prepareSql('create table a (id int); -- ---- create above / drop below ----\ncreate table b (price double precision);\n');
+    expect(sql.includes('create table b')).toBe(true);
+  });
+
+  it('blanks a \\restrict line only when it starts the line, as psql reads it', () => {
+    const sql = prepareSql('\\restrict abc\ncreate table b (price double precision); -- \\restrict abc\n');
+    expect([sql.startsWith('\\restrict'), sql.includes('create table b')]).toEqual([false, true]);
   });
 
   it('runs only the up part of files that hold both directions, and leaves out undo and rollback files', async () => {
