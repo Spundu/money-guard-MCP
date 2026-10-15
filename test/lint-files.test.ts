@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ToolError, type ErrorCode } from '../src/errors.js';
-import { collectSources } from '../src/lint/files.js';
+import { collectSources, prepareSql } from '../src/lint/files.js';
 import { lintSchema } from '../src/lint/run.js';
 import { RAW_HIDDEN, inTags } from './support/hidden.js';
 import { codeOf, failure, lastDir, lint, newDir, projectRoot } from './support/lint.js';
@@ -40,6 +40,12 @@ describe('money_lint_schema: names from a hostile project', () => {
   it('gives no fix_sql for a table whose name holds a hidden character, whatever its column is called', async () => {
     const t = await lint({ 'db/migrations/0001.sql': 'create table "orders\u{200b}" (total double precision);' });
     expect(t.findings.map((f) => [f.table, f.fix_sql])).toEqual([['public.orders\\u200b', null]]);
+  });
+
+  it('shows a column name whole, however long its escaped form, so the model can act on it', async () => {
+    // 6 + 18 hidden characters (60 bytes, under PostgreSQL's 63): 114 characters escaped, still one name.
+    const r = await lint({ 'db/migrations/0001.sql': `create table o ("total_${'\u{200b}'.repeat(18)}" double precision);` });
+    expect(r.findings.map((f) => f.column)).toEqual([`total_${'\\u200b'.repeat(18)}`]);
   });
 
   it("escapes a domain's name, shown in the column's type", async () => {
@@ -157,6 +163,11 @@ describe('money_lint_schema: which files run', () => {
     });
     expect(r.findings.map((f) => f.table)).toEqual(['public.a', 'public.b', 'public.c', 'public.d']);
     expect(r.files_applied_count).toBe(4);
+  });
+
+  it('reads goose markers in any letter case, as goose does', () => {
+    const sql = prepareSql('-- +goose up\ncreate table a (price double precision);\n-- +goose down\ndrop table a;\n');
+    expect([sql.includes('create table a'), sql.includes('drop table a')]).toEqual([true, false]);
   });
 
   it('runs only the up part of files that hold both directions, and leaves out undo and rollback files', async () => {
@@ -328,6 +339,9 @@ describe('money_lint_schema: which files run', () => {
     const knex = await failure({ 'db/migrations/knex/001_init.js': '', 'db/migrations/knex/002.js': '', 'db/migrations/seeds/s.js': '', 'db/migrations/knexfile.ts': '' });
     expect(knex.message).toMatch(/holds no \.sql files\. It holds 3 \.js files and 1 \.ts file\.$/);
     expect((await failure({ 'db/migrations/prisma/schema.prisma': '' })).message).toMatch(/holds no \.sql files\. It holds 1 \.prisma file\.$/);
+    // A file the tools refuse (a credential download) is still counted; at most the five most common kinds.
+    const many = await failure({ 'db/migrations/credentials.json': '', 'db/migrations/a.ts': '', 'db/migrations/b.ts': '', 'db/migrations/c.md': '', 'db/migrations/d.txt': '', 'db/migrations/e.yml': '', 'db/migrations/f.toml': '' });
+    expect(many.message).toMatch(/holds no \.sql files\. It holds 2 \.ts files, 1 \.json file, 1 \.md file, 1 \.toml file and 1 \.txt file\.$/);
     for (const [inside, holds] of [['db/migrations/empty', 'It holds folders but no files.'], ['db/migrations', 'It is empty.']] as const) {
       const dir = newDir();
       mkdirSync(path.join(projectRoot().real, dir, inside), { recursive: true });

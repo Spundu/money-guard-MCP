@@ -87,6 +87,7 @@ describe('resolveInRoot', () => {
     const text = messageOf(() => resolveInRoot(root, gitBash, CSV));
     expect(text).toMatch(/^PATH_OUTSIDE_ROOT: /);
     expect(text).toContain('Git Bash paths such as /c/Users/... are not understood.');
+    expect(messageOf(() => resolveInRoot(root, '/tmp/exports/ledger.csv', CSV))).toContain('Git Bash paths'); // any path starting with "/"
     expect(messageOf(() => resolveInRoot(root, path.join(base, 'outside', 'secret.csv'), CSV))).not.toContain('Git Bash');
   });
 

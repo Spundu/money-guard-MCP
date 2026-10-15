@@ -189,6 +189,9 @@ describe('money_check_double_entry: the rules', () => {
     expect(json.summary).toMatch(/ "currency_code" looks like a currency and is not mapped/);
     const jsonl = check('.jsonl', '{"t":"T1","a":10000,"currency":"GBP"}\n{"t":"T1","a":-10000,"currency":"EUR"}\n', { columns });
     expect(jsonl.summary).toMatch(/ "currency" looks like a currency and is not mapped/);
+    // A field name beside a mapped pointer is written as a JSON Pointer token: "/" as ~1, "~" as ~0.
+    const slash = check('.jsonl', '{"t":"T1","amount":{"value":1,"ccy/iso":"GBP"}}\n{"t":"T1","amount":{"value":-1,"ccy/iso":"EUR"}}\n', { columns: { transaction_id: 't', amount: '/amount/value' } });
+    expect(slash.summary).toContain(' "/amount/ccy~1iso" looks like a currency and is not mapped');
     // A field the first record lacks still counts.
     const later = check('.jsonl', '{"t":"T0","a":5}\n{"t":"T0","a":-5}\n{"t":"T1","a":10000,"ccy":"GBP"}\n{"t":"T1","a":-10000,"ccy":"EUR"}\n', { columns });
     expect(later.summary).toMatch(/ "ccy" looks like a currency and is not mapped/);
