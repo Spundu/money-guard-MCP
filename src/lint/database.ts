@@ -57,7 +57,7 @@ const MEMORY_CHECK_MS = 100;
 /**
  * The memory the lint can be blamed for: the database thread's own JavaScript heap and the memory
  * outside it that the thread holds (PGlite's WebAssembly memory and in-memory files), as Node.js 22.16
- * and later report for one thread, unmoved by a ledger or audit call on the main thread. Older Node.js
+ * and later report for one thread, unmoved by what the main thread holds. Older Node.js
  * cannot measure one thread: the process's memory, less what the main thread's JavaScript holds, stands
  * in, and memory the main thread frees but the system keeps can then count against the lint.
  */
@@ -177,6 +177,10 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
         stdout: true,
         stderr: true,
         resourceLimits: { maxOldGenerationSizeMb: 1024 },
+        // The thread that runs the migrations' SQL needs none of the server's settings (the audit keys
+        // among them): no way from SQL to them is known, but none is left to find (review round 9). A
+        // test's own worker takes its part from the environment.
+        env: options.worker === undefined ? {} : process.env,
       });
     } catch (err) {
       ended(); // no thread started
@@ -292,8 +296,8 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           break;
         case 'executed':
           sanity = setTimeout(() => {
-            // The main thread may have been busy (a ledger or audit call) while the answer waited in the
-            // queue: give a waiting message one turn of the event loop before calling the database stuck.
+            // The main thread may have been busy while the answer waited in the queue: give a waiting
+            // message one turn of the event loop before calling the database stuck.
             setImmediate(() => {
               if (answered < m.step) finish({ error: stuck(m.step, 'stopped answering') });
             });

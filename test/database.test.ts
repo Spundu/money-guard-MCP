@@ -175,7 +175,7 @@ describe('runScripts with a database that misbehaves', () => {
   });
 
   it('waits for an answer that came while the server was busy, before calling the database silent', async () => {
-    // A ledger or audit call can keep the server's thread busy past the 5-second check while the
+    // Other work can keep the server's thread busy past the 5-second check while the
     // database's answer waits in the queue. Here the thread is blocked right after the file ran, until
     // the check's time has passed and the answer (sent 500 ms after the file ran) has come; the run
     // ends a second later.
@@ -186,7 +186,7 @@ describe('runScripts with a database that misbehaves', () => {
         setImmediate(() => {
           const until = performance.now() + 1000;
           while (performance.now() < until) {
-            // busy, as a long ledger call is
+            // busy, as a long call on the server's thread is
           }
         });
       }
@@ -200,7 +200,7 @@ describe('runScripts with a database that misbehaves', () => {
     }
   });
 
-  it('does not count memory that the server thread takes meanwhile (a ledger or audit call) against the lint', async () => {
+  it('does not count memory that the server thread takes meanwhile against the lint', async () => {
     const MIB = 1024 * 1024;
     const { answer, held } = await lintWhileTaking(() => Buffer.alloc(256 * MIB, 1), 64 * MIB); // as an audit call holds the file it reads
     expect(answer).toBe('PostgreSQL 0 (fake)');
@@ -225,7 +225,7 @@ describe('runScripts with a database that misbehaves', () => {
     );
     await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000 });
     await new Promise((r) => setTimeout(r, 100)); // the database has started: the memory baseline is taken
-    // A ledger call has freed 3 GiB that the system keeps: the process is big, its JavaScript small again.
+    // The server's thread has freed 3 GiB that the system keeps: the process is big, its JavaScript small again.
     const real = process.memoryUsage();
     const spy = vi.spyOn(process, 'memoryUsage').mockReturnValue({ ...real, rss: real.rss + 3 * 1024 * MIB });
     try {

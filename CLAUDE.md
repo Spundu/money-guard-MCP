@@ -25,7 +25,8 @@ Rules:
   with a code from SPEC.md.
 - Results are deterministic and at most 20,000 characters (src/budget.ts). A value echoed from a data
   file goes through `clip`; a database name goes through `escapeUnsafe`; a path goes through `clipPath`
-  (cut in the middle past 400 characters), in results and in error messages alike (src/echo.ts). Apply
+  (cut in the middle past 400 characters), in results and in error messages alike (src/echo.ts); one
+  shown in double quotes goes through `quoted` or `quotedPath`, which escape a quote inside it. Apply
   each once, to raw text: a second pass would double the backslash of its own escapes (a raw value
   that goes into a longer text is `cut`, and the whole text clipped once). The server escapes hidden
   characters in every outgoing string once more (`escapeHidden`), but the tools must not rely on it.

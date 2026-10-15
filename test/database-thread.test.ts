@@ -204,8 +204,8 @@ describe('the limits a lint gets when the caller sets none (SPEC.md §3.9)', () 
 });
 
 describe('runScripts memory, measured beside a busy server thread (Node.js 22.16 and later)', () => {
-  // The database thread's own memory: what a ledger or audit call holds meanwhile on the server's
-  // thread, a parsed export's many small objects and the file's buffer, is not the lint's. (Older
+  // The database thread's own memory: what the server's thread holds meanwhile (here many small
+  // objects and a file's buffer, as a parsed export has) is not the lint's. (Older
   // Node.js measures the process instead: test/database-memory-fallback.test.ts.)
   it.skipIf(!('getHeapStatistics' in Worker.prototype))('does not count the JavaScript objects and buffers the server thread holds against the lint', async () => {
     const { answer, held } = await lintWhileTaking(() => [Array.from({ length: 2_500_000 }, (_, i) => ({ i, text: `row ${i}` })), Buffer.alloc(64 * MIB, 1)] as const, 64 * MIB);

@@ -1,6 +1,6 @@
 // Which files the tools may read (src/paths.ts, SPEC.md §2.3): confinement to the project, secret files,
 // file types, sizes, links, and a file that passes the checks but cannot be read.
-import { chmodSync, symlinkSync } from 'node:fs';
+import { chmodSync, mkdirSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -151,6 +151,47 @@ describe('resolveInRoot', () => {
     for (const missing of ['outdir/missing.csv', 'outdir/no/such/folder/x.csv', 'outdir/nope']) {
       expect(codeOf(() => resolveInRoot(root, missing, missing.endsWith('.csv') ? CSV : ANY)), missing).toBe('PATH_OUTSIDE_ROOT');
     }
+  });
+
+  it('gives a link to a missing place outside the project the answer a link to an existing one gets', () => {
+    // Review round 9: "does not exist" for one and "outside" for the other told a hostile repository
+    // which paths exist on the user's machine. A chain of links that ends outside counts too.
+    const dir = tempDir();
+    writeTree(dir, { 'project/db/migrations/0001.sql': 'select 1;', 'outside/real/x.sql': 'select 1;' });
+    const project = path.join(dir, 'project');
+    const links: Array<[string, string]> = [
+      [path.join(dir, 'outside', 'real'), path.join(project, 'exists')],
+      [path.join(dir, 'outside', 'no-such-folder'), path.join(project, 'missing')],
+      [path.join(project, 'missing'), path.join(project, 'hop')],
+      [path.join(project, 'no-such-folder'), path.join(project, 'broken')],
+    ];
+    for (const [target, link] of links) expect(trySymlink(target, link, 'dir')).toBe(true);
+    const r = rootOf(project);
+    for (const input of ['exists', 'missing', 'hop', 'exists/nope.csv', 'missing/nope.csv', 'hop/nope.csv']) {
+      expect(codeOf(() => resolveInRoot(r, input, input.endsWith('.csv') ? CSV : ANY)), input).toBe('PATH_OUTSIDE_ROOT');
+    }
+    expect(codeOf(() => resolveInRoot(r, 'broken', ANY))).toBe('PATH_NOT_FOUND'); // missing, and inside
+    // The migrations walk, likewise.
+    for (const [link, code] of [['exists', 'PATH_OUTSIDE_ROOT'], ['missing', 'PATH_OUTSIDE_ROOT'], ['hop', 'PATH_OUTSIDE_ROOT'], ['broken', 'PATH_NOT_FOUND']] as const) {
+      writeTree(project, { [`walk-${link}/0001.sql`]: 'select 1;' });
+      expect(trySymlink(path.join(project, link), path.join(project, `walk-${link}`, 'm'), 'dir')).toBe(true);
+      expect(codeOf(() => collectSources(r, { migrations: `walk-${link}` })), link).toBe(code);
+    }
+  });
+
+  it('looks no deeper than 100 folders, links to folders included, instead of overflowing the stack', () => {
+    // Review round 9: a chain of 3,000 folder links (git checks them out on Linux) gave INTERNAL_ERROR.
+    const dir = tempDir();
+    writeTree(dir, { [`deep/${'d/'.repeat(100)}0001.sql`]: 'select 1;', [`deeper/${'d/'.repeat(101)}0001.sql`]: 'select 1;' });
+    expect(collectSources(rootOf(dir), { migrations: 'deep' }).files.length).toBe(1);
+    expect(() => collectSources(rootOf(dir), { migrations: 'deeper' })).toThrow(/^The folder nests folders \(or links to folders\) more than 100 deep; /);
+    const links = tempDir();
+    writeTree(links, { 'm/d0/0001.sql': 'select 1;' });
+    for (let i = 1; i <= 101; i += 1) {
+      mkdirSync(path.join(links, 'm', `d${i}`));
+      expect(trySymlink(path.join(links, 'm', `d${i - 1}`), path.join(links, 'm', `d${i}`, 'l'), 'dir')).toBe(true);
+    }
+    expect(codeOf(() => collectSources(rootOf(links), { migrations: 'm/d101' }))).toBe('TOO_MANY_FILES');
   });
 
   it('refuses a folder link in the migrations folder that leads to the .git folder', () => {

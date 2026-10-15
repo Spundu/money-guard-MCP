@@ -388,7 +388,7 @@ describe('money_lint_schema: which files run', () => {
   it('refuses more than 2,000 files, a file over 5 MiB, and more than 20 MiB in all', async () => {
     const many: Record<string, string> = {};
     for (let i = 0; i <= 2000; i += 1) many[`db/migrations/${i}.sql`] = '';
-    expect(await codeOf(many)).toBe('TOO_MANY_FILES');
+    expect((await failure(many)).toText()).toMatch(/^TOO_MANY_FILES: The folder holds more than 2,000 \.sql files\./);
     const exactly = tempDir(); // 2,000 is still allowed
     writeTree(exactly, Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`db/${i}.sql`, ''])));
     expect(collectSources(rootOf(exactly), { migrations: 'db' }).files.length).toBe(2000);

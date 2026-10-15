@@ -44,8 +44,10 @@ function given<T>(value: T | null | undefined): T | undefined {
  */
 export function trace(err: unknown, depth = 0): string {
   if (!(err instanceof Error)) return typeof err;
+  // The stack starts with the message, which may span lines that look like frames: skip them all.
   const frames = (err.stack ?? '')
     .split('\n')
+    .slice(err.message.split('\n').length)
     .filter((line) => line.trimStart().startsWith('at '))
     .slice(0, 4)
     .map((line) => /([^\\/\s()]+:\d+:\d+)\)?\s*$/.exec(line)?.[1] ?? '?');

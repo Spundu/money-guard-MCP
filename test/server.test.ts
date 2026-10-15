@@ -97,6 +97,8 @@ describe.each(ERAS)('the server, %s era', (era) => {
       client.callTool({ name: 'audit_verify_chain', arguments: { file: 'logs/audit.jsonl' } }),
     ]);
     expect(busy.map((r) => [r.isError, textOf(r).split(':')[0]])).toEqual([[true, 'BUSY'], [true, 'BUSY']]);
+    // Refused, not queued (review round 9): a model must call again, not wait for an answer.
+    expect(textOf(busy[0] ?? { content: [] })).toMatch(/^BUSY: A schema lint is running; this check is refused until it ends, /);
     expect((await lint).isError ?? false).toBe(false);
     expect((await client.callTool({ name: 'money_check_double_entry', arguments: JOURNAL_ARGS })).isError ?? false).toBe(false); // free again
   });

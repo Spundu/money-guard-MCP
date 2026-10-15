@@ -188,12 +188,15 @@ agent adds it as a new migration and runs the check again, and the check runs th
 
 It is `null` where the change needs a decision or the agent's own migration:
 - the unit is unclear: a column with four decimal places, or a name such as `amount_minor`,
-  `price_sat` (Saturday?) or `cost_micros`;
+  `price_sat` (Saturday?), `cost_micros` or `amount_kwd` (a dinar has 1,000 fils);
+- the name is money only by a guess: `total_mileage` may be miles (list it in `money_columns` if it
+  is money);
 - a default, a CHECK constraint or a unique index condition may hold amounts in pounds, in the table
   or in a partition or child table: Postgres's type change would leave those unconverted (a CHECK
   such as `amount >= 0` is fine);
-- the other cases SPEC.md §3.6 lists: domains, arrays, generated and inherited columns, and names with
-  hidden characters or a backslash before `u`.
+- the other cases SPEC.md §3.6 lists, among them: domains, arrays, generated and inherited columns,
+  a money-type value (`0::money`) in a default, CHECK or index, and names with hidden characters or
+  a backslash before `u`.
 
 A trigger or function that compares the column with an amount in its body is not always seen, so
 check those before running a fix that multiplies by 100. [SPEC.md](SPEC.md) shows
@@ -350,8 +353,9 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   [Settings](#settings). The log (stderr) has a startup line and one line per call: the tool, the time
   it took and the outcome code. Writing it never holds up an answer: a host that does not read it
   loses log lines, not answers.
-- **One schema lint at a time.** A second one gets `BUSY` straight away, and so do the other two
-  tools while a lint runs, so its memory limit keeps being checked. They answer one call after another. Cancelling a lint stops its database at once.
+- **One schema lint at a time.** A second one gets `BUSY` straight away, and so do the ledger and
+  audit tools while a lint runs, so that its memory limit keeps being checked. Otherwise the server
+  answers one call after another. Cancelling a lint stops its database at once.
 
 ## What it does not do
 
@@ -371,7 +375,7 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 870 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 910 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.

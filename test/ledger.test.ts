@@ -203,7 +203,7 @@ describe('money_check_double_entry: the rules', () => {
     expect(check('.csv', 't,a,currency_amount\nT1,1,5\nT1,-1,5\n', { columns }).summary).not.toMatch(/looks like a currency/);
     // Review round 6: an amount in a currency is not the currency (Odoo's amount_currency, ERPNext's
     // debit_in_account_currency, "Cur Balance"), and the currency column is named even after one of them.
-    for (const header of ['amount_currency', 'debit_in_account_currency', 'Cur Balance', 'Curr Balance', 'cur_period']) {
+    for (const header of ['amount_currency', 'debit_in_account_currency', 'Cur Balance', 'Curr Balance', 'cur_period', 'Cur Acct']) {
       expect(check('.csv', `t,a,${header}\nT1,1,5\nT1,-1,5\n`, { columns }).summary, header).not.toMatch(/looks like a currency/);
     }
     const odoo = check('.csv', 't,a,amount_currency,currency_id\nT1,1,5,GBP\nT1,-1,5,EUR\n', { columns });
@@ -221,6 +221,10 @@ describe('money_check_double_entry: the rules', () => {
     // "cur" only as the first word; "in" before a currency makes the name an amount in that currency.
     for (const header of ['txn_cur', 'net_in_account_currency']) {
       expect(check('.csv', `t,a,${header}\nT1,1,5\nT1,-1,5\n`, { columns }).summary, header).not.toMatch(/looks like a currency/);
+    }
+    // Review round 9: "cur" alone or before code; "Cur Acct" is a current account.
+    for (const header of ['Cur', 'cur_code']) {
+      expect(check('.csv', `t,a,${header}\nT1,1,GBP\nT1,-1,EUR\n`, { columns }).summary, header).toContain(` "${header}" looks like a currency`);
     }
     const mapped = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'Currency' } });
     expect(mapped.findings[0]?.code).toBe('UNBALANCED');

@@ -181,7 +181,7 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
     break: brk,
     anchor_checked: anchorChecked,
     head,
-    key_ids_configured: keys.ids.map(escapeUnsafe), // from the settings, but shown like any other text
+    key_ids_configured: keys.ids.map((id) => escapeUnsafe(id)), // from the settings, but shown like any other text
     notes,
   });
 

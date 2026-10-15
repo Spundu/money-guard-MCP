@@ -124,14 +124,20 @@ describe('money_lint_schema: fix_sql', () => {
       '(q1_revenue >= (0)::numeric)', '("Q2 total" >= 0)', '(total >= (0)::numeric(10,2))', '(total = round(total, 2))',
       '(total = round((total)::numeric, 2))', '(scale(fee) <= 2)', '(deleted_at IS NULL)',
       // review round 5: trunc's places and "scale below 3" guard two decimals too; a text literal holds no amount
-      '(total = trunc(total, 2))', '(scale(total) < 3)', '(scale(total) = 0)', "((total >= (0)::numeric) AND (note <> 'x\"y'::text))",
+      '(total = trunc(total, 2))', '(scale(total) < 3)', "((total >= (0)::numeric) AND (note <> 'x\"y'::text))",
+      // review round 9: a literal cast to a bounded type; more places than two
+      "(total >= '0'::numeric(10,2))", '(total = round(total, 4))', '(scale(total) <= 12)',
     ];
     for (const expr of safe) expect(holdsNoAmount(expr), expr).toBe(true);
     const amounts = ['((fee > (0)::numeric) AND (fee <= 99.99))', '(cap <= max_total())', '(amount <= (1000)::numeric)', '(round(amount) = amount)', '(amount > (100)::numeric(10,2))', "(code <> '840'::text)",
       // review round 5: a quote inside a text literal must not hide the amount after it; an amount in quotes
       "(((total)::text <> 'x\"'::text) AND (total < 500) AND ('\"'::text <> 'y'::text))", "(total <= '1000.00'::numeric)",
       // review round 8: a bigint has scale 0, so "scale = 2" fails for every pence value
-      '(scale((price)::numeric) = 2)', '(scale(total) = 1)'];
+      '(scale((price)::numeric) = 2)', '(scale(total) = 1)',
+      // review round 9: a cast of the column to a bounded type is a cap; a guard of fewer than two places
+      // stops guarding once the column holds pence
+      '((amount)::numeric(5,2) = amount)', '((amount)::smallint IS NOT NULL)', '((amount)::integer = amount)', '(amount::int4 > 0)',
+      '(amount = round(amount, 0))', '(amount = round(amount, 1))', '(scale(total) = 0)', '(scale(total) <= 0)', '(scale(total) <= 1)', '(scale(total) < 2)'];
     for (const expr of amounts) expect(holdsNoAmount(expr), expr).toBe(false);
   });
 
@@ -153,8 +159,12 @@ describe('money_lint_schema: fix_sql', () => {
   });
 
   it('knows a zero or NULL default, however PostgreSQL writes it back, and nothing else', () => {
-    for (const zero of ['0', '0.00', '0.0', "'0'::numeric", '(0)::numeric', "'0'::double precision", 'NULL::numeric', '-0.00']) expect(isZeroOrNullDefault(zero), zero).toBe(true);
-    for (const other of ['2.50', "'1.50'::money", '(1 - 1)', '0.01', "'0x'::text", 'now()', "''"]) expect(isZeroOrNullDefault(other), other).toBe(false);
+    for (const zero of ['0', '0.00', '0.0', "'0'::numeric", '(0)::numeric', "'0'::double precision", 'NULL::numeric', '-0.00',
+      // review round 9: two casts, a plus sign, an exponent
+      "('0'::numeric)::double precision", "'+0'::numeric", "'0e5'::numeric", "'0.0E-3'::numeric"]) expect(isZeroOrNullDefault(zero), zero).toBe(true);
+    for (const other of ['2.50', "'1.50'::money", '(1 - 1)', '0.01', "'0x'::text", 'now()', "''", "('2.5'::numeric)::double precision", "'1e5'::numeric", "'0e'::numeric"]) {
+      expect(isZeroOrNullDefault(other), other).toBe(false);
+    }
   });
 
   it('writes fix_sql itself, quoting every name: a migration that redefines quote_ident cannot change it', async () => {
@@ -199,5 +209,22 @@ describe('money_lint_schema: fix_sql', () => {
       'ALTER TABLE public.t ALTER COLUMN "left" TYPE bigint USING round("left" * 100)::bigint;',
     ]);
     await expect(sql([table, ...fixes])).resolves.toEqual([{ ok: 1 }]);
+  });
+
+  it('multiplies no name that is money only by a guess, unless money_columns lists it', async () => {
+    // Review round 9: total_deposited and total_mileage look alike to the name rule; a ×100 of miles
+    // would be wrong, so a guessed name gets no conversion. Widening a smallint is still safe.
+    const table = 'create table t (total_deposited double precision, total_paid double precision, net_ytd smallint);';
+    const r = await lint({ 'db/migrations/0001.sql': table });
+    expect(Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]))).toEqual({
+      total_deposited: null,
+      total_paid: 'ALTER TABLE public.t ALTER COLUMN total_paid TYPE bigint USING round(total_paid * 100)::bigint;',
+      net_ytd: 'ALTER TABLE public.t ALTER COLUMN net_ytd TYPE bigint;',
+    });
+    expect(r.fixes.FLOAT_MONEY).toContain('a name that may not be money (total_mileage: if it is, list it in money_columns)');
+    const listed = await lint({ 'db/migrations/0001.sql': table }, { money_columns: ['t.total_deposited'] });
+    expect(listed.findings.find((f) => f.column === 'total_deposited')?.fix_sql).toBe(
+      'ALTER TABLE public.t ALTER COLUMN total_deposited TYPE bigint USING round(total_deposited * 100)::bigint;',
+    );
   });
 });

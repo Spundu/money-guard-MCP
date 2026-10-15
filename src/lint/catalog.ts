@@ -5,7 +5,7 @@
 // (pg_dump output does) cannot change what these queries read.
 
 import { hasUnsafe } from '../echo.js';
-import { looksLikeMoney, unitOfName } from './names.js';
+import { looksLikeMoney, moneyByGuess, unitOfName } from './names.js';
 
 /** Ordinary and partitioned tables in non-system schemas: the relations whose columns are checked. */
 const USER_TABLES = `
@@ -29,8 +29,9 @@ export const MARK_SQL = `SELECT (pg_catalog.txid_current() % 4294967296)::pg_cat
  * without the modifier: widening numeric(10,2) to numeric(12,2) does not introduce a problem the column
  * already had; real and double precision count as one float type, so a change of float precision does
  * not either). Any change to a column rewrites its pg_attribute row, which then carries the file's
- * transaction id. Reading only those rows keeps a folder of 2,000 files from reading every column 2,000
- * times (review round 5: 802 files of an 800-table schema ran out of time).
+ * transaction id. Only those rows are returned (review round 5: 802 files of an 800-table schema ran
+ * out of time). PostgreSQL still looks at every column's row to find them, so each file costs a little
+ * more as the schema grows (review round 9: 1,000 one-table files took about 10 s, 2,000 about 26-38 s).
  */
 export const SNAPSHOT_SQL = `
   SELECT a.attrelid::pg_catalog.text || ':' || a.attnum::pg_catalog.text AS col,
@@ -203,7 +204,7 @@ export const FIXES: Readonly<Record<LintCode, string>> = {
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros: decide the unit first), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_mileage: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -250,11 +251,16 @@ export function numericScale(declared: string): number | null {
  * Anything else, an expression included, counts as an amount.
  */
 export function isZeroOrNullDefault(expr: string): boolean {
-  const value = expr
-    .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?$/, '')
-    .replace(/^\((.*)\)$/, '$1')
-    .replace(/^'(.*)'$/, '$1');
-  return value === 'NULL' || /^-?(?:0+(?:\.0*)?|\.0+)$/.test(value);
+  // Casts and brackets come off one at a time: "('0'::numeric)::double precision" is zero too.
+  let value = expr;
+  for (let previous = ''; previous !== value; ) {
+    previous = value;
+    value = value
+      .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?$/, '')
+      .replace(/^\((.*)\)$/, '$1')
+      .replace(/^'(.*)'$/, '$1');
+  }
+  return value === 'NULL' || /^[+-]?(?:0+(?:\.0*)?|\.0+)(?:e[+-]?\d+)?$/i.test(value);
 }
 
 /**
@@ -262,18 +268,28 @@ export function isZeroOrNullDefault(expr: string): boolean {
  * no number but zero ("(total >= (0)::double precision)", "IS NOT NULL") and no function call, whose
  * result could be one. Converting the column keeps such a condition right; "amount <= 1000.00" or
  * "amount <= max_total()" would turn into a cap a hundred times lower. Digits in a name ("q1_revenue")
- * or a type's size ("numeric(10,2)") are not amounts, and neither are the places of a two-decimal
- * guard: "total = round(total, 2)" and "scale(total) <= 2" hold for pence as they did for pounds.
+ * or a type's size ("0::numeric(10,2)") are not amounts, and neither are the places of a two-decimal
+ * guard: "total = round(total, 2)" and "scale(total) <= 2" hold for pence as they did for pounds. A
+ * cast of the column to a bounded type ("amount::numeric(5,2) = amount", "amount::smallint") is a cap,
+ * and a guard of fewer places ("round(total, 0)", "scale(total) = 0") stops guarding after the fix.
  */
 export function holdsNoAmount(expr: string): boolean {
+  // A cast to a type with a size, or to a small integer type, of anything but a number: a cap.
+  const bounded = /(\((?:[^()]|\([^()]*\))*\)|[\w.$"]+)::(?:numeric|decimal)\(\d+|(\((?:[^()]|\([^()]*\))*\)|[\w.$"]+)::(?:smallint|integer|int|int2|int4)\b/g;
+  for (const match of expr.matchAll(bounded)) {
+    const operand = match[1] ?? match[2] ?? '';
+    if (!/^\(?'?-?[\d.]*'?\)?$/.test(operand)) return false;
+  }
   const rest = expr
     // A quoted name, or a string literal, read left to right, so a quote inside one cannot start the
     // other. A literal that holds digits ('1000.00'::numeric, a date) keeps them: it may be an amount.
     .replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, (token) => (token.startsWith("'") && /\d/.test(token) ? token.slice(1, -1) : 'x'))
     .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?(?:\[\])?/g, '') // a cast and its type's size
-    .replace(/\b(?:round|trunc)\(((?:[^()]|\([^()]*\))*),\s*\d+\)/g, '($1)') // round(x, 2): places
-    // scale(x) <= 2: places. "= 2" is not: a bigint has scale 0, so it would fail for every value.
-    .replace(/\bscale\(((?:[^()]|\([^()]*\))*)\)\s*(?:(?:<=|<)\s*\d+|=\s*0+(?![\d.]))/g, '($1)')
+    // round(x, 2): places, two or more. round(x, 0) guards whole pounds, which pence would not keep.
+    .replace(/\b(?:round|trunc)\(((?:[^()]|\([^()]*\))*),\s*(?:[2-9]|[1-9]\d+)\)/g, '($1)')
+    // scale(x) <= 2 or < 3: places, at least two. "= 2" would fail for every bigint, and "= 0" or
+    // "<= 1" would stop guarding once the column holds pence.
+    .replace(/\bscale\(((?:[^()]|\([^()]*\))*)\)\s*(?:<=\s*(?:[2-9]|[1-9]\d+)|<\s*(?:[3-9]|[1-9]\d+))(?![\d.])/g, '($1)')
     .replace(/\b[a-z_][a-z0-9_$]*\b(?!\s*\()/gi, 'x'); // a bare name, which may hold digits
   return !/[1-9]/.test(rest) && !/[\p{L}\p{N}_"]\(/u.test(rest);
 }
@@ -302,7 +318,7 @@ export function quoteIdent(name: string, reserved: ReadonlySet<string>): string 
  * old unit (a default of 2.50 pounds becomes 3 pence), and the next lint could not see it. `reserved` is
  * PostgreSQL's list of keywords that must be quoted, read before any migration ran.
  */
-export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>): string | null {
+export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>, listed: ReadonlySet<string> = new Set()): string | null {
   // A column a child inherits changes with its parent: ALTER refuses it on the child.
   if (row.domain_name !== null || row.via_array || row.generated !== '' || row.inherited) return null;
   // fix_sql is SQL to run, so it holds the name as it is: a backslash before "u" there would read as
@@ -316,8 +332,10 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   const indexHoldsAmount = (row.index_exprs ?? []).some((expr) => !holdsNoAmount(expr));
   const keepsOldUnit = checkHoldsAmount || indexHoldsAmount || (row.defaults ?? []).some((expr) => !isZeroOrNullDefault(expr));
   const times100 = (using: string) => (keepsOldUnit ? null : `${head} USING ${using};`);
-  // A name that may or may not say minor units (price_minor, price_sat) needs the unit decided first.
-  const convert = unit === 'unsure' ? null : minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
+  // A name that may or may not say minor units (price_minor, price_sat) needs the unit decided first;
+  // one that is money only by a guess (total_mileage) needs deciding whether it is money, unless listed.
+  const guessed = moneyByGuess(row.column_name) && !listed.has(`${row.schema_name}.${row.table_name}.${row.column_name}`);
+  const convert = unit === 'unsure' || guessed ? null : minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
   switch (code) {
     case 'SMALLINT_MONEY':
       return `${head};`;

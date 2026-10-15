@@ -47,4 +47,11 @@ describe('a bug inside a tool', () => {
     expect(trace('a string with secrets')).toBe('string');
     expect(trace({ secret: 1 })).toBe('object');
   });
+
+  it('logs no line of a message that spans lines, even one that looks like a code location', () => {
+    // Review round 9: the stack starts with the message, so its later lines passed for frames.
+    const line = trace(new TypeError('bad value\n    at sk_live_SECRETVALUE:1:1\n    at (C:\\Users\\Bloggs\\leaky.js:987:654)'));
+    expect(line).toMatch(/^TypeError \| internal-error\.test\.ts:\d+:\d+ \| /);
+    for (const leak of ['sk_live', 'SECRETVALUE', 'leaky', '987:654', 'Bloggs']) expect(line).not.toContain(leak);
+  });
 });

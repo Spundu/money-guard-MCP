@@ -10,7 +10,15 @@
 // parser uses no regular expressions (a regex compiled when the stack is nearly full can fail).
 
 export class JsonSyntaxError extends Error {
-  override name = 'JsonSyntaxError';
+  constructor(message: string) {
+    // No stack trace: a file of a million bad lines throws a million of these, and the traces took
+    // three quarters of the time (review round 9: 6.2 s against 1.9 s).
+    const limit = Error.stackTraceLimit;
+    Error.stackTraceLimit = 0;
+    super(message);
+    Error.stackTraceLimit = limit;
+    this.name = 'JsonSyntaxError';
+  }
 }
 
 /** A JSON number exactly as written in the file (RFC 8259 syntax, already checked). */

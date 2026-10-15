@@ -5,14 +5,20 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
-import { clip, clipPath } from '../echo.js';
+import { clip, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, readChecked, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
+import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, leadsTo, readChecked, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
 
 export const MAX_FILES = 2000;
 
 /** Most files and folders the walk of a migrations folder visits: listing them blocks the server. */
 export const MAX_ENTRIES = 10_000;
+
+/**
+ * Deepest a walk goes, in folders, links to folders included. Each level is a call: a chain of 3,000
+ * folder links overflowed the stack (review round 9). Migrations sit one or two folders deep.
+ */
+export const MAX_DEPTH = 100;
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
 
@@ -128,7 +134,7 @@ function countOther(seen: Seen, name: string): void {
 }
 
 function tooManyFiles(): ToolError {
-  return new ToolError('TOO_MANY_FILES', `The folder holds more than ${MAX_FILES} .sql files.`, 'Point migrations at the folder of migrations only, or pass files with the ones to run.');
+  return new ToolError('TOO_MANY_FILES', `The folder holds more than ${MAX_FILES.toLocaleString('en-GB')} .sql files.`, 'Point migrations at the folder of migrations only, or pass files with the ones to run.');
 }
 
 /**
@@ -136,9 +142,16 @@ function tooManyFiles(): ToolError {
  * (counted in `seen.down`, so an empty result can say why) and the setup file (`seen.setup`, its real
  * path), which runs once, as setup.
  */
-function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: Seen): void {
+function walk(root: Root, dir: string, base: string, out: string[], visited: Set<string>, seen: Seen, depth = 0): void {
   if (visited.has(dir)) return; // a link loop
   visited.add(dir);
+  if (depth > MAX_DEPTH) {
+    throw new ToolError(
+      'TOO_MANY_FILES',
+      `The folder nests folders (or links to folders) more than ${MAX_DEPTH} deep; money-guard looks no deeper for migrations.`,
+      'Point migrations at the folder of migrations only, or pass files with the ones to run.',
+    );
+  }
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -161,7 +174,7 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       if (entry.name.toLowerCase().endsWith('.sql')) {
         throw new ToolError(
           'SENSITIVE_PATH',
-          `"${clipPath(toPosix(path.relative(root.real, full)))}" is named like a secret file (an .env file or a private key), so money-guard does not read it.`,
+          `${quotedPath(toPosix(path.relative(root.real, full)))} is named like a secret file (an .env file or a private key), so money-guard does not read it.`,
           'Rename the migration, or pass files without it.',
         );
       }
@@ -175,16 +188,20 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       // A link gets the same checks as a path argument (src/paths.ts): its real target must exist, lie
       // inside the project, not look like a secret and, for a file, be .sql. A hostile repository could
       // otherwise ship db/migrations/0002.sql pointing at ../../.env, and run the secrets as SQL.
-      const shown = `"${clipPath(toPosix(path.relative(root.real, full)))}"`;
+      const shown = quotedPath(toPosix(path.relative(root.real, full)));
+      const outside = () => new ToolError('PATH_OUTSIDE_ROOT', `${shown} is a link to a place outside the project folder (${root.name}).`, 'Remove the link, or pass files with the migrations to run.');
       try {
         real = realpathSync.native(full);
       } catch (err) {
-        if (deniedOrLocked(err)) throw unreadable(toPosix(path.relative(root.real, full)), err);
-        throw new ToolError('PATH_NOT_FOUND', `${shown} is a link to something that does not exist.`, 'Remove the broken link, or pass files with the migrations to run.');
+        // A broken link that leads outside gets the answer one to a place that exists there would.
+        const target = leadsTo(full);
+        if (target === null || isInside(root.real, target)) {
+          if (deniedOrLocked(err)) throw unreadable(toPosix(path.relative(root.real, full)), err);
+          throw new ToolError('PATH_NOT_FOUND', `${shown} is a link to something that does not exist.`, 'Remove the broken link, or pass files with the migrations to run.');
+        }
+        throw outside();
       }
-      if (!isInside(root.real, real)) {
-        throw new ToolError('PATH_OUTSIDE_ROOT', `${shown} is a link to a place outside the project folder (${root.name}).`, 'Remove the link, or pass files with the migrations to run.');
-      }
+      if (!isInside(root.real, real)) throw outside();
       if (isSensitive(path.relative(root.real, real))) {
         throw new ToolError('SENSITIVE_PATH', `${shown} is a link to a file or folder that looks like a secret (an .env file, a private key, credentials or the .git folder).`, 'money-guard never reads secret files. Remove the link.');
       }
@@ -200,7 +217,7 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       }
     }
     if (isDir) {
-      walk(root, real, base, out, visited, seen);
+      walk(root, real, base, out, visited, seen, depth + 1);
     } else if (isFile && entry.name.toLowerCase().endsWith('.sql')) {
       if (isDownFile(entry.name)) {
         seen.down += 1;
@@ -235,7 +252,7 @@ function describeOtherFiles(seen: Seen): string {
 function readScript(real: string, rel: string, size: number, budget: { total: number }, hash: ReturnType<typeof createHash>, role: 'setup' | 'folder' | 'single'): SqlScript {
   if (size > MAX_FILE_BYTES) {
     const fix = { setup: 'Keep only what the migrations need in the setup file.', folder: 'Split the file, or leave it out with files.', single: 'Split the file into a folder of smaller files, and lint the folder.' }[role];
-    throw new ToolError('FILE_TOO_LARGE', `"${clipPath(rel)}" is ${formatSize(size)}; a .sql file may be at most ${formatMib(MAX_FILE_BYTES)}.`, fix);
+    throw new ToolError('FILE_TOO_LARGE', `${quotedPath(rel)} is ${formatSize(size)}; a .sql file may be at most ${formatMib(MAX_FILE_BYTES)}.`, fix);
   }
   budget.total += size;
   if (budget.total > MAX_TOTAL_BYTES) {
@@ -247,14 +264,14 @@ function readScript(real: string, rel: string, size: number, budget: { total: nu
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new ToolError(role === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED', `"${clipPath(rel)}" is not valid UTF-8 text.`, 'Save the file as UTF-8.');
+    throw new ToolError(role === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED', `${quotedPath(rel)} is not valid UTF-8 text.`, 'Save the file as UTF-8.');
   }
   return { rel, text: prepareSql(text) };
 }
 
 export function collectSources(root: Root, args: { migrations: string; files?: readonly string[] | undefined; setup?: string | undefined }): Sources {
   const target = resolveInRoot(root, args.migrations, { kind: 'either', extensions: ['.sql'] });
-  const folder = clipPath(target.rel); // as messages show it
+  const folder = quotedPath(target.rel); // as messages show it, in quotes
   const hash = createHash('sha256');
   const budget = { total: 0 };
 
@@ -269,7 +286,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
   // The setup file runs once, as setup, never as a migration too, however it is named: files cannot help.
   const SETUP_ONLY_FIX = 'Point migrations at the migrations, and setup at the file to run before them.';
   const onlySetup = (where: string) =>
-    new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${where} the setup file, which runs once, as setup.`, SETUP_ONLY_FIX);
+    new ToolError('NO_SQL_FILES', `${folder} holds no migrations to run: ${where} the setup file, which runs once, as setup.`, SETUP_ONLY_FIX);
   let chosen: Array<{ real: string; rel: string; size: number }>;
   if (!target.isDirectory) {
     if (target.real === setupReal) throw onlySetup('it is');
@@ -279,7 +296,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     chosen = [target];
   } else if (args.files !== undefined) {
     chosen = args.files.flatMap((entry) => {
-      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `"${clipPath(entry)}" is not a file in "${folder}".`, `Every entry of files is a path relative to "${folder}". Check the spelling.`);
+      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `${quotedPath(entry)} is not a file in ${folder}.`, `Every entry of files is a path relative to ${folder}. Check the spelling.`);
       const lexical = path.resolve(target.real, entry);
       if (!isInside(target.real, lexical)) throw notInFolder;
       try {
@@ -300,10 +317,10 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
       const left: string[] = [];
       if (seen.down > 0) left.push(`${seen.down === 1 ? '1 .sql file is a down step' : `${seen.down} .sql files are down steps`} (down.sql, *.down.sql, *.undo.sql, *.rollback.sql), which money-guard leaves out`);
       if (seen.setupFound) left.push('the setup file runs once, as setup');
-      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${left.join('; ')}.`, seen.down > 0 ? 'Point migrations at the folder of up migrations, or pass files with the ones to run.' : SETUP_ONLY_FIX);
+      throw new ToolError('NO_SQL_FILES', `${folder} holds no migrations to run: ${left.join('; ')}.`, seen.down > 0 ? 'Point migrations at the folder of up migrations, or pass files with the ones to run.' : SETUP_ONLY_FIX);
     }
     if (found.length === 0) {
-      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no .sql files. ${describeOtherFiles(seen)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
+      throw new ToolError('NO_SQL_FILES', `${folder} holds no .sql files. ${describeOtherFiles(seen)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
     }
     found.sort(naturalCompare);
     chosen = found.map((rel) => {

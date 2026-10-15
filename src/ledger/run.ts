@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { overBudget } from '../budget.js';
-import { clip, clipPath } from '../echo.js';
+import { clipPath, quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
 import { readChecked, resolveInRoot, type Root } from '../paths.js';
@@ -155,7 +155,7 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   const CURRENCY = ['currency', 'currencies', 'ccy', 'curr'];
   const looksLikeCurrency = (name: string) => {
     const ws = wordsOf(name);
-    const currency = ws.some((w) => CURRENCY.includes(w)) || ws[0] === 'cur';
+    const currency = ws.some((w) => CURRENCY.includes(w)) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
     return currency && !ws.some((w) => AMOUNT_WORDS.includes(w));
   };
   const endsLikeOne = (name: string) => [...CURRENCY, 'cur', 'code'].includes(wordsOf(name).at(-1) ?? '');
@@ -165,7 +165,7 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   };
   const candidates = names.filter(looksLikeCurrency);
   const name = candidates.find(plain) ?? candidates.find(endsLikeOne) ?? candidates[0];
-  return name === undefined ? '' : ` "${clip(name)}" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
+  return name === undefined ? '' : ` ${quoted(name)} looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }
 
 function summarise(

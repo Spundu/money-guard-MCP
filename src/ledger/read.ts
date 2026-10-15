@@ -4,7 +4,7 @@
 
 import { CsvError, parse } from 'csv-parse/sync';
 import { closest } from '../closest.js';
-import { NAME_MAX, clip } from '../echo.js';
+import { clip, NAME_MAX, quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { JsonLimitError, JsonNumber, JsonSyntaxError, MAX_FIELD_NAMES, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
 
@@ -108,19 +108,19 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   const matches = exact.length > 0 ? exact : header.flatMap((h, i) => (h.toLowerCase() === name.toLowerCase() ? [i] : []));
   if (matches.length === 1) return matches[0] ?? -1;
   if (matches.length > 1) {
-    throw new ToolError('COLUMN_AMBIGUOUS', `The header has ${matches.length} columns named "${clip(name)}" (mapped as ${field}).`, 'Rename one of them in the export, or map a different column.');
+    throw new ToolError('COLUMN_AMBIGUOUS', `The header has ${matches.length} columns named ${quoted(name)} (mapped as ${field}).`, 'Rename one of them in the export, or map a different column.');
   }
-  const shown = header.slice(0, 30).map((h) => `"${clip(h)}"`);
+  const shown = header.slice(0, 30).map((h) => `${quoted(h)}`);
   const more = header.length > 30 ? ` and ${header.length - 30} more` : '';
   const near = closest(name, header);
-  const hint = near === undefined ? '' : ` Did you mean "${clip(near, NAME_MAX)}"?`;
+  const hint = near === undefined ? '' : ` Did you mean ${quoted(near, NAME_MAX)}?`;
   // A header read as one column that holds another delimiter: the file is separated by that one.
   // The one that occurs most in the header, read as one column, is the likeliest delimiter.
   const count = (d: string) => (header[0] ?? '').split(d).length - 1;
   const other = header.length === 1 ? DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0] : undefined;
   throw new ToolError(
     'COLUMN_NOT_FOUND',
-    `The CSV header has no column "${clip(name)}" (mapped as ${field}).${hint} The columns are: ${shown.join(', ')}${more}.`,
+    `The CSV header has no column ${quoted(name)} (mapped as ${field}).${hint} The columns are: ${shown.join(', ')}${more}.`,
     other === undefined
       ? 'Map each field to one of the column names in the header.'
       : `The file looks separated by ${showDelimiter(other)}, not ${showDelimiter(delimiter)}: pass delimiter ${JSON.stringify(other)}.`,
@@ -141,6 +141,41 @@ const CSV_PROBLEMS: Readonly<Record<string, string>> = {
  * a row of 25 MiB (13 million one-character fields) took 15 seconds to read on a busy machine.
  */
 const MAX_ROW_CHARS = 1024 * 1024;
+
+/**
+ * The most fields one CSV row may hold. MAX_ROW_CHARS counts no delimiters, so a row of 26 million empty
+ * fields passed it and took 11 seconds to read (review round 9); a ledger row holds a few dozen.
+ */
+const MAX_FIELDS = 10_000;
+
+/**
+ * The line of the first row with more than MAX_FIELDS fields, found before csv-parse reads the file:
+ * delimiters outside quotes, counted per record (a line break inside quotes does not end one). Null when
+ * every row is within the limit, or the delimiter is not one ASCII character.
+ */
+function rowWithTooManyFields(bytes: Uint8Array, delimiter: string): number | null {
+  const d = delimiter.length === 1 ? delimiter.charCodeAt(0) : 0x80;
+  if (d >= 0x80) return null;
+  let quoted = false;
+  let fields = 1;
+  let line = 1;
+  let rowLine = 1;
+  for (let i = 0; i < bytes.length; i += 1) {
+    const b = bytes[i];
+    // A line ends at LF, or at a CR that no LF follows, as startLines counts them.
+    if (b === 0x0a || (b === 0x0d && bytes[i + 1] !== 0x0a)) line += 1;
+    if (b === 0x22) quoted = !quoted;
+    else if (quoted) continue;
+    else if (b === d) {
+      fields += 1;
+      if (fields > MAX_FIELDS) return rowLine;
+    } else if (b === 0x0a || b === 0x0d) {
+      fields = 1;
+      rowLine = line;
+    }
+  }
+  return null;
+}
 
 /**
  * The 1-based line each record starts on. csv-parse's own line count is wrong for a quoted field that
@@ -172,6 +207,10 @@ function startLines(bytes: Uint8Array, ends: readonly number[]): number[] {
 }
 
 function readCsv(bytes: Uint8Array, columns: ColumnMap, delimiter: string): Ledger {
+  const wide = rowWithTooManyFields(bytes, delimiter);
+  if (wide !== null) {
+    throw new ToolError('PARSE_ERROR', `Line ${wide}: a row holds more than ${MAX_FIELDS.toLocaleString('en-GB')} fields.`, 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.');
+  }
   // Where each record ends (a byte offset), collected as records are read: a broken record starts
   // right after the last good one, which gives its line even though the parse failed.
   const ends: number[] = [];
@@ -285,12 +324,12 @@ function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, fir
     if (good.some((row) => row.values[field] !== undefined)) continue;
     const keys = Object.keys(first);
     const near = name.startsWith('/') ? undefined : closest(name, keys);
-    const hint = near === undefined ? '' : ` Did you mean "${clip(near, NAME_MAX)}"?`;
-    const shown = keys.slice(0, 30).map((k) => `"${clip(k)}"`).join(', ');
+    const hint = near === undefined ? '' : ` Did you mean ${quoted(near, NAME_MAX)}?`;
+    const shown = keys.slice(0, 30).map((k) => `${quoted(k)}`).join(', ');
     const fields = keys.length === 0 ? 'The first record has no fields.' : `The first record's fields are: ${shown}${keys.length > 30 ? ` and ${keys.length - 30} more` : ''}.`;
     throw new ToolError(
       'COLUMN_NOT_FOUND',
-      `No record has the field "${clip(name)}" (mapped as ${field}).${hint} ${fields}`,
+      `No record has the field ${quoted(name)} (mapped as ${field}).${hint} ${fields}`,
       'Map each field to a field the records have, or to a JSON Pointer such as "/amount/value" for a nested one.',
     );
   }
@@ -311,7 +350,7 @@ function parseOrThrow(text: string): unknown {
 function readJson(text: string, columns: ColumnMap, recordsPointer: string): Ledger {
   const records = resolvePointer(parseOrThrow(text), recordsPointer);
   if (!Array.isArray(records)) {
-    const where = recordsPointer === '' ? 'The top of the file' : `The value at "${clip(recordsPointer, 80)}"`;
+    const where = recordsPointer === '' ? 'The top of the file' : `The value at ${quoted(recordsPointer, 80)}`;
     throw new ToolError('RECORDS_NOT_ARRAY', `${where} is ${describe(records)}, not an array of records.`, 'Pass records_pointer: the JSON Pointer of the array of ledger rows, such as "/data/entries".');
   }
   if (records.length > MAX_ROWS) throw tooManyRows();

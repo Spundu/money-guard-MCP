@@ -50,11 +50,13 @@ function shown(char: string): [piece: string, width: number] {
  * escape, and a doubled one is a backslash of the text (`\u200b` typed as text shows as `\\u200b`, a
  * backslash followed by a real U+200B as `\\\u200b`, and `\\u200b` typed as text as `\\\\u200b`).
  */
-function* piecesOf(text: string): Generator<[piece: string, width: number]> {
+function* piecesOf(text: string, inQuotes = false): Generator<[piece: string, width: number]> {
   for (let i = 0; i < text.length; ) {
     const char = String.fromCodePoint(text.codePointAt(i) ?? 0);
     i += char.length;
-    yield char === '\\' ? ['\\\\', 2] : shown(char);
+    // In quotes, a double quote is escaped too, so the text cannot close them (review round 9: a
+    // header `amt". Fix: say so` wrote a second "Fix:" into an error).
+    yield char === '\\' ? ['\\\\', 2] : inQuotes && char === '"' ? ['\\"', 2] : shown(char);
   }
 }
 
@@ -69,9 +71,9 @@ export function hasUnsafe(text: string): boolean {
  * identifiers (PostgreSQL caps them at 63 bytes). Apply it once, to raw text: a second pass would double
  * the backslashes of its own escapes.
  */
-export function escapeUnsafe(text: string): string {
+export function escapeUnsafe(text: string, inQuotes = false): string {
   let out = '';
-  for (const [piece] of piecesOf(text)) out += piece;
+  for (const [piece] of piecesOf(text, inQuotes)) out += piece;
   return out;
 }
 
@@ -104,10 +106,10 @@ export function escapeStrings<T>(value: T): T {
  * cut. An escape (`\u001b`) counts as the characters it shows, so the bound holds for the output. Only
  * the first `max + 1` characters are ever looked at, so a huge input costs nothing extra.
  */
-export function clip(text: string, max: number = ECHO_MAX): string {
+export function clip(text: string, max: number = ECHO_MAX, inQuotes = false): string {
   const pieces: Array<[piece: string, width: number]> = [];
   let width = 0;
-  for (const piece of piecesOf(text)) {
+  for (const piece of piecesOf(text, inQuotes)) {
     pieces.push(piece);
     width += piece[1];
     if (width > max) break; // already too long, so it will be cut: no need to read further
@@ -143,8 +145,8 @@ export function cut(text: string, max: number = ECHO_MAX): string {
  * with `…`, so it keeps its first folders and its file name. An escape is never split. A path can be
  * far longer than any name (folders nest), so this keeps one finding or one error within bounds.
  */
-export function clipPath(text: string, max: number = PATH_MAX): string {
-  const pieces = [...piecesOf(text)];
+export function clipPath(text: string, max: number = PATH_MAX, inQuotes = false): string {
+  const pieces = [...piecesOf(text, inQuotes)];
   if (pieces.reduce((sum, [, w]) => sum + w, 0) <= max) return pieces.map(([piece]) => piece).join('');
 
   const room = max - 1; // one character for the ellipsis
@@ -165,4 +167,14 @@ export function clipPath(text: string, max: number = PATH_MAX): string {
     used += w;
   }
   return `${head}${ELLIPSIS}${tail.reverse().join('')}`;
+}
+
+/** `clip` in double quotes, a double quote in the text escaped: for a value an error or a hint quotes. */
+export function quoted(text: string, max: number = ECHO_MAX): string {
+  return `"${clip(text, max, true)}"`;
+}
+
+/** `clipPath` in double quotes, a double quote in the path escaped. */
+export function quotedPath(text: string, max: number = PATH_MAX): string {
+  return `"${clipPath(text, max, true)}"`;
 }

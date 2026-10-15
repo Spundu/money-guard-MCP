@@ -1,7 +1,7 @@
 // Which column names count as money (src/lint/names.ts, SPEC.md §3.5), against a table of real column
 // names, and which names say the amounts are minor units already.
 import { describe, expect, it } from 'vitest';
-import { looksLikeMoney, unitOfName, words } from '../src/lint/names.js';
+import { looksLikeMoney, moneyByGuess, unitOfName, words } from '../src/lint/names.js';
 
 describe('words', () => {
   it('splits snake_case, kebab-case, camelCase, acronyms and digits', () => {
@@ -73,6 +73,11 @@ const MONEY = [
   'credit_note_total', 'base_hourly_rate', 'standard_hourly_rate', 'weekend_night_rate', 'senior_day_rate', 'total_2', 'net_2',
   'credit_2', 'billableamountpence', 'chargeableamountminor', 'total_micros', 'net_micros', 'usage_charge', 'energy_charge',
   'order_total', 'invoice_total', 'net_sales', 'billableamount_2', 'costmicros_old',
+  // Review round 9: unquoted AmountJPY, FeeYen and AmountKWD, folded with their currency.
+  'amountjpy', 'feeyen', 'amountkwd', 'pricekrw', 'amountwon',
+  // Review round 9: order words and things that have a price say nothing against a total.
+  'line_items_total', 'orders_total', 'tier_total', 'stage_total', 'first_total', 'last_total', 'position_total', 'lines_total',
+  'units_total', 'unit_total', 'margin_total', 'items_total',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -112,7 +117,11 @@ const NOT_MONEY = [
   // before a total (read as total_weight); growth, which is a rate.
   'total_order_co2', 'net_flow_paid', 'credit_limit_utilization', 'weight_total', 'points_total', 'score_total',
   'calories_total', 'distance_total', 'hours_total', 'count_total', 'co2_total', 'credit_score_total', 'interest_coverage_total',
-  'revenue_growth', 'net_sales_growth', 'gross_sales_growth', 'total_growth', 'units_total',
+  'revenue_growth', 'net_sales_growth', 'gross_sales_growth', 'total_growth',
+  // Review round 9: measures of distance, mass, time, data and games after a generic money word.
+  'total_mileage', 'total_meters', 'total_litres', 'total_tons', 'total_grams', 'net_mass', 'gross_mass', 'net_force',
+  'net_torque', 'total_heat', 'net_flux', 'total_runtime', 'total_uptime', 'total_xp', 'total_damage', 'total_mins',
+  'total_hrs', 'total_kw', 'total_mb', 'total_gb', 'total_bmi', 'total_goals', 'total_wins', 'total_players',
 ];
 
 describe('looksLikeMoney', () => {
@@ -126,6 +135,17 @@ describe('looksLikeMoney', () => {
 
   it('has the table of about 350 names that SPEC.md §3.5 promises', () => {
     expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(350);
+  });
+});
+
+describe('moneyByGuess', () => {
+  it('marks a generic money word followed by a word that does not say money, so fix_sql withholds a ×100', () => {
+    // Review round 9: round 8 took open-ended words after total as money; total_mileage then got a ×100 fix.
+    const guesses = ['total_deposited', 'net_ytd', 'credit_used', 'total_withdrawn', 'total_lifetime', 'totalDeposited'];
+    expect(guesses.map(moneyByGuess)).toEqual(guesses.map(() => true));
+    const sure = ['total', 'grand_total', 'total_paid', 'total_gbp', 'total_minor_units', 'net_amount', 'amount_due', 'order_total', 'total_jpy', 'credit_limit', 'hourly_rate'];
+    expect(sure.map(moneyByGuess)).toEqual(sure.map(() => false));
+    expect(['total_mileage', 'weight_total', 'id'].map(moneyByGuess)).toEqual([false, false, false]); // not money at all
   });
 });
 
@@ -157,10 +177,20 @@ describe('unitOfName', () => {
       'costmicros', 'pricemicros', 'amountmillicents', 'budgetamountmicros', 'amount_won', 'price_won',
       // Review round 8 (tests): an unsure word wins over a currency without minor units; currencies
       // with three decimals (a dinar is 1,000 fils) were multiplied by 100.
-      'amount_jpy_minor', 'amount_kwd', 'price_bhd', 'amount_omr', 'total_jod', 'amount_tnd', 'fee_iqd', 'amount_lyd'];
+      'amount_jpy_minor', 'amount_kwd', 'price_bhd', 'amount_omr', 'total_jod', 'amount_tnd', 'fee_iqd', 'amount_lyd',
+      // Review round 9: folded, as PostgreSQL writes an unquoted AmountKWD or AmountWon.
+      'amountkwd', 'pricebhd', 'amountwon',
+      // Review round 9: öre or iron ore, fen and sen or something else, milliseconds or thousandths.
+      'amount_ore', 'price_fen', 'price_sen', 'amount_millis'];
     expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
     expect(['costmicros', 'pricemicros'].map(looksLikeMoney)).toEqual([true, true]);
-    const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats', 'amount_yen', 'price_yen'];
+    const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats', 'amount_yen', 'price_yen',
+      // Review round 9: folded (an unquoted AmountJPY) they were multiplied by 100.
+      'amountjpy', 'feeyen', 'pricekrw', 'totaljpy', 'balancejpy', 'priceyen',
+      // Review round 9: the minor units of more currencies (Paystack's subunit, halalas, fils) were multiplied by 100.
+      'amount_subunit', 'amount_in_subunit', 'amount_subunits', 'amount_pesewas', 'amount_halalas', 'amount_fils', 'amount_agorot',
+      'amount_centimes', 'amount_rappen', 'amount_groszy', 'amount_stotinki', 'amount_santims', 'amount_kurus',
+      'amount_lowest_denomination', 'amount_in_lowest_denomination'];
     expect(minor.map(unitOfName)).toEqual(minor.map(() => 'minor'));
   });
 });

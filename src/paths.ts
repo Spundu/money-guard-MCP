@@ -5,10 +5,10 @@
 // is touched, so the answer never reveals whether something outside the project exists; through a link
 // that leads outside, a path that exists and one that does not get the same answer.
 
-import { readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
+import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { clip, clipPath } from './echo.js';
+import { clip, quotedPath } from './echo.js';
 import { ToolError } from './errors.js';
 
 /** The project folder, already resolved to its real path (config.ts). */
@@ -52,6 +52,41 @@ export function isInside(root: string, candidate: string): boolean {
   return rel === '' || (!path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`));
 }
 
+/** Most links followed by `leadsTo`, as the systems' own limits on a chain of links. */
+const MAX_LINK_HOPS = 40;
+
+/**
+ * Where `p` leads: its links followed one part at a time by what they say, as realpath does, but
+ * without needing the end to exist (the parts from the first missing one stay as written). Null when
+ * the links go round more than MAX_LINK_HOPS times (a loop says nothing about what is outside). When realpath fails, this tells a link that leads
+ * outside the project from a path that is missing inside it, so that through a link that leads outside,
+ * a target that exists and one that does not get the same answer (review round 9).
+ */
+export function leadsTo(p: string): string | null {
+  const start = path.parse(path.resolve(p));
+  let resolved = start.root;
+  const parts = path.resolve(p).slice(start.root.length).split(path.sep).filter((part) => part !== '');
+  for (let hops = 0; parts.length > 0; ) {
+    const next = path.join(resolved, parts.shift() ?? '');
+    let link: string;
+    try {
+      if (!lstatSync(next).isSymbolicLink()) {
+        resolved = next;
+        continue;
+      }
+      link = readlinkSync(next).replace(/^\\\\\?\\/, ''); // a Windows junction's target may start with \\?\
+    } catch {
+      return path.join(next, ...parts); // missing: the rest is as written
+    }
+    hops += 1;
+    if (hops > MAX_LINK_HOPS) return null;
+    const target = path.resolve(resolved, link); // relative to the folder that holds the link
+    resolved = path.parse(target).root;
+    parts.unshift(...target.slice(resolved.length).split(path.sep).filter((part) => part !== ''));
+  }
+  return resolved;
+}
+
 /**
  * Names the tools refuse at any depth: environment files, private keys and certificates, package-manager
  * and git credentials, cloud credential downloads (.csv and .json files: AWS access-key CSVs, Google
@@ -79,7 +114,7 @@ export function isSensitive(rel: string): boolean {
 }
 
 function shown(input: string): string {
-  return `"${clipPath(input)}"`;
+  return `${quotedPath(input)}`;
 }
 
 function checkSyntax(input: string): void {
@@ -169,11 +204,12 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     // Through a link that leads out of the project, whether the rest of the path exists would say what
     // is there: the answer is the same either way.
     const near = nearestExisting(root, lexical);
-    if (!isInside(root.real, near.real)) throw linkOutside(root, input);
+    const target = leadsTo(lexical);
+    if (!isInside(root.real, near.real) || (target !== null && !isInside(root.real, target))) throw linkOutside(root, input);
     if (deniedOrLocked(err)) throw unreadable(toPosix(lexRel), err);
     throw new ToolError(
       'PATH_NOT_FOUND',
-      `${shown(input)} does not exist. The nearest existing folder is "${clipPath(near.shown)}".`,
+      `${shown(input)} does not exist. The nearest existing folder is ${quotedPath(near.shown)}.`,
       `Check the spelling. Paths are relative to the project folder (${root.name}).`,
     );
   }
@@ -224,7 +260,7 @@ export function unreadable(shownPath: string, err: unknown): ToolError {
         : code === 'ENOENT'
           ? ['no longer exists', 'It was moved or deleted while the tool read it: check the path, then call again.']
           : [`cannot be read (${typeof code === 'string' ? clip(code, 20) : 'an unknown error'})`, 'Close the program that holds it, or fix its permissions, then call again.'];
-  return new ToolError('FILE_UNREADABLE', `"${clipPath(shownPath)}" ${why}.`, fix);
+  return new ToolError('FILE_UNREADABLE', `${quotedPath(shownPath)} ${why}.`, fix);
 }
 
 /** Whether a file-system error means the path is there but may not be read now: permissions, a lock. */

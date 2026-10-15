@@ -5,7 +5,7 @@
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { InMemoryKeyProvider, MIN_KEY_BYTES, type KeyProvider } from 'sealed-audit-chain';
-import { clip, hasUnsafe } from './echo.js';
+import { clip, hasUnsafe, quoted } from './echo.js';
 import { ToolError } from './errors.js';
 import type { Root } from './paths.js';
 
@@ -47,7 +47,7 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
   const fix = 'Set MONEY_GUARD_ROOT in the server\'s environment to the project folder the tools may read (in Claude Desktop, choose the project folder in the extension\'s settings).';
   const invalid = (why: string) => ({ ok: false as const, error: new ToolError('ROOT_INVALID', `The project root (from ${source}) ${why}.`, fix) });
   // Fail closed: a broken setting must not quietly widen or move what the tools can read.
-  if (PLACEHOLDER.test(value)) return invalid(`is "${clip(value, 80)}", a placeholder the MCP host did not fill in`);
+  if (PLACEHOLDER.test(value)) return invalid(`is ${quoted(value, 80)}, a placeholder the MCP host did not fill in`);
 
   let real: string;
   try {

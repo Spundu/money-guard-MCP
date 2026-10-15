@@ -3,7 +3,7 @@
 
 import { overBudget } from '../budget.js';
 import { closest } from '../closest.js';
-import { clip, clipPath, escapeUnsafe } from '../echo.js';
+import { clip, clipPath, escapeUnsafe, quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { Root } from '../paths.js';
 import { FIXES, NULL_FIX_NOTE, baseType, displayType, fixSql, isMoneyColumn, judge, type DetailRow, type LintCode, type LintFinding } from './catalog.js';
@@ -15,6 +15,9 @@ import { SUPABASE_PRESET } from './supabase.js';
 export const DEFAULT_TIMEOUT_SECONDS = 45;
 const MAX_FINDINGS = 50;
 const MAX_LISTED = 30;
+
+/** Ends the summary when the findings list is cut: lint findings come in one page, not several. */
+const NOT_ALL_LISTED = ' Not every finding is listed (findings_truncated): fix those listed, then run again.';
 /** Longest column type a finding shows: a schema-qualified domain and its base type fit. */
 const MAX_TYPE_CHARS = 200;
 
@@ -55,7 +58,7 @@ function columnSet(entries: readonly string[] | undefined, param: string): Set<s
   for (const entry of entries ?? []) {
     const parts = entry.split('.').map((p) => p.trim());
     if (parts.length < 2 || parts.length > 3 || parts.some((p) => p === '')) {
-      throw new ToolError('BAD_COLUMN_NAME', `${param} entry "${clip(entry, 80)}" is not "table.column" or "schema.table.column".`, 'Write each column as table.column (schema public) or schema.table.column, as the names appear in the database.');
+      throw new ToolError('BAD_COLUMN_NAME', `${param} entry ${quoted(entry, 80)} is not "table.column" or "schema.table.column".`, 'Write each column as table.column (schema public) or schema.table.column, as the names appear in the database.');
     }
     set.add(parts.length === 2 ? `public.${parts.join('.')}` : parts.join('.'));
   }
@@ -76,7 +79,7 @@ const BUSY_FIX = 'Call again when the running lint has finished: usually a few s
  * by gigabytes before it is stopped.
  */
 export function refuseWhileLinting(): void {
-  if (busy) throw new ToolError('BUSY', 'A schema lint is running; this check waits for it, so that the lint\'s memory limit keeps being checked.', BUSY_FIX);
+  if (busy) throw new ToolError('BUSY', 'A schema lint is running; this check is refused until it ends, so that the lint\'s memory limit keeps being checked.', BUSY_FIX);
 }
 
 export async function lintSchema(root: Root, params: LintParams, signal?: AbortSignal): Promise<LintResult> {
@@ -159,7 +162,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
         // format_type writes it, and a migration can replace that function: cut like any outside text.
         type: clip(displayType(row), MAX_TYPE_CHARS),
         introduced_in: clipPath(sources.files[since]?.rel ?? '?'),
-        fix_sql: fixSql(row, code, db.reserved),
+        fix_sql: fixSql(row, code, db.reserved, listed),
       });
     } else if (!money && (base === 'real' || base === 'double precision')) {
       otherFloats.push(escapeUnsafe(key));
@@ -181,7 +184,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const applied = sources.files.map((f) => clipPath(f.rel));
 
   const result: LintResult = {
-    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }),
+    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }) + (findings.length > MAX_FINDINGS ? NOT_ALL_LISTED : ''),
     migrations: clipPath(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -209,6 +212,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   while (result.findings.length > 1 && overBudget(result)) {
     result.findings.pop();
     result.findings_truncated = true;
+    if (!result.summary.endsWith(NOT_ALL_LISTED)) result.summary += NOT_ALL_LISTED;
   }
   return result;
 }
@@ -266,15 +270,15 @@ function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string,
   if (madeBySetup) {
     return new ToolError(
       'BAD_COLUMN_NAME',
-      `${param} names "${clip(entry, 120)}", a column that setup or the preset creates: only columns the migrations create or change are checked.`,
+      `${param} names ${quoted(entry, 120)}, a column that setup or the preset creates: only columns the migrations create or change are checked.`,
       'Leave the entry out: setup and the preset stand for what your platform provides, and their columns are not checked.',
     );
   }
   const near = closest(entry, known);
-  const hint = near === undefined ? '' : ` Did you mean "${escapeUnsafe(near)}"?`; // a database name: whole, as findings show it
+  const hint = near === undefined ? '' : ` Did you mean "${escapeUnsafe(near, true)}"?`; // a database name: whole, as findings show it, a quote escaped
   return new ToolError(
     'BAD_COLUMN_NAME',
-    `${param} names "${clip(entry, 120)}", which is not a column of any table the migrations create.${hint}`,
+    `${param} names ${quoted(entry, 120)}, which is not a column of any table the migrations create.${hint}`,
     'Write each entry as the name appears in the database (PostgreSQL folds unquoted names to lowercase): table.column, or schema.table.column outside the public schema. Name an inherited column by the table that defines it, and a partition\'s column by its parent table.',
   );
 }

@@ -61,6 +61,10 @@ describe('parseLedgerJson', () => {
       expect(() => parse(bad), JSON.stringify(bad)).toThrow(JsonSyntaxError);
     }
     expect(() => parse('[1,]')).toThrow(/ at position 3$/);
+    // Review round 9: no stack trace, which took three quarters of the time for a file of bad lines.
+    const err = new JsonSyntaxError('x at position 0');
+    expect([err.name, err.message, err.stack?.split('\n').length, err instanceof Error]).toEqual(['JsonSyntaxError', 'x at position 0', 1, true]);
+    expect(Error.stackTraceLimit).toBeGreaterThan(0); // left as it was
   });
 
   it('refuses nesting deeper than the limit', () => {
