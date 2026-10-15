@@ -40,7 +40,8 @@ export function holdsNoAmount(expr: string): boolean {
   if (expr.length > MAX_EXPR_CHARS) return false;
   if (castsToBoundedType(expr)) return false;
   // A pattern over the amount's text ("price::text ~ '^\d+\.\d\d$'") checks its form in pounds (review round 11).
-  if (/~|\bsimilar\s+to\b|\blike\b/i.test(expr)) return false;
+  // PostgreSQL writes every pattern back with ~: LIKE as ~~, ILIKE as ~~*, SIMILAR TO as ~ similar_to_escape().
+  if (expr.includes('~')) return false;
   // The whole row ("t.* IS NOT NULL") holds the amount too (review round 12).
   if (expr.includes('.*')) return false;
   const rest = expr

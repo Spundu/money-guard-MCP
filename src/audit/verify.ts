@@ -204,13 +204,13 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   return result(`${intact}${tail}`, null, head, true);
 }
 
+const KEY_SETTING_NOTE = 'A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered.';
+
 /**
  * The result for a log whose chain breaks: the first broken entry, and why, in plain words. The entries
  * before the break verified, so an anchor that covers only them is still checked: a replaced log must
  * not hide behind a later break that looks like an accident (a torn last line).
  */
-const KEY_SETTING_NOTE = 'A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered.';
-
 function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: string | null }, anchor: Anchor | undefined, notes: string[], result: MakeResult): AuditResult {
   const index = verdict.brokenAt ?? 0;
   const crlf = firstCrlfLine(bytes);

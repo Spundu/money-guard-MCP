@@ -220,6 +220,12 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     const r = run(bytes(text(entries)), undefined, keysFrom(`k1=${KEY_HEX},k2=${'5a'.repeat(32)}`));
     expect([r.break?.code, r.break?.entry_index]).toEqual(['HMAC_MISMATCH', 2]);
     expect(r.notes.some((n) => n.startsWith('A wrong key setting gives this answer too'))).toBe(true);
+    // An entry of the same key as the one before it, with a broken seal, was changed: no such note.
+    const lines = VALID.split('\n');
+    lines[2] = (lines[2] ?? '').replace(/"entry_hmac":"[0-9a-f]{64}"/, `"entry_hmac":"${'0'.repeat(64)}"`);
+    const forged = run(bytes(lines.join('\n')));
+    expect([forged.break?.code, forged.break?.entry_index]).toEqual(['HMAC_MISMATCH', 2]);
+    expect(forged.notes.some((n) => n.startsWith('A wrong key setting'))).toBe(false);
   });
 
   it('checks the anchor when the chain breaks at the entry right after it: an accident stays one, a replaced log cannot hide behind one', () => {

@@ -50,6 +50,7 @@ describe('the upper limits SPEC gives', () => {
   it('refuses a value one past each, and accepts the limit itself', () => {
     // Review round 11: nothing tested the bounds the descriptions name.
     expect([300, 301].map((t) => lintInput.safeParse({ migrations: 'db/migrations', timeout_seconds: t }).success)).toEqual([true, false]);
+    expect([0, -1].map((offset) => lintInput.safeParse({ migrations: 'db/migrations', offset }).success)).toEqual([true, false]); // round 12
     expect([50, 51].map((limit) => call({ amount: 'a' }, { limit }).success)).toEqual([true, false]);
     expect([4, 5].map((places) => call({ amount: 'a' }, { amount_format: 'decimal', decimal_places: places }).success)).toEqual([true, false]);
   });

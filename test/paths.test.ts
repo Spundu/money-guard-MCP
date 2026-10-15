@@ -357,7 +357,7 @@ describe('isSensitive', () => {
       'passwords.csv', 'password.json', 'keyfile.json', 'oauth-token.json',
       // review round 11: a 40-character secret fits the echo limit whole, so these words count anywhere
       'app_secrets.json', 'prod-secrets.json', 'client-secrets.json', 'access_token.json', 'auth_token.json', 'github-token.json',
-      'credential.json', 'creds.csv', 'privatekey.json', 'secretkey.json',
+      'credential.json', 'creds.csv', 'privatekey.json', 'secretkey.json', 'id_token.json', 'refresh-token.json', 'bearer_token.csv',
       // review round 12: password-manager and wallet exports, Azure's and Docker's local secrets
       'logins.csv', 'bitwarden_export_20240101.json', 'lastpass_export.csv', 'keystore.json', 'wallet.json', 'local.settings.json', 'home/.docker/config.json']) {
       expect(isSensitive(p), p).toBe(true);

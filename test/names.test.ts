@@ -79,7 +79,7 @@ const MONEY = [
   'line_items_total', 'orders_total', 'tier_total', 'stage_total', 'first_total', 'last_total', 'position_total', 'lines_total',
   'units_total', 'unit_total', 'margin_total', 'items_total',
   // Review round 11: a measure before the money word says what the money is for.
-  'energy_cost_total', 'storage_cost_total', 'bandwidth_cost_total', 'cpu_cost_total', 'usage_fee_total', 'usage_charge_total',
+  'energy_cost_total', 'fee_count_cost_total', 'storage_cost_total', 'bandwidth_cost_total', 'cpu_cost_total', 'usage_fee_total', 'usage_charge_total',
   'distance_fee_total', 'weight_surcharge_total', 'kwh_cost_total', 'current_total', 'day_total', 'month_total',
 ];
 const NOT_MONEY = [

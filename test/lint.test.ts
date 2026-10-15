@@ -196,6 +196,8 @@ describe('money_lint_schema: judging columns', () => {
     const ignoredNumeric = await lint({ 'db/migrations/0001.sql': 'create table orders (price numeric(10,2), fee numeric(10,2));' }, { ignore_columns: ['orders.fee'] });
     expect([ignoredNumeric.ignored_count, ignoredNumeric.summary.endsWith('1 ignored.')]).toEqual([1, true]);
     // Review round 11: the entry as written, and a table named instead of a column is told so.
+    // Review round 12: a column name that starts like another is not "a table".
+    expect((await failure(files, { ignore_columns: ['public.orders.grossvalu'] })).message).toContain('Did you mean "public.orders.grossvalue"?');
     expect((await failure(files, { ignore_columns: ['public.orders'] })).message).toBe('ignore_columns names "public.orders", which is not a column of any table the migrations create. That is a table: name one of its columns.');
     // Review round 10: within a long-named table, the column names are compared, not the first 64 characters.
     const wide = { 'db/migrations/0001.sql': `create table ${t} (amount_aaa_refunded numeric(10,2), amount_zzz numeric(10,2));` };
@@ -281,6 +283,9 @@ describe('money_lint_schema: judging columns', () => {
     const fewer = await lint({ [`db/migrations/${'d'.repeat(100)}/0001.sql`]: `create table t_${'y'.repeat(61)} (${columns.slice(0, 45).join(', ')});` });
     expect([fewer.findings.length < 45, fewer.findings_truncated, fewer.error_count]).toEqual([true, true, 45]);
     expect(fewer.next_offset).toBe(fewer.findings.length); // the next page starts where this one was cut (round 11)
+    // Review round 12: on a later page too, it carries on from where that page was cut, never back.
+    const later = await lint({ [`db/migrations/${'d'.repeat(100)}/0001.sql`]: `create table t_${'y'.repeat(61)} (${columns.join(', ')});` }, { offset: 10 });
+    expect(later.next_offset).toBe(10 + later.findings.length);
     expect(fewer.summary.split('Not every finding').length).toBe(2); // once, however many were cut to fit (review round 10)
     expect(fewer.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);
     expect(r.findings[0]?.column).toBe(`price_00_${'x'.repeat(54)}`);
