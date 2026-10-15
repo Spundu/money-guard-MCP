@@ -1,7 +1,7 @@
 // Which column names count as money (src/lint/names.ts, SPEC.md §3.5), against a table of real column
 // names, and which names say the amounts are minor units already.
 import { describe, expect, it } from 'vitest';
-import { looksLikeMoney, namesMinorUnits, unitOfName, words } from '../src/lint/names.js';
+import { looksLikeMoney, unitOfName, words } from '../src/lint/names.js';
 
 describe('words', () => {
   it('splits snake_case, kebab-case, camelCase, acronyms and digits', () => {
@@ -112,21 +112,23 @@ describe('looksLikeMoney', () => {
   });
 });
 
-describe('namesMinorUnits', () => {
+describe('unitOfName', () => {
   it('spots names that already hold minor units', () => {
     const yes = ['amount_pence', 'price_cents', 'fee_penny', 'pence_total', 'amount_minor_units', 'price_cents_usd', 'totalpence', 'pricecents', 'amount_pennies', 'amount_paise',
       'amount_kobo', 'amount_paisa', 'amount_sats', 'amount_satoshis', 'amount_centavos', 'amount_kopecks', 'amount_wei', 'totalpennies', 'amountinpaise', 'amount_in_smallest_unit',
       'amount_in_smallest_units',
       // Review round 5: folded, inside a longer name or not.
       'amountminorunits', 'pricecentsusd', 'amountinsmallestunit', 'totalcentsdue', 'amountwei', 'centsamount'];
-    expect(yes.map(namesMinorUnits)).toEqual(yes.map(() => true));
+    expect(yes.map(unitOfName)).toEqual(yes.map(() => 'minor'));
     const no = ['total', 'price', 'amount_gbp', 'totalamount', 'percent'];
-    expect(no.map(namesMinorUnits)).toEqual(no.map(() => false));
+    expect(no.map(unitOfName)).toEqual(no.map(() => 'major'));
   });
 
   it('is unsure of "minor" and "sat" without "unit" after them: they may name the unit, or a child\'s price or Saturday\'s', () => {
     // Review round 6: price_sat and price_minor would have been rounded as pence, losing a factor of 100.
-    const unsure = ['price_sat', 'price_minor', 'fare_minor', 'pricesat', 'feesat', 'priceminor', 'amount_minor', 'amountMinor', 'amountminor', 'totalMinor', 'amountsat'];
+    const unsure = ['price_sat', 'price_minor', 'fare_minor', 'pricesat', 'feesat', 'priceminor', 'amount_minor', 'amountMinor', 'amountminor', 'totalMinor', 'amountsat',
+      // Review round 7: folded names that do not split into known words.
+      'chargeableamountminor', 'payableamountminor'];
     expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
     expect(['amount_minor_units', 'amount_sats', 'total', 'price_mon'].map(unitOfName)).toEqual(['minor', 'minor', 'major', 'major']);
   });

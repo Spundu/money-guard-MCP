@@ -13,6 +13,7 @@
 //               only once that name with ".go" added exists;
 //   "crash":    it says the first script is running, then dies (an uncaught error) while it runs;
 //   "hang":     it says the first script is running, then never answers again (a script that runs on);
+//   "hang-second": it runs the first script, says the second is running, then never answers again;
 //   "reading":  it runs the first script, says it is reading the catalog, then never answers again;
 //   "reading-crash": it runs the first script, says it is reading the catalog, then dies;
 //   "reading-grows": it runs the first script, says it is reading the catalog, then takes 256 MiB (and
@@ -60,6 +61,9 @@ else if (mode === 'slow' || mode === 'limits') answer();
 else if (mode === 'late') {
   setTimeout(() => post({ type: 'snapshot', step: 0, rows: [] }), 500);
   setTimeout(() => post({ type: 'done', detail: [] }), 1500);
+} else if (mode === 'hang-second') {
+  post({ type: 'snapshot', step: 0, rows: [] });
+  post({ type: 'running', step: 1 });
 } else if (mode === 'reading' || mode === 'reading-crash' || mode === 'reading-grows') {
   post({ type: 'snapshot', step: 0, rows: [] });
   post({ type: 'reading' });

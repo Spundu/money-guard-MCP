@@ -72,6 +72,8 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
     expect(clip(fake)).toBe(escapeUnsafe(fake));
     expect(clipPath(`db/${fake}.sql`)).toBe(`db/${escapeUnsafe(fake)}.sql`);
     expect(escapeUnsafe(`C:${'\\'}x`)).toBe(`C:${'\\\\'}x`); // every backslash, as JSON shows one
+    // Review round 7: a backslash as the last character is doubled too, or a closing quote reads as escaped.
+    expect([escapeUnsafe(`a${'\\'}`), clip(`a${'\\'}`), clipPath(`a${'\\'}`)]).toEqual([0, 1, 2].map(() => `a${'\\\\'}`));
   });
 
   it('shows every raw text differently: a backslash before a hidden character, or before a backslash, is doubled too', () => {
@@ -87,6 +89,7 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
   it('cuts raw text without escaping it, for a value that becomes part of a longer text clipped as a whole', () => {
     expect(cut('GBP')).toBe('GBP');
     expect(cut('x'.repeat(41))).toBe(`${'x'.repeat(39)}…`);
+    expect(cut('x'.repeat(40))).toBe('x'.repeat(40)); // exactly the limit: kept whole
     const hidden = `GBP\u{202e}`;
     expect(cut(hidden)).toBe(hidden); // left raw: clip escapes the whole text once
     expect(clip(`${cut(hidden)} legs net to 1`)).toBe(`${escapeUnsafe(hidden)} legs net to 1`);

@@ -174,6 +174,8 @@ describe('money_lint_schema: which files run', () => {
   it('reads goose markers in any letter case, as goose does', () => {
     const sql = prepareSql('-- +goose up\ncreate table a (price double precision);\n-- +goose down\ndrop table a;\n');
     expect([sql.includes('create table a'), sql.includes('drop table a')]).toEqual([true, false]);
+    // Only at the start of a line, as goose reads it: after SQL it is a comment, and the file has no down part.
+    expect(prepareSql('select 1; -- +goose Up\ncreate table a (price double precision);\n-- +goose Down\ndrop table a;\n')).toContain('drop table a');
   });
 
   it("reads tern's marker only at the start of a line: quoted after SQL, it hides nothing", () => {
@@ -302,7 +304,7 @@ describe('money_lint_schema: which files run', () => {
   it('explains a folder whose only .sql file is the setup file, which runs once, as setup', async () => {
     const e = await failure({ 'db/migrations/setup.sql': 'create schema auth;' }, { setup: 'db/migrations/setup.sql' });
     expect(e.toText()).toBe(
-      `NO_SQL_FILES: "${lastDir()}/db/migrations" holds no migrations to run: the setup file runs once, as setup. Fix: Point migrations at the folder of up migrations, or pass files with the ones to run.`,
+      `NO_SQL_FILES: "${lastDir()}/db/migrations" holds no migrations to run: the setup file runs once, as setup. Fix: Point migrations at the migrations, and setup at the file to run before them.`, // files cannot help here (review round 7)
     );
     // Named as the migrations, or as the only entry of files, it is not run twice, nor as nothing (review round 6).
     const dir = lastDir();

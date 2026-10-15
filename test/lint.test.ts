@@ -151,6 +151,9 @@ describe('money_lint_schema: judging columns', () => {
     // A money column of a safe type, ignored, is left out too: none is "found" (review round 6).
     const safe = await lint({ 'db/migrations/0001.sql': 'create table o (amount_pence bigint);' }, { ignore_columns: ['o.amount_pence'] });
     expect(safe.summary).toBe('No money columns left to check in 1 table. 1 migration file applied.');
+    // Review round 7: so is a column of the money type, whatever its name.
+    const typed = await lint({ 'db/migrations/0001.sql': 'create table o (x money);' }, { ignore_columns: ['o.x'] });
+    expect(typed.summary).toBe('No money columns left to check in 1 table. 1 migration file applied. 1 ignored.');
     const text = await lint({ 'db/migrations/0001.sql': 'create table o (total text);' });
     expect(text.summary).toBe('No money columns of a number type found in 1 table. 1 migration file applied. 1 money-named column of text, JSON or another type was not checked.');
   });
@@ -219,6 +222,10 @@ describe('money_lint_schema: judging columns', () => {
     expect([r.findings.length, r.findings_truncated, r.error_count]).toEqual([50, true, 60]);
     expect([r.files_applied.length, r.files_applied_truncated, r.files_applied_count]).toEqual([30, true, 35]);
     expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
+    // Exactly 50 findings are all there: nothing is cut.
+    const fifty = Array.from({ length: 50 }, (_, i) => `price_${i} double precision`).join(', ');
+    const all = await lint({ 'db/migrations/0001.sql': `create table big (${fifty});` });
+    expect([all.findings.length, all.findings_truncated, all.error_count]).toEqual([50, false, 50]);
   });
 
   it('stays within 20,000 characters with the longest names and a deep folder, cutting the file list first', async () => {

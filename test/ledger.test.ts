@@ -155,13 +155,13 @@ describe('money_check_double_entry: the rules', () => {
       '19.99 is not a whole number of minor units',
       '-19.99 is not a whole number of minor units',
     ]);
-    expect(r.summary).toMatch(/ Half or more of the amounts have a decimal point: if the file holds pounds or dollars \(12\.34\), call again with amount_format "decimal"\.$/);
+    expect(r.summary).toMatch(/ Half or more of the non-zero amounts have a decimal point: if the file holds pounds or dollars \(12\.34\), call again with amount_format "decimal"\.$/);
     // Half of the amounts with a decimal point, and a leg of 0, which says nothing: still worth the hint.
     const excel = check('.csv', 't,a\nA,12.5\nA,-12.5\nB,3\nB,-3\nB,0\n', { columns: { transaction_id: 't', amount: 'a' } });
-    expect(excel.summary).toMatch(/ Half or more of the amounts have a decimal point/);
+    expect(excel.summary).toMatch(/ Half or more of the non-zero amounts have a decimal point/);
     // JSON as PostgreSQL's json_agg writes numeric(10,2): 12.00 is a whole number, but written in pounds.
     const json = check('.json', '[{"t":"A","a":12.00},{"t":"A","a":-12.00}]', { columns: { transaction_id: 't', amount: 'a' } });
-    expect(json.summary).toMatch(/^Balanced: .* Half or more of the amounts have a decimal point/);
+    expect(json.summary).toMatch(/^Balanced: .* Half or more of the non-zero amounts have a decimal point/);
     // Zeros are left aside: a pence file in debit/credit form with 0.00 placeholders gets no hint.
     const placeholders = check('.csv', 't,d,c\nT1,1000,0.00\nT1,0.00,1000\n', { columns: { transaction_id: 't', debit: 'd', credit: 'c' } });
     expect(placeholders.summary).not.toMatch(/amount_format/);
@@ -215,6 +215,13 @@ describe('money_check_double_entry: the rules', () => {
     // Review round 7: a plain currency column is named before one that says which currency it is.
     expect(check('.csv', 't,a,Original Currency,Currency\nT1,1,USD,GBP\nT1,-1,USD,GBP\n', { columns }).summary).toContain(' "Currency" looks like');
     expect(check('.csv', 't,a,Settlement Currency,Currency Code\nT1,1,USD,GBP\nT1,-1,USD,GBP\n', { columns }).summary).toContain(' "Currency Code" looks like');
+    // With no plain name, one that ends in its currency word or in "code" comes before one that does not.
+    expect(check('.csv', 't,a,currency_symbol,Settlement Currency\nT1,1,$,GBP\nT1,-1,$,GBP\n', { columns }).summary).toContain(' "Settlement Currency" looks like');
+    expect(check('.csv', 't,a,currency_symbol,iso_currency_code\nT1,1,$,GBP\nT1,-1,$,GBP\n', { columns }).summary).toContain(' "iso_currency_code" looks like');
+    // "cur" only as the first word; "in" before a currency makes the name an amount in that currency.
+    for (const header of ['txn_cur', 'net_in_account_currency']) {
+      expect(check('.csv', `t,a,${header}\nT1,1,5\nT1,-1,5\n`, { columns }).summary, header).not.toMatch(/looks like a currency/);
+    }
     const mapped = check('.csv', 'txn_id,amount_pence,Currency\nT1,10000,GBP\nT1,-10000,EUR\n', { columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'Currency' } });
     expect(mapped.findings[0]?.code).toBe('UNBALANCED');
   });

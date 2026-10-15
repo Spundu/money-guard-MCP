@@ -130,7 +130,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
 /** When at least as many amounts have a decimal point as not (zeros aside), the file most likely holds pounds read as pence: say how to read it. */
 function poundsHint(format: AmountFormat, amounts: { decimalPoint: number; plain: number }): string {
   return format === 'minor_units' && amounts.decimalPoint > 0 && amounts.decimalPoint >= amounts.plain
-    ? ' Half or more of the amounts have a decimal point: if the file holds pounds or dollars (12.34), call again with amount_format "decimal".'
+    ? ' Half or more of the non-zero amounts have a decimal point: if the file holds pounds or dollars (12.34), call again with amount_format "decimal".'
     : '';
 }
 

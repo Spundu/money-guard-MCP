@@ -313,7 +313,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           reading = true;
           break;
         case 'failed':
-          finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset, filesGiven: options.filesGiven ?? false, single: options.single ?? false }) });
+          finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset, filesGiven: options.filesGiven ?? false, single: options.single ?? false, setupGiven: scripts.some((s) => s.phase === 'setup') }) });
           break;
         case 'unusable':
           finish({ error: stuck(m.step, 'no longer answers correctly') });

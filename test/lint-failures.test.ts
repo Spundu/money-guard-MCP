@@ -87,6 +87,24 @@ describe('money_lint_schema: failures', () => {
     await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'MIGRATION_FAILED' });
     await expect(lintSchema(projectRoot(), { migrations: `${dir}/ok`, setup: `${dir}/setup.sql` })).rejects.toMatchObject({ code: 'SETUP_FAILED' });
   });
+
+  it('names only the causes there can be of an object created twice: no setup file or order when there is none', async () => {
+    // Review round 7: one dump file without setup was told of "the setup file" and "files run out of order".
+    const dir = newDir();
+    const twice = 'create table a (id int);\ncreate table a (id int);\n';
+    writeTree(path.join(projectRoot().real, dir), { 'dump.sql': twice, 'db/0001.sql': 'create table b (id int);', 'db/0002.sql': 'create table b (id int);', 'setup.sql': 'create table b (id int);', 'one/0001.sql': 'select 1;' });
+    const fixOf = async (params: { migrations: string; setup?: string }) =>
+      lintSchema(projectRoot(), params).then(
+        () => '',
+        (e: { fix: string }) => e.fix,
+      );
+    expect(await fixOf({ migrations: `${dir}/dump.sql` })).toBe('Something creates this object twice: the file itself. Create it once, or with IF NOT EXISTS.');
+    expect(await fixOf({ migrations: `${dir}/db` })).toBe('Something creates this object twice: two migrations, or files run out of order. Create it once, or with IF NOT EXISTS.');
+    expect(await fixOf({ migrations: `${dir}/db`, setup: `${dir}/setup.sql` })).toMatch(/twice: the setup file and a migration, two migrations, or files run out of order\./);
+    expect(await fixOf({ migrations: `${dir}/dump.sql`, setup: `${dir}/one/0001.sql` })).toMatch(/twice: the file itself, or the setup file and the file\./);
+    // In the setup file itself, the same hint: it may be what creates the object twice.
+    expect(await fixOf({ migrations: `${dir}/one`, setup: `${dir}/dump.sql` })).toBe('Something creates this object twice: the setup file itself. Create it once, or with IF NOT EXISTS.');
+  });
 });
 
 describe('money_lint_schema: platforms', () => {
@@ -258,7 +276,8 @@ describe('money_lint_schema: safety', () => {
 
   it('runs one lint at a time and says BUSY to a second', async () => {
     const first = lint(SPEC_FILES);
-    await expect(lint(SPEC_FILES)).rejects.toMatchObject({ code: 'BUSY' });
+    // Review round 7: "a few seconds" alone made a model retry while a slow lint ran out its limit.
+    await expect(lint(SPEC_FILES)).rejects.toMatchObject({ code: 'BUSY', fix: expect.stringMatching(/at most its time limit \(45 seconds unless it set timeout_seconds\)\.$/) });
     await expect(first).resolves.toMatchObject({ error_count: 1 });
     await expect(lint(SPEC_FILES)).resolves.toMatchObject({ error_count: 1 }); // free again afterwards
   });

@@ -70,7 +70,7 @@ let busy = false;
 
 export async function lintSchema(root: Root, params: LintParams, signal?: AbortSignal): Promise<LintResult> {
   if (busy) {
-    throw new ToolError('BUSY', 'Another schema lint is running; each one starts a database, so they run one at a time.', 'Call again when the running lint has finished (usually a few seconds).');
+    throw new ToolError('BUSY', 'Another schema lint is running; each one starts a database, so they run one at a time.', 'Call again when the running lint has finished: usually a few seconds, but at most its time limit (45 seconds unless it set timeout_seconds).');
   }
   busy = true;
   try {

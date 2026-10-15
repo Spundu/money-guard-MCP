@@ -212,6 +212,13 @@ describe('money_check_double_entry: reading JSON and JSONL', () => {
     const r = check('.jsonl', '{"t":"A","a~1b":5}\n{"t":"A","a~1b":-5}\n', { columns: { transaction_id: 't', amount: '/a~01b' } });
     expect(r.balanced).toBe(true);
   });
+
+  it('reads an array index in a JSON Pointer only without leading zeros (RFC 6901)', () => {
+    const doc = JSON.stringify({ data: [[{ t: 'A', a: 5 }, { t: 'A', a: -5 }]] });
+    const columns = { transaction_id: 't', amount: 'a' };
+    expect(check('.json', doc, { columns, records_pointer: '/data/0' }).balanced).toBe(true);
+    expect(errorText(() => check('.json', doc, { columns, records_pointer: '/data/00' }))).toMatch(/is nothing \(the pointer leads nowhere\)/);
+  });
 });
 
 describe('money_check_double_entry: arguments', () => {
@@ -253,6 +260,9 @@ describe('money_check_double_entry: arguments', () => {
     expect(r.summary).toMatch(/ Only the first 10,000 findings can be paged; the counts cover all 12,000\.$/);
     // Review round 7: every count in a summary is written the same way.
     expect(r.summary).toMatch(/^Not balanced: 12,000 errors\. 4,000 transactions: 0 balanced, 4,000 not checked/);
+    // Exactly 10,000 findings can all be paged: the summary says nothing of a cap.
+    const exact = check('.csv', `i,d,c,y\n${rows.split('\n').slice(0, 3333).join('\n')}\nx,a,1,GBP\n`, { columns });
+    expect([exact.total_findings, exact.summary.includes('can be paged')]).toEqual([10_000, false]);
   });
 
   it('keeps the first findings in order even when an early transaction is judged after 10,000 later row findings', () => {

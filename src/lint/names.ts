@@ -260,11 +260,6 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   return UNSURE_UNIT_WORDS.has(only.slice(withoutUnit(only).length)) ? 'unsure' : 'minor';
 }
 
-/** Whether a money column's name says plainly that it holds minor units already (unitOfName). */
-export function namesMinorUnits(name: string): boolean {
-  return unitOfName(name) === 'minor';
-}
-
 /** The word lists, for the test that holds SPEC.md §3.5 to them. */
 export const WORD_LISTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'Money words': MONEY_WORDS,

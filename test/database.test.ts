@@ -290,6 +290,17 @@ describe('runScripts with a database that misbehaves', () => {
     });
   });
 
+  it('counts only migration files for that, not the setup file', async () => {
+    process.env.MONEY_GUARD_TEST_WORKER = 'hang-second';
+    const setup = { name: 'setup.sql', text: 'select 1;', phase: 'setup' as const };
+    const many = Array.from({ length: 299 }, (_, i) => ({ name: `db/${String(i).padStart(4, '0')}.sql`, text: 'select 1;', phase: 'migration' as const }));
+    await expect(runScripts([setup, ...many], { timeoutMs: 2000, preset: false, worker: FAKE })).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      message: 'The lint ran out of time (2 s) while running db/0000.sql.',
+      fix: expect.stringMatching(/^Leave slow data-loading files out with files\. /),
+    });
+  });
+
   it('never says to use files when migrations is one file, which files cannot pick from', async () => {
     const fixOf = (mode: string, timeoutMs = 30_000) => {
       process.env.MONEY_GUARD_TEST_WORKER = mode;

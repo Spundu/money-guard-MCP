@@ -266,9 +266,10 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     setupReal = s.real;
   }
 
-  // The setup file runs once, as setup, never as a migration too, however it is named.
+  // The setup file runs once, as setup, never as a migration too, however it is named: files cannot help.
+  const SETUP_ONLY_FIX = 'Point migrations at the migrations, and setup at the file to run before them.';
   const onlySetup = (where: string) =>
-    new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${where} the setup file, which runs once, as setup.`, 'Point migrations at the migrations, and setup at the file to run before them.');
+    new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${where} the setup file, which runs once, as setup.`, SETUP_ONLY_FIX);
   let chosen: Array<{ real: string; rel: string; size: number }>;
   if (!target.isDirectory) {
     if (target.real === setupReal) throw onlySetup('it is');
@@ -299,7 +300,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
       const left: string[] = [];
       if (seen.down > 0) left.push(`${seen.down === 1 ? '1 .sql file is a down step' : `${seen.down} .sql files are down steps`} (down.sql, *.down.sql, *.undo.sql, *.rollback.sql), which money-guard leaves out`);
       if (seen.setupFound) left.push('the setup file runs once, as setup');
-      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${left.join('; ')}.`, 'Point migrations at the folder of up migrations, or pass files with the ones to run.');
+      throw new ToolError('NO_SQL_FILES', `"${folder}" holds no migrations to run: ${left.join('; ')}.`, seen.down > 0 ? 'Point migrations at the folder of up migrations, or pass files with the ones to run.' : SETUP_ONLY_FIX);
     }
     if (found.length === 0) {
       throw new ToolError('NO_SQL_FILES', `"${folder}" holds no .sql files. ${describeOtherFiles(seen)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');

@@ -251,7 +251,7 @@ Shared error codes:
 | `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. |
 | `FILE_TOO_LARGE` | Over the tool's size limit. | States the limit; suggests a smaller export. |
 | `FILE_UNREADABLE` | The file or folder passed the checks but cannot be read: another program has it locked (Windows), permission is denied, or it went away. | Locked: close the program that holds it. Permission denied: give the user that runs the server read access. Gone: check the path. Then call again. |
-| `BUSY` | A second `money_lint_schema` while one runs (§2.6). | Retry after the running lint finishes. |
+| `BUSY` | A second `money_lint_schema` while one runs (§2.6). | Retry after the running lint finishes: usually a few seconds, at most its time limit. |
 | `INTERNAL_ERROR` | A bug. | Details are in the server's log (stderr). |
 
 ### 2.6 Limits and concurrency
@@ -707,7 +707,9 @@ The `MIGRATION_FAILED` hints by SQLSTATE:
   than one transaction can hold locks for": split it (the lint database already allows 4,096 locks per
   transaction, against PostgreSQL's default of 64, so a one-file dump of thousands of tables runs).
 - **42P07, 42710, 42P06, 42723** (a table, a role or extension, a schema or a function that already
-  exists): "something creates this object twice: create it once, or with IF NOT EXISTS"; with the
+  exists): "something creates this object twice", with only the causes there can be (two migrations
+  or files out of order; for one file, the file itself; the setup file only when one is given):
+  "create it once, or with IF NOT EXISTS"; with the
   Supabase preset, that the preset already makes some objects (roles such as anon).
 - **Extension not available:** the list of available extensions, and that a whole-database dump
   (`pg_dump`, `supabase db dump`) should be linted as its migrations folder instead.
@@ -897,7 +899,7 @@ Those functions throw at the first problem. This tool returns **every** problem.
     says so ("12.00 has a decimal point; minor units are whole numbers without one"). When at least as
     many amounts are plain decimals such as `12.34` as are whole numbers (zeros aside; a JSON `12.00`
     counts, though it is read as 12; `£12.00` and `1,234.50` do not, as `decimal` refuses them too),
-    the summary adds: "Half or more of the amounts have a decimal point: if the file holds pounds or dollars (12.34),
+    the summary adds: "Half or more of the non-zero amounts have a decimal point: if the file holds pounds or dollars (12.34),
     call again with amount_format "decimal"." With amount_format `decimal` it never does. A file of
     mostly whole pounds with a few decimals gets no hint: it looks the same as a pence file with a few
     wrong rows, and read as pounds that file would balance, hiding its errors.
