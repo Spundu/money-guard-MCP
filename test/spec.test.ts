@@ -122,7 +122,20 @@ describe('SPEC.md and the code agree', () => {
       expect(listed.filter((w) => !/^[a-z0-9]+$/.test(w)), label).toEqual([]);
       expect([...new Set(listed)].sort(), label).toEqual([...words].sort());
     }
-    const words = new Set(section.toLowerCase().match(/[a-z0-9]+/g));
-    expect(RULE_WORDS.filter((w) => !words.has(w))).toEqual([]);
+    // Review round 8: each prose list, word for word, between the words around it.
+    const prose = section.replace(/\s+/g, ' ');
+    const around: Record<string, [string, string]> = {
+      ratio: ['ends in a ratio word (', ')'],
+      payRate: ['"rate" after ', ' is the price'],
+      priced: ['"rate per" an ', ' ('],
+      value: ['**"value"** after ', ' is what'],
+    };
+    for (const [key, set] of Object.entries(RULE_WORDS)) {
+      const [before, after] = around[key] ?? ['', ''];
+      const start = prose.indexOf(before);
+      expect(start, key).toBeGreaterThan(-1);
+      const list = prose.slice(start + before.length, prose.indexOf(after, start + before.length));
+      expect(list.split(/,\s*|\s+or\s+/).sort(), key).toEqual([...set].sort());
+    }
   });
 });

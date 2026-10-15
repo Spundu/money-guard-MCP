@@ -82,6 +82,8 @@ describe('money_check_double_entry: reading CSV', () => {
   it('suggests a name within 2 edits, or a third of its length, among the first 5,000 candidates', () => {
     expect(closest('amnt', ['currency', 'amount'])).toBe('amount'); // 2 edits from a 4-letter name
     expect(closest('amt', ['currency', 'amount'])).toBe(undefined); // 3 edits: too far for a guess
+    // Ties go to the first: amount and amoun are both 1 edit from amout (review round 8).
+    expect([closest('amout', ['amount', 'amoun']), closest('amout', ['amoun', 'amount'])]).toEqual(['amount', 'amoun']);
     const many = [...Array.from({ length: 5000 }, (_, i) => `col_${i}`), 'amount'];
     expect(closest('amount', many)).toBe(undefined); // the 5,001st candidate is not compared
   });

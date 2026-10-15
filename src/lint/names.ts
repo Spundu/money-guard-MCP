@@ -36,6 +36,24 @@ const MONEY_WORDS: ReadonlySet<string> = new Set([
   'kopecks', 'wei', 'lamport', 'lamports', 'msat', 'msats',
 ]);
 
+/** Counts and order, of things and of people: the non-money last words that also say what a total counts. */
+const COUNT_WORDS: ReadonlySet<string> = new Set([
+  'count', 'number', 'num', 'no', 'qty', 'quantity', 'items', 'attempts', 'retries', 'rank', 'ranks', 'tier',
+  'tiers', 'level', 'levels', 'band', 'position', 'priority', 'index', 'seq', 'sequence', 'step', 'steps',
+  'stage', 'stages', 'unit', 'units', 'orders', 'rooms', 'seats', 'shares', 'guests', 'users', 'members',
+  'customers', 'people', 'persons', 'visits', 'views', 'clicks', 'impressions', 'sessions', 'bytes', 'pages', 'rows',
+  'hits', 'records', 'lines', 'last', 'first', 'frequency', 'grade', 'schedule', 'cycle',
+]);
+
+/** Rates and measures: the non-money last words that also say what a total measures. */
+const MEASURE_WORDS: ReadonlySet<string> = new Set([
+  'percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'weight', 'score', 'share',
+  'split', 'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
+  'elasticity', 'calories', 'kcal', 'energy', 'lb', 'lbs', 'rating', 'ratings', 'tonnage', 'area', 'size',
+  'length', 'width', 'height', 'depth', 'power', 'usage', 'capacity', 'speed', 'temperature', 'precision', 'scale',
+  'growth',
+]);
+
 const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   // identifiers and labels
   'id', 'ids', 'uuid', 'key', 'ref', 'code', 'currency', 'ccy', 'type', 'kind', 'status', 'state', 'method',
@@ -44,17 +62,8 @@ const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   // dates and times
   'date', 'at', 'on', 'time', 'ts', 'timestamp', 'year', 'years', 'month', 'months', 'week', 'weeks', 'day',
   'days', 'night', 'nights', 'hour', 'hours', 'minutes', 'seconds', 'ms',
-  // counts and order: of things, and of people
-  'count', 'number', 'num', 'no', 'qty', 'quantity', 'items', 'attempts', 'retries', 'rank', 'ranks', 'tier',
-  'tiers', 'level', 'levels', 'band', 'position', 'priority', 'index', 'seq', 'sequence', 'step', 'steps',
-  'stage', 'stages', 'unit', 'units', 'orders', 'rooms', 'seats', 'shares', 'guests', 'users', 'members',
-  'customers', 'people', 'persons', 'visits', 'views', 'clicks', 'impressions', 'sessions', 'bytes', 'pages', 'rows',
-  'hits', 'records', 'lines', 'last', 'first', 'frequency', 'grade', 'schedule', 'cycle',
-  // rates and measures
-  'percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'weight', 'score', 'share',
-  'split', 'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
-  'elasticity', 'calories', 'kcal', 'energy', 'lb', 'lbs', 'rating', 'ratings', 'tonnage', 'area', 'size',
-  'length', 'width', 'height', 'depth', 'power', 'usage', 'capacity', 'speed', 'temperature', 'precision', 'scale',
+  ...COUNT_WORDS,
+  ...MEASURE_WORDS,
   // groupings and terms
   'category', 'categories', 'list', 'lists', 'center', 'centre', 'terms', 'period',
 ]);
@@ -72,6 +81,12 @@ const MINOR_UNIT_WORDS: ReadonlySet<string> = new Set([
 const ZERO_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set([
   'bif', 'clp', 'djf', 'gnf', 'isk', 'jpy', 'kmf', 'krw', 'pyg', 'rwf', 'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf', 'yen',
 ]);
+
+/**
+ * Currencies with more than two decimals (ISO 4217 exponent 3, and 4 for CLF and UYW): a dinar has
+ * 1,000 fils, so x100 is wrong, and whether the column holds dinars or fils needs a decision.
+ */
+const MORE_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set(['bhd', 'iqd', 'jod', 'kwd', 'lyd', 'omr', 'tnd', 'clf', 'uyw']);
 
 /** Units finer than a minor unit ("cost_micros", Google Ads' millionths): the fix needs the unit decided. */
 const FINER_UNIT_WORDS: ReadonlySet<string> = new Set(['micros', 'micro', 'millicents', 'millicent', 'mills', 'gwei']);
@@ -125,6 +140,13 @@ const GENERIC_MEASURE_WORDS: ReadonlySet<string> = new Set([
   'rainfall', 'change', 'changes', 'flow', 'flows', 'utilization', 'utilisation', 'component', 'components', 'coverage',
   'axis', 'investigator',
 ]);
+
+/**
+ * What a total before it can count or measure: "weight_total" is "total_weight", "hours_total" and
+ * "credit_score_total" are not money. Only for total and totals: what a charge is for may be a
+ * measure ("usage_charge" is money).
+ */
+const TOTALLED_WORDS: ReadonlySet<string> = new Set([...COUNT_WORDS, ...MEASURE_WORDS, ...GENERIC_MEASURE_WORDS, 'hours', 'minutes', 'seconds', 'ms']);
 
 /**
  * Money words long enough to find at the end of a folded one-word name. The short ones (fee, tax, vat,
@@ -222,8 +244,10 @@ function judgeWords(all: readonly string[]): boolean {
   if (ws.some((w) => MONEY_WORDS.has(w) && w !== 'minor' && !GENERIC_MONEY_WORDS.has(w))) return true;
   // A generic money word counts unless a measure follows it: "total_paid" and "net_ytd" are money,
   // "total_co2" and "credit_utilization" measures. "units" after minor or smallest is the unit of the money.
+  // A count or measure before a total says what it totals: "weight_total", "credit_score_total".
   const generic = ws.map((w) => GENERIC_MONEY_WORDS.has(w)).lastIndexOf(true);
   if (generic >= 0) {
+    if ((ws[generic] === 'total' || ws[generic] === 'totals') && ws.slice(0, generic).some((w) => TOTALLED_WORDS.has(w))) return false;
     return !ws.slice(generic + 1).some((w, i, after) => GENERIC_MEASURE_WORDS.has(w) || (NOT_MONEY_LAST_WORDS.has(w) && !((w === 'unit' || w === 'units') && ['minor', 'smallest'].includes(after[i - 1] ?? ''))));
   }
   if (ws.length !== 1 || last === 'minor') return false;
@@ -244,12 +268,13 @@ const UNSURE_UNIT_WORDS: ReadonlySet<string> = new Set(['sat', 'minor', 'won']);
  * minor-unit word: "amount_pence", "price_cents_usd", "amount_sats"; "minor" or "smallest" before unit
  * or units: "amount_minor_units", "amount_in_smallest_unit"; a currency with no minor unit:
  * "amount_jpy"); "unsure" when it holds a word that may mean minor units or something else
- * ("amount_minor", "price_minor", "price_sat") or a unit finer than a minor unit ("cost_micros",
- * "price_gwei"): a fix needs that decided first; "major" otherwise.
+ * ("amount_minor", "price_minor", "price_sat"), a unit finer than a minor unit ("cost_micros",
+ * "price_gwei") or a currency with more than two decimals ("amount_kwd"): a fix needs that decided
+ * first; "major" otherwise.
  */
 export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   const ws = knownWords(name);
-  if (ws.some((w) => FINER_UNIT_WORDS.has(w))) return 'unsure';
+  if (ws.some((w) => FINER_UNIT_WORDS.has(w) || MORE_DECIMAL_CURRENCIES.has(w))) return 'unsure';
   const unitAfter = (i: number) => ws[i + 1] === 'unit' || ws[i + 1] === 'units';
   if (ws.some((w, i) => (w === 'minor' || w === 'smallest') && unitAfter(i))) return 'minor';
   if (ws.some((w) => MINOR_UNIT_WORDS.has(w) && !UNSURE_UNIT_WORDS.has(w))) return 'minor';
@@ -273,7 +298,13 @@ export const WORD_LISTS: Readonly<Record<string, ReadonlySet<string>>> = {
   'Currencies without minor units': ZERO_DECIMAL_CURRENCIES,
   'Unsure unit words': UNSURE_UNIT_WORDS,
   'Finer units': FINER_UNIT_WORDS,
+  'Currencies with more than two decimals': MORE_DECIMAL_CURRENCIES,
 };
 
-/** The words of the prose rules of SPEC.md §3.5, which must all appear there. */
-export const RULE_WORDS: readonly string[] = [...RATIO_WORDS, ...PAY_RATE_WORDS, ...PRICED_UNITS, ...VALUE_WORDS];
+/** The word lists in the prose rules of SPEC.md §3.5, for the test that holds each to its list there. */
+export const RULE_WORDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  ratio: RATIO_WORDS,
+  payRate: PAY_RATE_WORDS,
+  priced: PRICED_UNITS,
+  value: VALUE_WORDS,
+};

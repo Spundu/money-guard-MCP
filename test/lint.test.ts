@@ -219,12 +219,14 @@ describe('money_lint_schema: judging columns', () => {
   });
 
   it('caps the findings at 50 and the lists at 30, and counts them all', async () => {
-    const columns = Array.from({ length: 60 }, (_, i) => `price_${i} double precision`).join(', ');
+    const floats = Array.from({ length: 32 }, (_, i) => `lat_${i} double precision`);
+    const columns = [...Array.from({ length: 60 }, (_, i) => `price_${i} double precision`), ...floats].join(', ');
     const files: Record<string, string> = { 'db/migrations/0000.sql': `create table big (${columns});` };
     for (let i = 1; i <= 34; i += 1) files[`db/migrations/${String(i).padStart(4, '0')}.sql`] = 'select 1;';
     const r = await lint(files);
     expect([r.findings.length, r.findings_truncated, r.error_count]).toEqual([50, true, 60]);
     expect([r.files_applied.length, r.files_applied_truncated, r.files_applied_count]).toEqual([30, true, 35]);
+    expect([r.other_float_columns.length, r.other_float_columns_count]).toEqual([30, 32]);
     expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
     // Exactly 50 findings are all there: nothing is cut.
     const fifty = Array.from({ length: 50 }, (_, i) => `price_${i} double precision`).join(', ');

@@ -291,8 +291,10 @@ export function quoteIdent(name: string, reserved: ReadonlySet<string>): string 
 /**
  * A starting point for the fix, or null where the change belongs elsewhere or needs a decision: a
  * domain (change the domain), an array, a generated column (change its expression), a numeric column
- * finer than a minor unit (choose the unit first), or a name holding a control or invisible character
- * (results show such names escaped, and SQL built from the escaped text would name a different column).
+ * finer than a minor unit (choose the unit first), a name that may not say its unit (unitOfName in
+ * names.ts is unsure: amount_minor, cost_micros, amount_kwd), or a name holding a control or invisible
+ * character (results show such names escaped, and SQL built from the escaped text would name a
+ * different column).
  * The conversion follows the name: amounts already in minor units (pence, cents, minor units, yen) are only
  * rounded; anything else is taken to be in pounds or dollars and multiplied by 100. A conversion that
  * multiplies is null too while the column's default, a CHECK constraint or a unique index's condition

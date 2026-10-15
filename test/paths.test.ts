@@ -153,6 +153,15 @@ describe('resolveInRoot', () => {
     }
   });
 
+  it('refuses a folder link in the migrations folder that leads to the .git folder', () => {
+    // Review round 8 (tests): the file-link tests skip on Windows without Developer Mode; a folder
+    // link needs no privilege, so the walk's secret check is proven everywhere.
+    const dir = tempDir();
+    writeTree(dir, { '.git/hooks/0001.sql': 'select 1;', 'db/migrations/0001.sql': 'select 1;' });
+    expect(trySymlink(path.join(dir, '.git'), path.join(dir, 'db', 'migrations', 'vendor'), 'dir')).toBe(true);
+    expect(codeOf(() => collectSources(rootOf(dir), { migrations: 'db/migrations' }))).toBe('SENSITIVE_PATH');
+  });
+
   it('refuses a file link that leads outside the project', (ctx) => {
     if (!trySymlink(path.join(base, 'outside', 'secret.csv'), path.join(root.real, 'exports', 'out.csv'), 'file')) {
       console.warn('SKIPPED: this machine cannot create file symlinks (Windows without Developer Mode).');

@@ -57,7 +57,7 @@ describe('parseLedgerJson', () => {
   });
 
   it('refuses what RFC 8259 refuses, saying where', () => {
-    for (const bad of ['', '[1,]', '{"a":1,}', '01', '+1', '.5', '1.', '1e', 'NaN', 'Infinity', '[1 2]', '{a:1}', "'a'", '"\u0001"', '"\\x"', '[] []', '{"a"}', '"abc']) {
+    for (const bad of ['', '[1,]', '{"a":1,}', '01', '+1', '.5', '1.', '1e', 'NaN', 'Infinity', '[1 2]', '{a:1}', "'a'", '"\u0001"', '"\u001f"', '"\\x"', '[] []', '{"a"}', '"abc']) {
       expect(() => parse(bad), JSON.stringify(bad)).toThrow(JsonSyntaxError);
     }
     expect(() => parse('[1,]')).toThrow(/ at position 3$/);

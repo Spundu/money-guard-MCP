@@ -288,6 +288,10 @@ describe('money_check_double_entry: the rules', () => {
     expect(r.findings[0]?.nets).toHaveLength(20);
     expect(r.findings[0]?.nets?.[19]).toEqual({ currency: 'C19', net: '1' });
     expect(r.findings[0]?.message).toBe('25 currencies do not net to 0; nets lists the first 20');
+    // Exactly 20 are all in nets, so the message names them (review round 8).
+    const twenty = Array.from({ length: 20 }, (_, i) => `A,1,C${String(i).padStart(2, '0')}`).join('\n');
+    const all = check('.csv', `t,a,c\n${twenty}\n`, { columns: { transaction_id: 't', amount: 'a', currency: 'c' } });
+    expect(all.findings[0]?.message).toMatch(/^C00 legs net to 1 and C01 legs net to 1 and /);
   });
 
   it('holds the whole result to the budget, not only its findings', () => {

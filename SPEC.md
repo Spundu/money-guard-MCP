@@ -507,7 +507,11 @@ word**, with these refinements:
   generic money words (lists below). `total_paid`, `total_deposited`, `net_ytd`, `credit_used`
   and `total_minor_units` are money; `total_co2` (co and 2), `total_tokens` and `net_units` are not.
   Words not in the lists count as money: a missed money column gets no warning at all, while a
-  measure taken for money gets a finding someone can dismiss.
+  measure taken for money gets a finding someone can dismiss. Before total or totals, a count or a
+  measure says what is totalled, so the name is not money: `weight_total`, `hours_total` and
+  `credit_score_total` are read as `total_weight`. These words are the counts and the rates and
+  measures among the non-money last words, hours, minutes, seconds and ms,
+  and the measures after generic money words. Other generic words keep theirs: `usage_charge` is money.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
   `totalamount`. Every word the rule does not know is first split into the words it knows (the money,
   non-money, minor-unit, ratio, rate, value and beside lists, all in this section), in as few words as
@@ -571,7 +575,7 @@ The word lists:
   - rates and measures: percent, percentage, pct, rate, ratio, bps, factor, multiplier, weight, score,
     share, split, distance, duration, km, kg, kwh, volume, points, votes, miles, ml, margin, elasticity,
     calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
-    power, usage, capacity, speed, temperature, precision, scale
+    power, usage, capacity, speed, temperature, precision, scale, growth
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
 - **Minor-unit words** (`fix_sql` only rounds): pence, penny, pennies, cent, cents, paise, paisa,
   kobo, sats, satoshi, satoshis, centavo, centavos, kopek, kopeks, kopeck, kopecks, wei, lamport,
@@ -584,6 +588,9 @@ The word lists:
   child's price, and `price_sat`, Saturday's; `amount_won` may be Korean won or a prize).
 - **Finer units** (`fix_sql` is `null`: `cost_micros` holds millionths, and a fix must choose the
   unit): micros, micro, millicents, millicent, mills, gwei
+- **Currencies with more than two decimals** (`fix_sql` is `null`: a dinar has 1,000 fils, so
+  `amount_kwd` may hold dinars or fils, and neither takes ×100): bhd, iqd, jod, kwd, lyd, omr, tnd,
+  clf, uyw
 - **Examples that are money:** `total`, `unit_price`, `amount_pence`, `amountMinor`, `amount_due`,
   `platform_fee`, `balance_after`, `price_per_unit`, `price_per_month`, `total_gbp`, `totalamount`,
   `amountdue`, `platformfee`, `totaldiscount`, `debit`, `credit_limit`, `net`, `hourly_rate`,
@@ -1209,7 +1216,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 830); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 870); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit

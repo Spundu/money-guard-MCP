@@ -69,6 +69,10 @@ const MONEY = [
   'principal_outstanding', 'credit_limit_gbp', 'totals', 'bal', 'opening_bal', 'cur_bal', 'night_rate', 'deduction',
   'deductions', 'markup', 'gratuity', 'stamp_duty', 'customs_duty', 'excise', 'tariff', 'brokerage', 'amount_msat',
   'fee_msat', 'cost_micros', 'amount_jpy',
+  // Review round 8 (tests): longer forms of each rule, and names that are money only by one of its steps.
+  'credit_note_total', 'base_hourly_rate', 'standard_hourly_rate', 'weekend_night_rate', 'senior_day_rate', 'total_2', 'net_2',
+  'credit_2', 'billableamountpence', 'chargeableamountminor', 'total_micros', 'net_micros', 'usage_charge', 'energy_charge',
+  'order_total', 'invoice_total', 'net_sales', 'billableamount_2', 'costmicros_old',
 ];
 const NOT_MONEY = [
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
@@ -104,6 +108,11 @@ const NOT_MONEY = [
   // Review round 7: measures that start with a generic money word (total, net, credit, principal, interest).
   'total_co2', 'total_reps', 'total_carbs', 'total_latency', 'total_memory', 'total_tokens', 'total_errors', 'total_emissions',
   'total_rainfall', 'net_change', 'net_flow', 'credit_utilization', 'principal_component_1', 'interest_coverage',
+  // Review round 8 (tests): a measure after the generic word, not just next to it; a count or measure
+  // before a total (read as total_weight); growth, which is a rate.
+  'total_order_co2', 'net_flow_paid', 'credit_limit_utilization', 'weight_total', 'points_total', 'score_total',
+  'calories_total', 'distance_total', 'hours_total', 'count_total', 'co2_total', 'credit_score_total', 'interest_coverage_total',
+  'revenue_growth', 'net_sales_growth', 'gross_sales_growth', 'total_growth', 'units_total',
 ];
 
 describe('looksLikeMoney', () => {
@@ -145,7 +154,10 @@ describe('unitOfName', () => {
     // Review round 7: cost_micros (Google Ads millionths) and amount_jpy (whole yen) were multiplied by 100.
     const unsure = ['cost_micros', 'amount_micros', 'budget_amount_micros', 'price_gwei', 'amount_millicents', 'price_mills',
       // Review round 8: folded too (costMicros created unquoted), and "won", which may be a currency or a prize.
-      'costmicros', 'pricemicros', 'amountmillicents', 'budgetamountmicros', 'amount_won', 'price_won'];
+      'costmicros', 'pricemicros', 'amountmillicents', 'budgetamountmicros', 'amount_won', 'price_won',
+      // Review round 8 (tests): an unsure word wins over a currency without minor units; currencies
+      // with three decimals (a dinar is 1,000 fils) were multiplied by 100.
+      'amount_jpy_minor', 'amount_kwd', 'price_bhd', 'amount_omr', 'total_jod', 'amount_tnd', 'fee_iqd', 'amount_lyd'];
     expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
     expect(['costmicros', 'pricemicros'].map(looksLikeMoney)).toEqual([true, true]);
     const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats', 'amount_yen', 'price_yen'];

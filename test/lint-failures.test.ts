@@ -297,6 +297,12 @@ describe('money_lint_schema: safety', () => {
     await expect(lint(SPEC_FILES)).resolves.toMatchObject({ error_count: 1 }); // free again afterwards
   });
 
+  it('gives a folder of a down step and the setup file the fix for down steps', async () => {
+    // Review round 8 (tests): both reasons are listed; pointing at the up migrations helps with both.
+    const e = await failure({ 'db/migrations/setup.sql': 'create schema auth;', 'db/migrations/0001.down.sql': 'drop table t;' }, { setup: 'db/migrations/setup.sql' });
+    expect(e.toText()).toMatch(/^NO_SQL_FILES: .* holds no migrations to run: 1 \.sql file is a down step .*; the setup file runs once, as setup\. Fix: Point migrations at the folder of up migrations, or pass files with the ones to run\.$/);
+  });
+
   it('gives the same result for the same files', async () => {
     const strip = (r: Awaited<ReturnType<typeof lint>>) =>
       JSON.stringify({ ...r, migrations: '', migrations_sha256: '', files_applied: [], findings: r.findings.map((f) => ({ ...f, introduced_in: '' })) });
