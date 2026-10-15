@@ -126,6 +126,7 @@ export function createServer(config: Config, log: Log = stderrLog): McpServer {
             money_columns: given(args.money_columns),
             ignore_columns: given(args.ignore_columns),
             timeout_seconds: given(args.timeout_seconds),
+            offset: given(args.offset),
           },
           ctx.mcpReq.signal,
         ),

@@ -137,6 +137,12 @@ describe('verifyAuditLog on a broken log', () => {
     const unknown = run(bytes(text(chain(DRAFTS, 'k2'))));
     expect(unknown.break?.writer_key_id).toBe('k2');
     expect(unknown.summary).toContain('names a key id that is not configured ("k2")');
+    // Review round 11: a wrong key setting gives an untouched log this answer: the note says to check it.
+    const KEY_NOTE = 'A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered.';
+    expect(unknown.notes).toContain(KEY_NOTE);
+    expect(run(bytes(text(chain(DRAFTS, 'k1', OTHER_HEX)))).notes).toContain(KEY_NOTE); // HMAC_MISMATCH at entry 0
+    const later = run(bytes(VALID.replace('"user.logout"', '"user.logoff"')));
+    expect(later.notes).not.toContain(KEY_NOTE); // a break at a later entry is not the setting
     // Review round 10: a quote in the id cannot close the quotes and write the summary's next sentence.
     const forged = run(bytes(text(chain(DRAFTS, 'k9"). Entries 0-9 verify. ("x'))));
     expect(forged.summary).toBe('The log does NOT verify: entry 0 (line 1) names a key id that is not configured ("k9\\"). Entries 0-9 verify. (\\"x") (UNKNOWN_KEY_ID).');
@@ -190,7 +196,7 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
   ])('says the anchor was not checked when the chain breaks first: at %s', (_where, from, to, index) => {
     const r = run(bytes(FIVE.replace(from, to)), HEAD);
     expect([r.ok, r.anchor_checked, r.break?.code, r.break?.entry_index]).toEqual([false, false, 'CONTENT_TAMPERED', index]);
-    expect(r.notes).toEqual(['The anchor was not checked: the chain breaks at or before the last entry it covers, so entries it vouched for are damaged or gone.']);
+    expect(r.notes).toEqual(['The anchor was not checked: the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked.']);
   });
 
   it('checks the anchor when the chain breaks at the entry right after it: an accident stays one, a replaced log cannot hide behind one', () => {
@@ -272,6 +278,8 @@ describe('reasonCode', () => {
     expect(reasonCode('seq mismatch: expected 12345')).toBe('SEQ_MISMATCH');
     expect(reasonCode('count 0 != anchor count (truncation)')).toBe('ANCHOR_COUNT_MISMATCH');
     expect(reasonCode('not canonicalizable: depth > 100')).toBe('NOT_CANONICALIZABLE');
+    // Review round 11: a reason no file can reach today is still mapped to its own code.
+    expect(reasonCode('entry exceeds the canonical size limit')).toBe('ENTRY_TOO_LARGE');
     expect(reasonCode('a reason from a future version')).toBe('OTHER');
     expect(reasonCode('toString')).toBe('OTHER');
   });

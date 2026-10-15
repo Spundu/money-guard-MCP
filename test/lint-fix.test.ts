@@ -54,10 +54,10 @@ describe('money_lint_schema: fix_sql', () => {
     expect([fix.delivery_fee, fix.amount_cap, fix.subtotal, fix.price, fix.refund_typed, fix.refund_checked]).toEqual([null, null, null, null, null, null]);
     expect([fix.deposit, fix.refund_total]).toEqual([null, null]);
     expect([fix.total, fix.discount, fix.refund, fix.fee_pence]).toEqual([
-      'ALTER TABLE public.o ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
-      'ALTER TABLE public.o ALTER COLUMN discount TYPE bigint USING round(discount * 100)::bigint;',
-      'ALTER TABLE public.o ALTER COLUMN refund TYPE bigint USING (refund::numeric * 100)::bigint;',
-      'ALTER TABLE public.o ALTER COLUMN fee_pence TYPE bigint USING round(fee_pence)::bigint;', // minor units already: the default keeps its meaning
+      'ALTER TABLE public.o ALTER COLUMN total TYPE bigint USING pg_catalog.round(total OPERATOR(pg_catalog.*) 100)::bigint;',
+      'ALTER TABLE public.o ALTER COLUMN discount TYPE bigint USING pg_catalog.round(discount OPERATOR(pg_catalog.*) 100)::bigint;',
+      'ALTER TABLE public.o ALTER COLUMN refund TYPE bigint USING (refund::numeric OPERATOR(pg_catalog.*) 100)::bigint;',
+      'ALTER TABLE public.o ALTER COLUMN fee_pence TYPE bigint USING pg_catalog.round(fee_pence)::bigint;', // minor units already: the default keeps its meaning
     ]);
     for (const code of ['FLOAT_MONEY', 'NUMERIC_MONEY', 'MONEY_TYPE'] as const) expect(r.fixes[code]).toContain('a default, CHECK constraint or unique index condition that may hold amounts in the old unit');
   });
@@ -74,8 +74,8 @@ describe('money_lint_schema: fix_sql', () => {
     const fix = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
     expect([fix.amount_cap, fix.net, fix.subtotal]).toEqual([null, null, null]); // a function's result; a CHECK across two columns
     expect([fix.total, fix.fee]).toEqual([
-      'ALTER TABLE public.t ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
-      'ALTER TABLE public.t ALTER COLUMN fee TYPE bigint USING round(fee * 100)::bigint;',
+      'ALTER TABLE public.t ALTER COLUMN total TYPE bigint USING pg_catalog.round(total OPERATOR(pg_catalog.*) 100)::bigint;',
+      'ALTER TABLE public.t ALTER COLUMN fee TYPE bigint USING pg_catalog.round(fee OPERATOR(pg_catalog.*) 100)::bigint;',
     ]);
     const fixed = [`${schema}insert into t (status, total, fee) values ('open', 19.99, 2.5);`, `${fix.total}\n${fix.fee}`];
     expect(await sql(fixed, 'select total::text, fee::text from t')).toEqual([{ total: '1999', fee: '250' }]);
@@ -108,11 +108,11 @@ describe('money_lint_schema: fix_sql', () => {
       ].join('\n'),
     });
     expect(r.findings.map((f) => [f.table, f.fix_sql])).toEqual([
-      ['public.charges', 'ALTER TABLE public.charges ALTER COLUMN amount TYPE bigint USING round(amount * 100)::bigint;'], // a zero default and a check of zero: fine
+      ['public.charges', 'ALTER TABLE public.charges ALTER COLUMN amount TYPE bigint USING pg_catalog.round(amount OPERATOR(pg_catalog.*) 100)::bigint;'], // a zero default and a check of zero: fine
       ['public.fees', null],
       ['public.payments', null],
       ['public.payouts', null],
-      ['public.rents', 'ALTER TABLE public.rents ALTER COLUMN amount TYPE bigint USING round(amount * 100)::bigint;'],
+      ['public.rents', 'ALTER TABLE public.rents ALTER COLUMN amount TYPE bigint USING pg_catalog.round(amount OPERATOR(pg_catalog.*) 100)::bigint;'],
       ['public.rents_old', null],
       ['public.tips', null],
     ]);
@@ -139,6 +139,8 @@ describe('money_lint_schema: fix_sql', () => {
       // stops guarding once the column holds pence
       '((amount)::numeric(5,2) = amount)', '((amount)::smallint IS NOT NULL)', '((amount)::integer = amount)', '(amount::int4 > 0)',
       '(amount = round(amount, 0))', '(amount = round(amount, 1))',
+      // review round 11: the amount's text against a pattern
+      "(((price)::text ~ '^-?\\d+\\.\\d\\d$'::text))", "((price)::text LIKE '%.__'::text)", "((price)::text SIMILAR TO '[0-9]+'::text)",
       // review round 10: a text of fixed length is a cap too
       '(((fee)::character varying(5))::text = (fee)::text)', '((fee)::bpchar(4) IS NOT NULL)', '(scale(total) = 0)', '(scale(total) <= 0)', '(scale(total) <= 1)', '(scale(total) < 2)'];
     for (const expr of amounts) expect(holdsNoAmount(expr), expr).toBe(false);
@@ -180,6 +182,12 @@ describe('money_lint_schema: fix_sql', () => {
     for (const other of ['2.50', "'1.50'::money", '(1 - 1)', '0.01', "'0x'::text", 'now()', "''", "('2.5'::numeric)::double precision", "'1e5'::numeric", "'0e'::numeric"]) {
       expect(isZeroOrNullDefault(other), other).toBe(false);
     }
+    // Review round 11: each pass reads the whole text on the server's main thread; 2,000 nested casts
+    // (134,000 characters) took 364 ms each. Past 2,000 characters a default counts as an amount, at once.
+    const deep = `0${`::${'m'.repeat(63)}`.repeat(2000)}`;
+    const started = performance.now();
+    expect(isZeroOrNullDefault(deep)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(50);
   });
 
   it('writes fix_sql itself, quoting every name: a migration that redefines quote_ident cannot change it', async () => {
@@ -189,19 +197,44 @@ describe('money_lint_schema: fix_sql', () => {
         "create or replace function pg_catalog.quote_ident(text) returns text language sql as $$ select 'x; DROP TABLE users; --' $$;\n",
     });
     expect(r.findings.map((f) => f.fix_sql)).toEqual([
-      'ALTER TABLE public."user" ALTER COLUMN "q""price" TYPE bigint USING round("q""price" * 100)::bigint;',
-      'ALTER TABLE public."user" ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
+      'ALTER TABLE public."user" ALTER COLUMN "q""price" TYPE bigint USING pg_catalog.round("q""price" OPERATOR(pg_catalog.*) 100)::bigint;',
+      'ALTER TABLE public."user" ALTER COLUMN total TYPE bigint USING pg_catalog.round(total OPERATOR(pg_catalog.*) 100)::bigint;',
     ]);
     // The statements run as written: a keyword and a double quote are quoted as PostgreSQL quotes them.
     const created = 'create table "user" (total double precision, "q""price" double precision); insert into "user" values (1.5, 2.25);';
     expect(await sql([created, ...r.findings.map((f) => f.fix_sql ?? 'fix_sql missing')], 'select total::text, "q""price"::text as q from "user"')).toEqual([{ total: '150', q: '225' }]);
   });
 
+  it('gives no fix_sql beside a CHECK that reads the whole row, which PostgreSQL records as column 0', async () => {
+    // Review round 11: such a CHECK was never matched to the column; the ALTER then left a cap of £1,000 at £10.
+    const r = await lint({ 'db/migrations/0001.sql': "create table x (id int, price numeric(10,2), constraint wr check ((to_jsonb(x.*) ->> 'price')::numeric <= 1000));" });
+    expect(r.findings.map((f) => [f.column, f.fix_sql])).toEqual([['price', null]]);
+  });
+
+  it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {
+    // Review round 11 (CVE-2018-1058): public.* (double precision, integer) matches exactly and is picked
+    // over pg_catalog's, running as whoever applies the fix. Both kinds of fix, and the money type's.
+    const r = await lint({ 'db/migrations/0001.sql': 'create table t (price double precision, amount_pence double precision, refund money);' });
+    const fixes = r.findings.map((f) => f.fix_sql ?? 'fix_sql missing');
+    const planted = [
+      'create table t (price double precision, amount_pence double precision, refund money); insert into t values (1.5, 2.25, 3.5);',
+      'create table ran (what text);',
+      "create function public.evil_times(a double precision, b integer) returns double precision language plpgsql as $$ begin insert into ran values ('*'); return a * 7; end $$;",
+      'create operator public.* (leftarg = double precision, rightarg = integer, function = public.evil_times);',
+      "create function public.evil_numeric(a numeric, b integer) returns numeric language plpgsql as $$ begin insert into ran values ('numeric *'); return a * 7; end $$;",
+      'create operator public.* (leftarg = numeric, rightarg = integer, function = public.evil_numeric);',
+      "create function public.round(a double precision) returns double precision language plpgsql as $$ begin insert into ran values ('round'); return 7; end $$;",
+    ];
+    expect(await sql([...planted, ...fixes], "select (select count(*) from ran)::text as ran, price::text, amount_pence::text, refund::text from t")).toEqual([
+      { ran: '0', price: '150', amount_pence: '2', refund: '350' },
+    ]);
+  });
+
   it('gives no fix_sql where "minor" or "sat" may not name the unit: price_sat may be Saturday\'s price', async () => {
     const r = await lint({ 'db/migrations/0001.sql': 'create table t (price_sat double precision, price_mon double precision, amount_minor_units double precision);' });
     expect(Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]))).toEqual({
-      amount_minor_units: 'ALTER TABLE public.t ALTER COLUMN amount_minor_units TYPE bigint USING round(amount_minor_units)::bigint;',
-      price_mon: 'ALTER TABLE public.t ALTER COLUMN price_mon TYPE bigint USING round(price_mon * 100)::bigint;',
+      amount_minor_units: 'ALTER TABLE public.t ALTER COLUMN amount_minor_units TYPE bigint USING pg_catalog.round(amount_minor_units)::bigint;',
+      price_mon: 'ALTER TABLE public.t ALTER COLUMN price_mon TYPE bigint USING pg_catalog.round(price_mon OPERATOR(pg_catalog.*) 100)::bigint;',
       price_sat: null,
     });
   });
@@ -220,8 +253,8 @@ describe('money_lint_schema: fix_sql', () => {
     const r = await lint({ 'db/migrations/0001.sql': table }, { money_columns: ['t.left', 't.between'] });
     const fixes = r.findings.map((f) => f.fix_sql ?? 'fix_sql missing');
     expect(fixes).toEqual([
-      'ALTER TABLE public.t ALTER COLUMN "between" TYPE bigint USING round("between" * 100)::bigint;',
-      'ALTER TABLE public.t ALTER COLUMN "left" TYPE bigint USING round("left" * 100)::bigint;',
+      'ALTER TABLE public.t ALTER COLUMN "between" TYPE bigint USING pg_catalog.round("between" OPERATOR(pg_catalog.*) 100)::bigint;',
+      'ALTER TABLE public.t ALTER COLUMN "left" TYPE bigint USING pg_catalog.round("left" OPERATOR(pg_catalog.*) 100)::bigint;',
     ]);
     await expect(sql([table, ...fixes])).resolves.toEqual([{ ok: 1 }]);
   });
@@ -233,7 +266,7 @@ describe('money_lint_schema: fix_sql', () => {
     const r = await lint({ 'db/migrations/0001.sql': table });
     expect(Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]))).toEqual({
       total_passengers: null,
-      total_paid: 'ALTER TABLE public.t ALTER COLUMN total_paid TYPE bigint USING round(total_paid * 100)::bigint;',
+      total_paid: 'ALTER TABLE public.t ALTER COLUMN total_paid TYPE bigint USING pg_catalog.round(total_paid OPERATOR(pg_catalog.*) 100)::bigint;',
       net_ytd: 'ALTER TABLE public.t ALTER COLUMN net_ytd TYPE bigint;',
     });
     expect(r.fixes.FLOAT_MONEY).toContain('a name that may not be money (total_passengers: if it is, list it in money_columns)');
@@ -242,7 +275,7 @@ describe('money_lint_schema: fix_sql', () => {
     expect([example, moneyByGuess(example)]).toEqual(['total_passengers', true]);
     const listed = await lint({ 'db/migrations/0001.sql': table }, { money_columns: ['t.total_passengers'] });
     expect(listed.findings.find((f) => f.column === 'total_passengers')?.fix_sql).toBe(
-      'ALTER TABLE public.t ALTER COLUMN total_passengers TYPE bigint USING round(total_passengers * 100)::bigint;',
+      'ALTER TABLE public.t ALTER COLUMN total_passengers TYPE bigint USING pg_catalog.round(total_passengers OPERATOR(pg_catalog.*) 100)::bigint;',
     );
   });
 });

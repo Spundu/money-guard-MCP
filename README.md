@@ -49,7 +49,8 @@ claude mcp add --transport stdio money-guard -- node /path/to/money-guard-mcp/di
 
 On Windows, write the path with forward slashes: `C:/Users/you/money-guard-mcp/dist/index.js`. Type
 `/mcp` in Claude Code to see that the server is connected. (To verify audit logs, use the project
-file under [Settings](#settings) instead of this command: it passes the key.)
+file under [Settings](#settings) instead of this command: it passes the key. Claude Desktop and other
+MCP clients are set up under [Settings](#settings) too.)
 
 Claude Code tells the server which project is open (`CLAUDE_PROJECT_DIR`), and every path the tools
 take is relative to that folder. Then ask, for example:
@@ -159,7 +160,7 @@ same JSON is also sent as text, for clients that ignore structured results. This
       "column": "total",
       "type": "double precision",
       "introduced_in": "db/migrations/0001_init.sql",
-      "fix_sql": "ALTER TABLE public.orders ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;"
+      "fix_sql": "ALTER TABLE public.orders ALTER COLUMN total TYPE bigint USING pg_catalog.round(total OPERATOR(pg_catalog.*) 100)::bigint;"
     },
     {
       "code": "NUMERIC_MONEY",
@@ -168,10 +169,11 @@ same JSON is also sent as text, for clients that ignore structured results. This
       "column": "platform_fee",
       "type": "numeric(10,2)",
       "introduced_in": "db/migrations/0002_fees.sql",
-      "fix_sql": "ALTER TABLE public.orders ALTER COLUMN platform_fee TYPE bigint USING round(platform_fee * 100)::bigint;"
+      "fix_sql": "ALTER TABLE public.orders ALTER COLUMN platform_fee TYPE bigint USING pg_catalog.round(platform_fee OPERATOR(pg_catalog.*) 100)::bigint;"
     }
   ],
   "findings_truncated": false,
+  "next_offset": null,
   "other_float_columns": [],
   "other_float_columns_count": 0,
   "fixes": {
@@ -376,7 +378,7 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 940 tests. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
+- `npm test` runs about 950 tests, about 500 of them rows of the column-name table. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
   the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
   on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.

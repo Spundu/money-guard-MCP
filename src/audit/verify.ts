@@ -209,6 +209,8 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
  * before the break verified, so an anchor that covers only them is still checked: a replaced log must
  * not hide behind a later break that looks like an accident (a torn last line).
  */
+const KEY_SETTING_NOTE = 'A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered.';
+
 function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: string | null }, anchor: Anchor | undefined, notes: string[], result: MakeResult): AuditResult {
   const index = verdict.brokenAt ?? 0;
   const crlf = firstCrlfLine(bytes);
@@ -219,7 +221,7 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
     if (replaced) return replaced;
     if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
   } else if (anchor) {
-    notes.push('The anchor was not checked: the chain breaks at or before the last entry it covers, so entries it vouched for are damaged or gone.');
+    notes.push('The anchor was not checked: the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked.');
   }
   const raw = verdict.reason ?? 'unknown';
   const code = reasonCode(raw);
@@ -230,6 +232,9 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const brk: AuditBreak = { entry_index: index, line, code, reason };
   const rawKeyId = code === 'UNKNOWN_KEY_ID' || code === 'HMAC_MISMATCH' ? writerKeyIdAt(bytes, index) : undefined;
   if (rawKeyId !== undefined) brk.writer_key_id = clip(rawKeyId, 64);
+  // An unknown key id, or a seal that fails from the first entry, is what a wrong key setting gives an
+  // untouched log (review round 11): say so, so that the setting is checked before tampering is reported.
+  if (code === 'UNKNOWN_KEY_ID' || (code === 'HMAC_MISMATCH' && index === 0)) notes.push(KEY_SETTING_NOTE);
 
   const where = line === null ? `entry ${index}` : `entry ${index} (line ${line})`;
   let meaning: string;

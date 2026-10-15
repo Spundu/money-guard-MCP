@@ -166,7 +166,7 @@ const GENERIC_MEASURE_WORDS: ReadonlySet<string> = new Set([
  */
 const TOTALLED_WORDS: ReadonlySet<string> = new Set(
   [...COUNT_WORDS, ...MEASURE_WORDS, ...GENERIC_MEASURE_WORDS, 'days', 'nights', 'weeks', 'months', 'years', 'hours', 'minutes', 'seconds', 'ms'].filter(
-    (w) => !['unit', 'units', 'margin'].includes(w),
+    (w) => !['unit', 'units', 'margin', 'current'].includes(w), // current_total: this period's (review round 11)
   ),
 );
 
@@ -250,7 +250,7 @@ const SAYS_MONEY: ReadonlySet<string> = new Set([
 
 /**
  * "money"; "guess" when only a generic money word says so, followed by a word that does not say
- * money ("total_deposited", but also "total_passengers"); "not".
+ * money ("total_passengers", "net_ytd"); "not".
  */
 type Verdict = 'money' | 'guess' | 'not';
 
@@ -264,6 +264,16 @@ export function looksLikeMoney(name: string): boolean {
  */
 export function moneyByGuess(name: string): boolean {
   return judgeWords(knownWords(name)) === 'guess';
+}
+
+/**
+ * Whether the total at `at` totals a count or a measure: one of those stands between it and the money
+ * word nearest before it ("fee_count_total", "weight_total"), not before that word ("energy_cost_total",
+ * "usage_charge_total" total costs and charges).
+ */
+function totalsAMeasure(ws: readonly string[], at: number): boolean {
+  const money = ws.slice(0, at).map((w) => MONEY_WORDS.has(w) && w !== 'total' && w !== 'totals').lastIndexOf(true);
+  return ws.slice(money + 1, at).some((w) => TOTALLED_WORDS.has(w));
 }
 
 function judgeWords(all: readonly string[]): Verdict {
@@ -286,18 +296,19 @@ function judgeWords(all: readonly string[]): Verdict {
   // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
   // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
   // exponent), it is not an amount.
-  // A count or measure before a total says what it totals, whatever else the name holds: "weight_total",
-  // and "fee_count_total" is a count of fees (review round 10).
-  if ((last === 'total' || last === 'totals') && ws.slice(0, -1).some((w) => TOTALLED_WORDS.has(w))) return 'not';
+  // A count or measure between the last money word and a final total says what it totals:
+  // "weight_total", and "fee_count_total" is a count of fees (review round 10); "energy_cost_total" is a
+  // total of costs (review round 11).
+  if ((last === 'total' || last === 'totals') && totalsAMeasure(ws, ws.length - 1)) return 'not';
   if (ws.some((w) => MONEY_WORDS.has(w) && w !== 'minor' && !GENERIC_MONEY_WORDS.has(w))) return 'money';
   // A generic money word counts unless a measure follows it: "total_paid" and "net_ytd" are money,
   // "total_co2" and "credit_utilization" measures. "units" after minor or smallest is the unit of the money.
   // A count or measure before a total says what it totals: "weight_total", "credit_score_total".
-  // Words after it, or before it, that do not say money leave a guess: "total_deposited",
+  // Words after it, or before it, that do not say money leave a guess: "net_ytd",
   // "total_passengers", "water_total" (review round 10: "steps_total" was money, "total_steps" not).
   const generic = ws.map((w) => GENERIC_MONEY_WORDS.has(w)).lastIndexOf(true);
   if (generic >= 0) {
-    if ((ws[generic] === 'total' || ws[generic] === 'totals') && ws.slice(0, generic).some((w) => TOTALLED_WORDS.has(w))) return 'not';
+    if ((ws[generic] === 'total' || ws[generic] === 'totals') && totalsAMeasure(ws, generic)) return 'not';
     const after = ws.slice(generic + 1);
     const unitOfMoney = (w: string, i: number) => (w === 'unit' || w === 'units') && ['minor', 'smallest', 'lowest'].includes(after[i - 1] ?? '');
     if (after.some((w, i) => GENERIC_MEASURE_WORDS.has(w) || (NOT_MONEY_LAST_WORDS.has(w) && !unitOfMoney(w, i)))) return 'not';

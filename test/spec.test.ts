@@ -8,7 +8,7 @@ import { verifyAuditLog } from '../src/audit/verify.js';
 import { parseAuditKeys } from '../src/config.js';
 import { checkLedgerFile } from '../src/ledger/run.js';
 import { FIXES, NULL_FIX_NOTE } from '../src/lint/catalog.js';
-import { RULE_WORDS, SUB_LISTS, WORD_LISTS } from '../src/lint/names.js';
+import { RULE_WORDS, SUB_LISTS, WORD_LISTS, moneyByGuess } from '../src/lint/names.js';
 import { lintSchema } from '../src/lint/run.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from '../src/text.js';
 import type { ToolError } from '../src/errors.js';
@@ -145,5 +145,17 @@ describe('SPEC.md and the code agree', () => {
       const list = prose.slice(start + before.length, prose.indexOf(after, start + before.length));
       expect(list.split(/,\s*|\s+or\s+/).sort(), key).toEqual([...set].sort());
     }
+  });
+
+  it('cites as guesses only names the rule takes for guesses (SPEC, README and the fixes text)', () => {
+    // Review round 11: total_deposited, cited as a guess, had become money in round 10, and before it
+    // total_mileage a measure in round 9. Each sentence that speaks of a guess is checked.
+    const README = readFileSync(path.resolve(import.meta.dirname, '..', 'README.md'), 'utf8');
+    const sentences = [SPEC, README, NULL_FIX_NOTE].join('\n').replace(/\s+/g, ' ').split(/(?<=[.;]) /).filter((t) => /by a guess|may not be money/.test(t));
+    const cited = sentences
+      .flatMap((t) => [...t.matchAll(/`([a-z][a-z0-9_]*)`|\((\w+): if it is/g)].map((m) => m[1] ?? m[2] ?? ''))
+      .filter((name) => !['fix_sql', 'null', 'money_columns', 'ignore_columns'].includes(name));
+    expect(cited.length).toBeGreaterThanOrEqual(5);
+    expect(cited.filter((name) => !moneyByGuess(name))).toEqual([]);
   });
 });

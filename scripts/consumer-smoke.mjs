@@ -11,6 +11,7 @@ import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotoc
 const require = createRequire(path.join(process.cwd(), 'package.json'));
 const pkgDir = path.dirname(require.resolve('money-guard-mcp/package.json'));
 const pkg = require('money-guard-mcp/package.json');
+// In CI, GITHUB_WORKSPACE is the clone; by hand, run this from a folder directly inside the clone.
 const shop = path.join(process.env.GITHUB_WORKSPACE ?? path.resolve('..'), 'fixtures', 'shop');
 
 const transport = new StdioClientTransport({

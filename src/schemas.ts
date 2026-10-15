@@ -36,6 +36,7 @@ export const lintInput = z
     money_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Extra columns to treat as money: "table.column" (schema public) or "schema.table.column".'),
     ignore_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Columns never to report (false positives), as "table.column" or "schema.table.column". The findings they would raise are counted in ignored_count.'),
     timeout_seconds: z.number().int().min(5).max(300).nullish().describe('Stop after this many seconds. Default 45: most clients wait at most 60 for an answer.'),
+    offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish().describe('The first finding to return: 0 (default), or the next_offset of the previous result. The lint runs again for each page.'),
   })
   .strict();
 
@@ -111,6 +112,7 @@ export const lintOutput = z.object({
   ignored_count: z.number().int(),
   findings: z.array(lintFinding),
   findings_truncated: z.boolean(),
+  next_offset: z.number().int().nullable(),
   other_float_columns: z.array(z.string()),
   other_float_columns_count: z.number().int(),
   fixes: z.record(z.string(), z.string()),

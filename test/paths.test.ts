@@ -337,7 +337,10 @@ describe('isSensitive', () => {
       'key.json', 'sa-key.json', 'firebase-key.json', '.secrets.json', 'accessTokens.json', 'auth.json',
       // review round 10: more credential names
       'secret.json', 'app-secret.json', '.secret.json', 'apikeys.json', 'api_keys.json', 'api-key.json', 'access-keys.csv', 'aws_access_key.csv',
-      'passwords.csv', 'password.json', 'keyfile.json', 'oauth-token.json']) {
+      'passwords.csv', 'password.json', 'keyfile.json', 'oauth-token.json',
+      // review round 11: a 40-character secret fits the echo limit whole, so these words count anywhere
+      'app_secrets.json', 'prod-secrets.json', 'client-secrets.json', 'access_token.json', 'auth_token.json', 'github-token.json',
+      'credential.json', 'creds.csv', 'privatekey.json', 'secretkey.json']) {
       expect(isSensitive(p), p).toBe(true);
     }
     for (const p of ['ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv',

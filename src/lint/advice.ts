@@ -113,7 +113,8 @@ export function failure(script: Script, err: DbError, context: { available: read
     // pg_dump writes table rows after "COPY ... FROM stdin;" lines; only psql can feed them in.
     fix = `The file holds table data after COPY ... FROM stdin (a pg_dump with data), which only psql can load. ${setup ? 'Take the data out of the setup file.' : 'Lint a schema-only dump (pg_dump --schema-only) or the migrations folder instead.'}`;
   } else if (err.code === '25001') {
-    fix = `money-guard runs each file as one script, where this statement cannot run (psql, which commits statement by statement, can). ${past({ setup: 'Take it out of the setup file.', folder: 'If the file does nothing else, leave it out with files.', single: 'Lint a copy without it.' })}`;
+    // Alone in its file such a statement runs (review round 11): it fails beside others in one script.
+    fix = `money-guard runs each file as one script, and this statement cannot run beside other statements in one (psql, which commits statement by statement, can). ${past({ setup: 'Take it out of the setup file.', folder: 'Move it to a file of its own, or leave the file out with files.', single: 'Lint a copy without it.' })}`;
   } else if (err.code === '0A000' && /^cannot alter type of a column used (?:by|in) /.test(err.message)) {
     fix = 'Something else uses this column (a view, a rule, a policy, a trigger, a generated column or a function with a BEGIN ATOMIC body): in the same migration, drop it before the ALTER and create it again after.';
   } else if (err.code === '55P04') {

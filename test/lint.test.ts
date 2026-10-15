@@ -32,7 +32,7 @@ describe('money_lint_schema: the SPEC.md §3.10 example', () => {
           column: 'total',
           type: 'double precision',
           introduced_in: `${dir}/db/migrations/0001_init.sql`,
-          fix_sql: 'ALTER TABLE public.orders ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;',
+          fix_sql: 'ALTER TABLE public.orders ALTER COLUMN total TYPE bigint USING pg_catalog.round(total OPERATOR(pg_catalog.*) 100)::bigint;',
         },
         {
           code: 'NUMERIC_MONEY',
@@ -41,10 +41,11 @@ describe('money_lint_schema: the SPEC.md §3.10 example', () => {
           column: 'platform_fee',
           type: 'numeric(10,2)',
           introduced_in: `${dir}/db/migrations/0002_fees.sql`,
-          fix_sql: 'ALTER TABLE public.orders ALTER COLUMN platform_fee TYPE bigint USING round(platform_fee * 100)::bigint;',
+          fix_sql: 'ALTER TABLE public.orders ALTER COLUMN platform_fee TYPE bigint USING pg_catalog.round(platform_fee OPERATOR(pg_catalog.*) 100)::bigint;',
         },
       ],
       findings_truncated: false,
+      next_offset: null,
       other_float_columns: [],
       other_float_columns_count: 0,
       fixes: {
@@ -58,8 +59,8 @@ describe('money_lint_schema: the SPEC.md §3.10 example', () => {
     const r = await lint({
       ...SPEC_FILES,
       'db/migrations/0004_fix.sql':
-        'ALTER TABLE public.orders ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;\n' +
-        'ALTER TABLE public.orders ALTER COLUMN platform_fee TYPE bigint USING round(platform_fee * 100)::bigint;\n',
+        'ALTER TABLE public.orders ALTER COLUMN total TYPE bigint USING pg_catalog.round(total OPERATOR(pg_catalog.*) 100)::bigint;\n' +
+        'ALTER TABLE public.orders ALTER COLUMN platform_fee TYPE bigint USING pg_catalog.round(platform_fee OPERATOR(pg_catalog.*) 100)::bigint;\n',
     });
     expect(r.findings).toEqual([]);
     expect(r.summary).toBe('No problems: 4 money columns in 2 tables use safe types. 4 migration files applied.');
@@ -97,15 +98,15 @@ describe('money_lint_schema: judging columns', () => {
     });
     const brief = r.findings.map((f) => [f.code, `${f.table}.${f.column}`, f.type, f.fix_sql]);
     expect(brief).toEqual([
-      ['FLOAT_MONEY', 'public.Orders.TotalPrice', 'double precision', 'ALTER TABLE public."Orders" ALTER COLUMN "TotalPrice" TYPE bigint USING round("TotalPrice" * 100)::bigint;'],
-      ['FLOAT_MONEY', 'public.base_fees.fee', 'double precision', 'ALTER TABLE public.base_fees ALTER COLUMN fee TYPE bigint USING round(fee * 100)::bigint;'],
-      ['FLOAT_MONEY', 'public.shop.amount_pence', 'real', 'ALTER TABLE public.shop ALTER COLUMN amount_pence TYPE bigint USING round(amount_pence)::bigint;'],
-      ['MONEY_TYPE', 'public.shop.plain_label', 'money', 'ALTER TABLE public.shop ALTER COLUMN plain_label TYPE bigint USING (plain_label::numeric * 100)::bigint;'],
+      ['FLOAT_MONEY', 'public.Orders.TotalPrice', 'double precision', 'ALTER TABLE public."Orders" ALTER COLUMN "TotalPrice" TYPE bigint USING pg_catalog.round("TotalPrice" OPERATOR(pg_catalog.*) 100)::bigint;'],
+      ['FLOAT_MONEY', 'public.base_fees.fee', 'double precision', 'ALTER TABLE public.base_fees ALTER COLUMN fee TYPE bigint USING pg_catalog.round(fee OPERATOR(pg_catalog.*) 100)::bigint;'],
+      ['FLOAT_MONEY', 'public.shop.amount_pence', 'real', 'ALTER TABLE public.shop ALTER COLUMN amount_pence TYPE bigint USING pg_catalog.round(amount_pence)::bigint;'],
+      ['MONEY_TYPE', 'public.shop.plain_label', 'money', 'ALTER TABLE public.shop ALTER COLUMN plain_label TYPE bigint USING (plain_label::numeric OPERATOR(pg_catalog.*) 100)::bigint;'],
       ['FLOAT_MONEY', 'public.shop.price_dom', 'amount_ff (double precision)', null],
       ['FLOAT_MONEY', 'public.shop.prices', 'double precision[]', null],
-      ['MONEY_TYPE', 'public.shop.refund', 'money', 'ALTER TABLE public.shop ALTER COLUMN refund TYPE bigint USING (refund::numeric * 100)::bigint;'],
+      ['MONEY_TYPE', 'public.shop.refund', 'money', 'ALTER TABLE public.shop ALTER COLUMN refund TYPE bigint USING (refund::numeric OPERATOR(pg_catalog.*) 100)::bigint;'],
       ['FLOAT_MONEY', 'public.shop.total', 'double precision', null],
-      ['NUMERIC_MONEY', 'public.sales.amount', 'numeric', 'ALTER TABLE public.sales ALTER COLUMN amount TYPE bigint USING round(amount * 100)::bigint;'],
+      ['NUMERIC_MONEY', 'public.sales.amount', 'numeric', 'ALTER TABLE public.sales ALTER COLUMN amount TYPE bigint USING pg_catalog.round(amount OPERATOR(pg_catalog.*) 100)::bigint;'],
       ['SMALLINT_MONEY', 'public.shop.fee', 'smallint', 'ALTER TABLE public.shop ALTER COLUMN fee TYPE bigint;'],
     ]);
     // base is not money-named; lat and tax_rate are not money: listed for the model to look at.
@@ -184,19 +185,21 @@ describe('money_lint_schema: judging columns', () => {
   it('refuses a money_columns or ignore_columns entry that names no column, and suggests the real one', async () => {
     const files = { 'db/migrations/0001.sql': 'create table orders (grossvalue numeric(10,2), amount numeric(10,2));' };
     expect((await failure(files, { money_columns: ['Orders.GrossValue'] })).toText()).toMatch(
-      /^BAD_COLUMN_NAME: money_columns names "public\.Orders\.GrossValue", which is not a column of any table the migrations create\. Did you mean "public\.orders\.grossvalue"\?/,
+      /^BAD_COLUMN_NAME: money_columns names "Orders\.GrossValue", which is not a column of any table the migrations create\. Did you mean "public\.orders\.grossvalue"\?/,
     );
     expect(await codeOf(files, { ignore_columns: ['orders.amount', 'orders.nothing_like_it'] })).toBe('BAD_COLUMN_NAME');
     // Review round 8: database names stay whole, the suggestion too (up to 191 characters).
     const [s, t] = ['s'.repeat(60), 't'.repeat(60)];
     const long = { 'db/migrations/0001.sql': `create schema ${s}; create table ${s}.${t} (price_total numeric(10,2));` };
     expect((await failure(long, { money_columns: [`${s}.${t}.price_totl`] })).message).toContain(`Did you mean "${s}.${t}.price_total"?`);
+    // Review round 11: the entry as written, and a table named instead of a column is told so.
+    expect((await failure(files, { ignore_columns: ['public.orders'] })).message).toBe('ignore_columns names "public.orders", which is not a column of any table the migrations create. That is a table: name one of its columns.');
     // Review round 10: within a long-named table, the column names are compared, not the first 64 characters.
     const wide = { 'db/migrations/0001.sql': `create table ${t} (amount_aaa_refunded numeric(10,2), amount_zzz numeric(10,2));` };
     expect((await failure(wide, { ignore_columns: [`${t}.amount_zzx`] })).message).toContain(`Did you mean "public.${t}.amount_zzz"?`);
     // Review round 9: a quote in a name is escaped in quotes, the entry's and the suggestion's alike.
     const quote = await failure({ 'db/migrations/0001.sql': 'create table t ("pri""ce" numeric(10,2));' }, { money_columns: ['t.pri"cee'] });
-    expect(quote.message).toBe('money_columns names "public.t.pri\\"cee", which is not a column of any table the migrations create. Did you mean "public.t.pri\\"ce"?');
+    expect(quote.message).toBe('money_columns names "t.pri\\"cee", which is not a column of any table the migrations create. Did you mean "public.t.pri\\"ce"?');
     // A column alone could be in any table: the entry must name one.
     expect((await failure(files, { money_columns: ['grossvalue'] })).message).toBe('money_columns entry "grossvalue" is not "table.column" or "schema.table.column".');
   });
@@ -211,7 +214,7 @@ describe('money_lint_schema: judging columns', () => {
 
   it('refuses a money_columns entry for a column setup creates, and says how to name an inherited column', async () => {
     const setup = await failure({ 'setup.sql': 'create table platform (fee double precision);', 'db/migrations/0001.sql': 'create table t (total bigint);' }, { setup: 'setup.sql', money_columns: ['platform.fee'] });
-    expect(setup.toText()).toMatch(/^BAD_COLUMN_NAME: money_columns names "public\.platform\.fee", a column that setup or the preset creates: only columns the migrations create or change are checked\./);
+    expect(setup.toText()).toMatch(/^BAD_COLUMN_NAME: money_columns names "platform\.fee", a column that setup or the preset creates: only columns the migrations create or change are checked\./);
     const inherited = await failure({ 'db/migrations/0001.sql': 'create table fees (fee bigint); create table child_fees (note text) inherits (fees);' }, { money_columns: ['child_fees.fee'] });
     expect(inherited.fix).toMatch(/Name an inherited column by the table that defines it/);
   });
@@ -230,9 +233,15 @@ describe('money_lint_schema: judging columns', () => {
     const files: Record<string, string> = { 'db/migrations/0000.sql': `create table big (${columns});` };
     for (let i = 1; i <= 34; i += 1) files[`db/migrations/${String(i).padStart(4, '0')}.sql`] = 'select 1;';
     const r = await lint(files);
-    expect([r.findings.length, r.findings_truncated, r.error_count]).toEqual([50, true, 60]);
+    expect([r.findings.length, r.findings_truncated, r.error_count, r.next_offset]).toEqual([50, true, 60, 50]);
+    // Review round 11: the next page, and the last; together they hold every finding once.
+    const second = await lint(files, { offset: 50 });
+    expect([second.findings.length, second.findings_truncated, second.next_offset]).toEqual([10, true, null]);
+    expect(new Set([...r.findings, ...second.findings].map((f) => f.column)).size).toBe(60);
+    expect(second.summary).toMatch(/ Not every finding is listed/);
+    expect((await lint(files, { offset: 999 })).findings).toEqual([]);
     // Review round 9: the summary says so, as the ledger's does.
-    expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns\.$/);
+    expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);
     expect([r.files_applied.length, r.files_applied_truncated, r.files_applied_count]).toEqual([30, true, 35]);
     expect([r.other_float_columns.length, r.other_float_columns_count]).toEqual([30, 32]);
     expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
@@ -259,12 +268,13 @@ describe('money_lint_schema: judging columns', () => {
     expect(r.findings.length).toBeGreaterThan(20);
     expect(r.findings.length).toBeLessThan(50);
     expect([r.findings_truncated, r.error_count]).toEqual([true, 60]);
-    expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns\.$/);
+    expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);
     // Fewer than 50, cut only to fit: the summary says so too (review round 9).
     const fewer = await lint({ [`db/migrations/${'d'.repeat(100)}/0001.sql`]: `create table t_${'y'.repeat(61)} (${columns.slice(0, 45).join(', ')});` });
     expect([fewer.findings.length < 45, fewer.findings_truncated, fewer.error_count]).toEqual([true, true, 45]);
+    expect(fewer.next_offset).toBe(fewer.findings.length); // the next page starts where this one was cut (round 11)
     expect(fewer.summary.split('Not every finding').length).toBe(2); // once, however many were cut to fit (review round 10)
-    expect(fewer.summary).toMatch(/ Not every finding is listed \(findings_truncated\), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns\.$/);
+    expect(fewer.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);
     expect(r.findings[0]?.column).toBe(`price_00_${'x'.repeat(54)}`);
   });
 

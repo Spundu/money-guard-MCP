@@ -16,8 +16,8 @@ export const DEFAULT_TIMEOUT_SECONDS = 45;
 const MAX_FINDINGS = 50;
 const MAX_LISTED = 30;
 
-/** Ends the summary when the findings list is cut: lint findings come in one page, not several. */
-const NOT_ALL_LISTED = ' Not every finding is listed (findings_truncated), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns.';
+/** Ends the summary when not every finding is in the result (review round 11: the lint has pages now). */
+const NOT_ALL_LISTED = ' Not every finding is listed (findings_truncated): pass next_offset as offset for the next ones.';
 /** Longest column type a finding shows: a schema-qualified domain and its base type fit. */
 const MAX_TYPE_CHARS = 200;
 
@@ -30,6 +30,7 @@ export interface LintParams {
   money_columns?: readonly string[] | undefined;
   ignore_columns?: readonly string[] | undefined;
   timeout_seconds?: number | undefined;
+  offset?: number | undefined;
 }
 
 export interface LintResult {
@@ -47,20 +48,22 @@ export interface LintResult {
   ignored_count: number;
   findings: LintFinding[];
   findings_truncated: boolean;
+  /** Where the next findings start (pass it as offset), or null when none come after these. */
+  next_offset: number | null;
   other_float_columns: string[];
   other_float_columns_count: number;
   fixes: Partial<Record<LintCode, string>>;
 }
 
-/** "table.column" (schema public) or "schema.table.column", normalised to the three-part form. */
-function columnSet(entries: readonly string[] | undefined, param: string): Set<string> {
-  const set = new Set<string>();
+/** Each entry by its full name (schema.table.column), mapped to the entry as the caller wrote it, for errors. */
+function columnSet(entries: readonly string[] | undefined, param: string): Map<string, string> {
+  const set = new Map<string, string>();
   for (const entry of entries ?? []) {
     const parts = entry.split('.').map((p) => p.trim());
     if (parts.length < 2 || parts.length > 3 || parts.some((p) => p === '')) {
       throw new ToolError('BAD_COLUMN_NAME', `${param} entry ${quoted(entry, 80)} is not "table.column" or "schema.table.column".`, 'Write each column as table.column (schema public) or schema.table.column, as the names appear in the database.');
     }
-    set.add(parts.length === 2 ? `public.${parts.join('.')}` : parts.join('.'));
+    set.set(parts.length === 2 ? `public.${parts.join('.')}` : parts.join('.'), entry);
   }
   return set;
 }
@@ -96,6 +99,7 @@ export async function lintSchema(root: Root, params: LintParams, signal?: AbortS
 
 async function lint(root: Root, params: LintParams, signal: AbortSignal | undefined): Promise<LintResult> {
   const listed = columnSet(params.money_columns, 'money_columns');
+  const listedNames: ReadonlySet<string> = new Set(listed.keys());
   const ignored = columnSet(params.ignore_columns, 'ignore_columns');
   const sources = collectSources(root, params);
 
@@ -121,7 +125,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const knownSet = new Set(known);
   const fromSetup = new Set(db.detail.map(keyOf));
   for (const [param, set] of [['money_columns', listed], ['ignore_columns', ignored]] as const) {
-    for (const entry of set) if (!knownSet.has(entry)) throw unknownColumn(param, entry, known, fromSetup.has(entry));
+    for (const [entry, given] of set) if (!knownSet.has(entry)) throw unknownColumn(param, entry, given, known, fromSetup.has(entry));
   }
 
   const findings: LintFinding[] = [];
@@ -139,7 +143,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     const table = `${row.schema_name}.${row.table_name}`;
     tables.add(table);
     const base = baseType(row);
-    const money = isMoneyColumn(row, listed);
+    const money = isMoneyColumn(row, listedNames);
     if (ignored.has(key)) {
       if (judge(row, money, params.accept_numeric ?? false) !== null) ignoredCount += 1;
       if (money || base === 'money') ignoredMoney += 1;
@@ -162,7 +166,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
         // format_type writes it, and a migration can replace that function: cut like any outside text.
         type: clip(displayType(row), MAX_TYPE_CHARS),
         introduced_in: clipPath(sources.files[since]?.rel ?? '?'),
-        fix_sql: fixSql(row, code, db.reserved, listed),
+        fix_sql: fixSql(row, code, db.reserved, listedNames),
       });
     } else if (!money && (base === 'real' || base === 'double precision')) {
       otherFloats.push(escapeUnsafe(key));
@@ -183,8 +187,11 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   otherFloats.sort();
   const applied = sources.files.map((f) => clipPath(f.rel));
 
+  // A page of findings: they are sorted, and the lint gives the same result for the same files.
+  const offset = params.offset ?? 0;
+  const page = findings.slice(offset, offset + MAX_FINDINGS);
   const result: LintResult = {
-    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }) + (findings.length > MAX_FINDINGS ? NOT_ALL_LISTED : ''),
+    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }) + (offset > 0 || findings.length > offset + MAX_FINDINGS ? NOT_ALL_LISTED : ''),
     migrations: clipPath(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -196,8 +203,9 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     error_count: errors,
     warning_count: warnings,
     ignored_count: ignoredCount,
-    findings: findings.slice(0, MAX_FINDINGS),
-    findings_truncated: findings.length > MAX_FINDINGS,
+    findings: page,
+    findings_truncated: offset > 0 || findings.length > offset + page.length,
+    next_offset: findings.length > offset + page.length ? offset + page.length : null,
     other_float_columns: otherFloats.slice(0, MAX_LISTED),
     other_float_columns_count: otherFloats.length,
     fixes,
@@ -212,6 +220,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   while (result.findings.length > 1 && overBudget(result)) {
     result.findings.pop();
     result.findings_truncated = true;
+    result.next_offset = offset + result.findings.length; // the next page starts where this one was cut
     if (!result.summary.endsWith(NOT_ALL_LISTED)) result.summary += NOT_ALL_LISTED;
   }
   return result;
@@ -266,11 +275,11 @@ function canHoldAmount(row: DetailRow): boolean {
   return row.base_kind === 'c' || row.base_kind === 'b';
 }
 
-function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string, known: readonly string[], madeBySetup: boolean): ToolError {
+function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string, given: string, known: readonly string[], madeBySetup: boolean): ToolError {
   if (madeBySetup) {
     return new ToolError(
       'BAD_COLUMN_NAME',
-      `${param} names ${quoted(entry, 120)}, a column that setup or the preset creates: only columns the migrations create or change are checked.`,
+      `${param} names ${quoted(given, 120)}, a column that setup or the preset creates: only columns the migrations create or change are checked.`,
       'Leave the entry out: setup and the preset stand for what your platform provides, and their columns are not checked.',
     );
   }
@@ -282,10 +291,12 @@ function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string,
   const same = known.filter((k) => tableOf(k) === tableOf(entry));
   const column = same.length > 0 ? closest(columnOf(entry), same.map(columnOf)) : undefined;
   const near = same.length > 0 ? same.find((k) => columnOf(k) === column) : closest(entry, known);
-  const hint = near === undefined ? '' : ` Did you mean "${escapeUnsafe(near, true)}"?`; // a database name: whole, as findings show it, a quote escaped
+  // "public.orders" read as table.column is the public schema's table "orders" (review round 11).
+  const table = known.some((k) => k.toLowerCase().startsWith(`${given.trim().toLowerCase()}.`)) ? ' That is a table: name one of its columns.' : '';
+  const hint = table || (near === undefined ? '' : ` Did you mean "${escapeUnsafe(near, true)}"?`); // a database name: whole, as findings show it, a quote escaped
   return new ToolError(
     'BAD_COLUMN_NAME',
-    `${param} names ${quoted(entry, 120)}, which is not a column of any table the migrations create.${hint}`,
+    `${param} names ${quoted(given, 120)}, which is not a column of any table the migrations create.${hint}`,
     'Write each entry as the name appears in the database (PostgreSQL folds unquoted names to lowercase): table.column, or schema.table.column outside the public schema. Name an inherited column by the table that defines it, and a partition\'s column by its parent table.',
   );
 }

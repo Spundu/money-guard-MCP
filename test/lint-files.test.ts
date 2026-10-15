@@ -373,7 +373,7 @@ describe('money_lint_schema: which files run', () => {
     for (const [inside, holds] of [['db/migrations/empty', 'It holds folders but no files.'], ['db/migrations', 'It is empty.']] as const) {
       const dir = newDir();
       mkdirSync(path.join(projectRoot().real, dir, inside), { recursive: true });
-      await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'NO_SQL_FILES', message: `"${dir}/db/migrations" holds no .sql files. ${holds}` });
+      await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'NO_SQL_FILES', message: `"${dir}/db/migrations" holds no .sql files. ${holds}`, fix: expect.stringMatching(/^Check that migrations points at the folder of migrations\. /) }); // the wrong folder first (round 11)
     }
   });
 

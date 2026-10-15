@@ -5,7 +5,10 @@
 // (pg_dump output does) cannot change what these queries read.
 
 import { hasUnsafe } from '../echo.js';
+import { holdsNoAmount, isZeroOrNullDefault } from './amounts.js';
 import { looksLikeMoney, moneyByGuess, unitOfName } from './names.js';
+
+export { holdsNoAmount, isZeroOrNullDefault };
 
 /** Ordinary and partitioned tables in non-system schemas: the relations whose columns are checked. */
 const USER_TABLES = `
@@ -46,7 +49,8 @@ export const SNAPSHOT_SQL = `
  * inherited columns too (reported where defined), and tables that belong to an extension. For fix_sql,
  * what else may hold amounts of the column, in its table and in every partition or inheritance child
  * (an ALTER of the parent changes their column too, matched by name): the defaults; the CHECK
- * constraints, as written back (null for one that also uses another column); and whether a unique or
+ * constraints, as written back (null for one that also uses another column, or the whole row: x.*,
+ * which PostgreSQL records as column 0, review round 11); and whether a unique or
  * exclusion index with an expression or a WHERE clause depends on it (pg_depend). An ordinary index's
  * condition only decides which rows it speeds up, so it does not count. Each of the three is gathered
  * once, by table and column name, and joined to the columns: looked up column by column, it searched
@@ -87,10 +91,10 @@ export const DETAIL_SQL = `
   ),
   col_checks AS (
     SELECT m.root, m.attname,
-           pg_catalog.array_agg(CASE WHEN pg_catalog.array_length(k.conkey, 1) = 1 THEN pg_catalog.pg_get_expr(k.conbin, k.conrelid) END) AS checks
+           pg_catalog.array_agg(CASE WHEN pg_catalog.array_length(k.conkey, 1) = 1 AND k.conkey[1] <> 0 THEN pg_catalog.pg_get_expr(k.conbin, k.conrelid) END) AS checks
     FROM pg_catalog.pg_constraint k
     CROSS JOIN LATERAL pg_catalog.unnest(k.conkey) AS ck (attnum)
-    JOIN members m ON m.rel = k.conrelid AND m.attnum = ck.attnum
+    JOIN members m ON m.rel = k.conrelid AND (m.attnum = ck.attnum OR ck.attnum = 0)
     WHERE k.contype = 'c'
     GROUP BY m.root, m.attname
   ),
@@ -100,7 +104,7 @@ export const DETAIL_SQL = `
     FROM pg_catalog.pg_index i
     JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
       AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = i.indrelid
-    JOIN members m ON m.rel = p.refobjid AND m.attnum = p.refobjsubid
+    JOIN members m ON m.rel = p.refobjid AND (m.attnum = p.refobjsubid OR p.refobjsubid = 0)
     WHERE (i.indisunique OR i.indisexclusion) AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
     GROUP BY m.root, m.attname
   ),
@@ -246,86 +250,6 @@ export function numericScale(declared: string): number | null {
 }
 
 /**
- * Whether a column default, as PostgreSQL writes it back, is zero or NULL ("0", "0.00", "'0'::numeric",
- * "(0)::numeric", "NULL::numeric"): converting the column to minor units leaves such a default right.
- * Anything else, an expression included, counts as an amount.
- */
-export function isZeroOrNullDefault(expr: string): boolean {
-  // Casts and brackets come off one at a time: "('0'::numeric)::double precision" is zero too.
-  let value = expr;
-  for (let previous = ''; previous !== value; ) {
-    previous = value;
-    value = value
-      .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?$/, '')
-      .replace(/^\((.*)\)$/, '$1')
-      .replace(/^'(.*)'$/, '$1');
-  }
-  return value === 'NULL' || /^[+-]?(?:0+(?:\.0*)?|\.0+)(?:e[+-]?\d+)?$/i.test(value);
-}
-
-/**
- * Whether a CHECK expression or an index's condition, as PostgreSQL writes it back, can hold no amount:
- * no number but zero ("(total >= (0)::double precision)", "IS NOT NULL") and no function call, whose
- * result could be one. Converting the column keeps such a condition right; "amount <= 1000.00" or
- * "amount <= max_total()" would turn into a cap a hundred times lower. Digits in a name ("q1_revenue")
- * or a type's size ("0::numeric(10,2)") are not amounts, and neither are the places of a two-decimal
- * guard: "total = round(total, 2)" and "scale(total) <= 2" hold for pence as they did for pounds. A
- * cast of the column to a bounded type ("amount::numeric(5,2) = amount", "amount::smallint") is a cap,
- * and a guard of fewer places ("round(total, 0)", "scale(total) = 0") stops guarding after the fix.
- */
-export function holdsNoAmount(expr: string): boolean {
-  // The patterns below run on the server's main thread, past the time limit's reach: a long text could
-  // hold it for hours (review round 10: 120,000 characters took 35 s). A CHECK that long may hold anything.
-  if (expr.length > MAX_EXPR_CHARS) return false;
-  if (castsToBoundedType(expr)) return false;
-  const rest = expr
-    // A quoted name, or a string literal, read left to right, so a quote inside one cannot start the
-    // other. A literal that holds digits ('1000.00'::numeric, a date) keeps them: it may be an amount.
-    .replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, (token) => (token.startsWith("'") && /\d/.test(token) ? token.slice(1, -1) : 'x'))
-    .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?(?:\[\])?/g, '') // a cast and its type's size
-    // round(x, 2): places, two or more. round(x, 0) guards whole pounds, which pence would not keep.
-    .replace(/\b(?:round|trunc)\(((?:[^()]|\([^()]*\))*),\s*(?:[2-9]|[1-9]\d+)\)/g, '($1)')
-    // scale(x) <= 2 or < 3: places, at least two. "= 2" would fail for every bigint, and "= 0" or
-    // "<= 1" would stop guarding once the column holds pence.
-    .replace(/\bscale\(((?:[^()]|\([^()]*\))*)\)\s*(?:<=\s*(?:[2-9]|[1-9]\d+)|<\s*(?:[3-9]|[1-9]\d+))(?![\d.])/g, '($1)')
-    .replace(/\b[a-z_][a-z0-9_$]*\b(?!\s*\()/gi, 'x'); // a bare name, which may hold digits
-  return !/[1-9]/.test(rest) && !/[\p{L}\p{N}_"]\(/u.test(rest);
-}
-
-/** Longest CHECK or index expression `holdsNoAmount` reads; a real one is a few dozen characters. */
-const MAX_EXPR_CHARS = 2000;
-
-/** A cast type that bounds the value: a size (numeric(5,2), varchar(5): a text of fixed length) or a small integer type. */
-const BOUNDED_TYPE = /(?:numeric|decimal|character varying|varchar|character|char|bpchar|bit varying|varbit|bit)\(\d|(?:smallint|integer|int|int2|int4)\b/y;
-
-/**
- * Whether the expression casts anything but a number to a bounded type ("amount::numeric(5,2) =
- * amount", "(amount)::smallint"): a cap. Each "::" is read once, and its operand found by looking back
- * from it, so the time grows with the length (a pattern over the whole text grew with its square).
- */
-function castsToBoundedType(expr: string): boolean {
-  for (let at = expr.indexOf('::'); at >= 0; at = expr.indexOf('::', at + 2)) {
-    BOUNDED_TYPE.lastIndex = at + 2;
-    if (!BOUNDED_TYPE.test(expr)) continue;
-    let start = at;
-    if (expr[at - 1] === ')') {
-      // A bracketed operand: back to its opening bracket.
-      for (let depth = 0, i = at - 1; i >= 0; i -= 1) {
-        if (expr[i] === ')') depth += 1;
-        else if (expr[i] === '(' && --depth === 0) {
-          start = i;
-          break;
-        }
-      }
-    } else {
-      while (start > 0 && /[\w.$"']/.test(expr[start - 1] ?? '')) start -= 1;
-    }
-    if (!/^\(?'?-?[\d.]*'?\)?$/.test(expr.slice(start, at))) return true;
-  }
-  return false;
-}
-
-/**
  * A name as PostgreSQL's quote_ident writes it: bare when it would read back as the same name (lowercase
  * letters, digits and "_", and not a keyword in `reserved`), otherwise in double quotes with any double
  * quote doubled. Done here, not by quote_ident in the database: the migrations control that database,
@@ -366,7 +290,10 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   // A name that may or may not say minor units (price_minor, price_sat) needs the unit decided first;
   // one that is money only by a guess (total_passengers) needs deciding whether it is money, unless listed.
   const guessed = moneyByGuess(row.column_name) && !listed.has(`${row.schema_name}.${row.table_name}.${row.column_name}`);
-  const convert = unit === 'unsure' || guessed ? null : minor ? `${head} USING round(${c})::bigint;` : times100(`round(${c} * 100)::bigint`);
+  // round and * named with their schema, as pg_dump writes them: a migration that ran in the real database
+  // can define public.round or a public.* that PostgreSQL would pick first, and run it as whoever applies
+  // the fix (CVE-2018-1058; review round 11). The type names bigint and numeric are keywords: always pg_catalog's.
+  const convert = unit === 'unsure' || guessed ? null : minor ? `${head} USING pg_catalog.round(${c})::bigint;` : times100(`pg_catalog.round(${c} OPERATOR(pg_catalog.*) 100)::bigint`);
   switch (code) {
     case 'SMALLINT_MONEY':
       return `${head};`;
@@ -375,7 +302,7 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
       // holds a money value (0::money) cannot work on a bigint, so the ALTER would fail: that one needs
       // writing by hand.
       if ([...(row.defaults ?? []), ...(row.checks ?? []), ...(row.index_exprs ?? [])].some((expr) => expr !== null && /::money\b/.test(expr))) return null;
-      return times100(`(${c}::numeric * 100)::bigint`);
+      return times100(`(${c}::numeric OPERATOR(pg_catalog.*) 100)::bigint`);
     case 'FLOAT_MONEY':
       return convert;
     case 'NUMERIC_MONEY': {

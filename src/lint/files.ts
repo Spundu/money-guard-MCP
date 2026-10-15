@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
-import { clip, quotedPath } from '../echo.js';
+import { quoted, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, leadsTo, readChecked, tooManyLinks, resolveInRoot, toPosix, unreadable, type Root } from '../paths.js';
 
@@ -241,7 +241,7 @@ function describeOtherFiles(seen: Seen): string {
   // Most common first; ties by name, so the text is the same on every machine (readdir order is not).
   const top = [...seen.others].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, 5);
   if (top.length === 0) return seen.entries === 0 ? 'It is empty.' : 'It holds folders but no files.';
-  const kinds = top.map(([ext, n]) => `${n} ${clip(ext, 20)} ${n === 1 ? 'file' : 'files'}`);
+  const kinds = top.map(([ext, n]) => `${n} ${/^\.[a-z0-9]{1,10}$/.test(ext) ? ext : quoted(ext, 20)} ${n === 1 ? 'file' : 'files'}`); // an odd one in quotes (review round 11)
   const last = kinds.pop() ?? '';
   return `It holds ${kinds.length === 0 ? last : `${kinds.join(', ')} and ${last}`}.`;
 }
@@ -321,7 +321,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
       throw new ToolError('NO_SQL_FILES', `${folder} holds no migrations to run: ${left.join('; ')}.`, seen.down > 0 ? 'Point migrations at the folder of up migrations, or pass files with the ones to run.' : SETUP_ONLY_FIX);
     }
     if (found.length === 0) {
-      throw new ToolError('NO_SQL_FILES', `${folder} holds no .sql files. ${describeOtherFiles(seen)}`, 'Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
+      throw new ToolError('NO_SQL_FILES', `${folder} holds no .sql files. ${describeOtherFiles(seen)}`, 'Check that migrations points at the folder of migrations. Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
     }
     found.sort(naturalCompare);
     chosen = found.map((rel) => {

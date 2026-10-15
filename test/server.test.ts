@@ -87,6 +87,15 @@ describe.each(ERAS)('the server, %s era', (era) => {
     }
   });
 
+  it('passes offset to the lint, which gives the next findings and where the ones after start', async () => {
+    // Review round 11: the lint has pages, as the ledger has.
+    const client = await connect(era);
+    const all = (await client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'db/migrations' } })).structuredContent as { findings: unknown[]; next_offset: number | null };
+    const next = (await client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'db/migrations', offset: 1 } })).structuredContent as { findings: unknown[]; next_offset: number | null };
+    expect(all.findings.length).toBeGreaterThan(1);
+    expect([next.findings, next.next_offset]).toEqual([all.findings.slice(1), null]);
+  });
+
   it('answers BUSY from the ledger and audit tools while a lint runs, so the lint memory check keeps running', async () => {
     // Review round 8: a ledger or audit call holds the main thread for seconds, and the lint's memory
     // limit is checked there: a hostile migration grew by gigabytes meanwhile.

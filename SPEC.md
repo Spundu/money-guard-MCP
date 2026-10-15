@@ -146,7 +146,10 @@ Every path argument:
      or `adminsdk` (AWS access-key downloads, Google OAuth, service-account and Firebase keys); names
      starting `secrets` or `.secrets` (`secrets.json`), or named `secret` (`secret.json`, `app-secret.json`);
      `apikey`, `api_key`, `api-keys`, `access-key`, `access_key`, `passwords`, `keyfile` and
-     `oauth_token` (`api_keys.json`, `aws_access_key.csv`, `passwords.csv`); `accesstokens` (`accessTokens.json`);
+     `oauth_token` (`api_keys.json`, `aws_access_key.csv`, `passwords.csv`); `credential`, `creds`, and as
+     words anywhere in the name `secret(s)`, `private_key`, `secret_key` and `access_token`, `auth_token`,
+     `api_token`, `github_token`, `bearer_token`, `refresh_token`, `id_token` (`app_secrets.json`,
+     `access_token.json`); `accesstokens` (`accessTokens.json`);
      `token.json`, `tokens.json` and `auth.json`; `key.json` and names ending `-key.json`, `_key.json`
      or `.key.json` (`sa-key.json`); and a Google Cloud key as
      downloaded, `<project>-<12 hex digits>.json` with at least one letter among the digits (so a
@@ -200,7 +203,7 @@ already read the files).
   setting and a `records_pointer` at 80, a `money_columns` or `ignore_columns` entry at 80 or 120, a log entry's `writer_key_id` at 64, a library reason at 120, a finding's `message` at
   120, a Postgres error message at 300 (it can quote the migration's own text, such as a path the
   migration names) and its detail at 120 (it can quote a row's values, as a unique-key violation does),
-  the reason a lint database stopped at 200, the one header or field name `COLUMN_NOT_FOUND` suggests at 200 (the list beside it cuts each name at 40, and the model needs the whole name to map it), a statement's name in a hint at 60, and a CSV header read as one column is shown up to 40 characters, though that can
+  the reason a lint database stopped at 200, the one header or field name `COLUMN_NOT_FOUND` suggests at 200 (the list beside it cuts each name at 40, and the model needs the whole name to map it), and a CSV header read as one column is shown up to 40 characters, though that can
   be all of a short file's first line. Database table and column names stay whole, so the model can act on them
   (PostgreSQL caps a name at 63 bytes). A column's type is cut at 200 characters: PostgreSQL's
   `format_type` writes it, and a migration can replace that function. A path inside the project stays whole up to 400 characters; a
@@ -346,7 +349,8 @@ never converged: verify by executing, not by parsing.
 > file that introduced it and, where the conversion is clear, an ALTER statement to fix it. Read-only: never connects to a real database
 > and never changes files. Fix findings by adding a NEW migration, then run this tool again: it runs
 > your fix too. If a migration fails because it needs objects your platform provides (Supabase roles,
-> auth schema), pass preset or setup.
+> auth schema), pass preset or setup. Findings come at most 50 at a time: for more, pass the next_offset the
+> result gives as offset.
 
 ### 3.2 Input
 | Parameter | Type | Default | Meaning |
@@ -358,6 +362,7 @@ never converged: verify by executing, not by parsing.
 | `accept_numeric` | boolean | `false` | Treat `numeric`/`decimal` money columns as fine instead of warning about them. |
 | `money_columns` | array of ≤ 200 names (3-200 characters each) | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`, written as the database has them (a result shows a backslash doubled: write it once). A name that holds a dot cannot be listed. |
 | `ignore_columns` | array of ≤ 200 names (3-200 characters each) | none | Columns never to report (false positives), in the same format. The findings they would raise still count in `ignored_count`. |
+| `offset` | integer ≥ 0 | 0 | The first finding to return: the `next_offset` of the previous result. Each page runs the lint again, and the same files give the same findings in the same order. |
 | `timeout_seconds` | integer 5-300 | 45 | Stop after this long. The default stays under the 60 seconds that common MCP clients wait for an answer, so the model gets `TIMEOUT` with the file that was running, not a client error. A larger value only helps with a client that waits longer. |
 
 ### 3.3 Which files run, in which order
@@ -407,7 +412,8 @@ never converged: verify by executing, not by parsing.
 4. Run each migration file as **one script**. PostgreSQL runs a multi-statement script as one
    transaction, so a file behaves as `psql -1 -f` would (`psql -f` alone commits statement by
    statement): a file that adds a value to an enum an earlier file created, then uses it, fails
-   (SQLSTATE 55P04, with a hint), as does `CREATE INDEX CONCURRENTLY` (25001). After each file:
+   (SQLSTATE 55P04, with a hint), as does `CREATE INDEX CONCURRENTLY` beside other statements (25001;
+   alone in its file it runs). After each file:
    - run a **sanity query** (`SELECT 1`, with its own 5-second limit). A file that leaves the database
      unusable or silent (for example `COPY ... PROGRAM`, which PGlite cannot run) fails as
      `MIGRATION_FAILED` for that file. An answer that came while the server's main thread was busy
@@ -513,16 +519,17 @@ word**, with these refinements:
   Words not in the lists count as money: a missed money column gets no warning at all, while a
   measure taken for money gets a finding someone can dismiss. But such a name is money only by a
   guess when a word after the generic word, or before it, is not a money, beside, unit or currency
-  word (`total_deposited`, but also `total_passengers` and `water_total`), and so is a folded name
+  word (`total_passengers`, `net_ytd` and `water_total`), and so is a folded name
   that cannot be split into known words and has total at one end (`totalco2`): its finding has `fix_sql` `null` unless the
   column is listed in `money_columns` (§3.6), so a measure is never multiplied by 100. Before total or totals, a count or a
   measure says what is totalled, so the name is not money: `weight_total`, `hours_total` and
   `credit_score_total` are read as `total_weight`. These words are the counts and the rates and
   measures among the non-money last words, the plural time words (days, nights, weeks, months, years,
   hours, minutes, seconds) and ms, and the measures after
-  generic money words; not unit, units or margin, and not order words or things that have a price
+  generic money words; not unit, units, margin or current, and not order words or things that have a price
   (`units_total`, `margin_total`, `line_items_total`, `orders_total` and `tier_total` are money,
-  some as guesses). This holds even beside another money word: `fee_count_total` counts fees. Other
+  some as guesses). A count or measure after another money word does so too (`fee_count_total` counts
+  fees), but not one before it (`energy_cost_total` is a total of costs). Other
   generic words keep theirs: `usage_charge` is money.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
   `totalamount`. Every word the rule does not know is first split into the words it knows (the money,
@@ -648,21 +655,21 @@ double quotes). money-guard quotes them itself, from the names in the catalog an
 keywords PostgreSQL gives before any migration runs: the migrations control the lint database, and
 one that redefined `quote_ident` could otherwise write the SQL the model is told to run. Its
 conversion follows the name and the declared scale; the test suite runs each kind on stored rows.
-- **`FLOAT_MONEY`:** `ALTER TABLE <t> ALTER COLUMN <c> TYPE bigint USING round(<c> * 100)::bigint;`,
+- **`FLOAT_MONEY`:** `ALTER TABLE <t> ALTER COLUMN <c> TYPE bigint USING pg_catalog.round(<c> OPERATOR(pg_catalog.*) 100)::bigint;`,
   taking the column to hold pounds or dollars. When the name says minor units (a minor-unit word of
-  §3.5 anywhere in it), it only rounds: `USING round(<c>)::bigint`.
+  §3.5, read as §3.5 says), it only rounds: `USING pg_catalog.round(<c>)::bigint`.
 - **`NUMERIC_MONEY`:** the same, by declared scale: 1 or 2 decimal places multiply by 100; scale 0 (or
   less) holds whole numbers, which stay as they are (`... TYPE bigint;`); no declared scale rounds like
   a float. A column finer than a minor unit (more than 2 decimal places, or any decimals on a
   minor-unit name) gets `null`: the unit needs a decision first.
-- **`MONEY_TYPE`:** `... USING (<c>::numeric * 100)::bigint;` (the money type holds major units, with
+- **`MONEY_TYPE`:** `... USING (<c>::numeric OPERATOR(pg_catalog.*) 100)::bigint;` (the money type holds major units, with
   the fraction digits of the database's `lc_monetary`: 2 in the lint database and most locales; check
   a database set to a locale with 0 or 3, such as ja_JP, before running it).
   `null` when the default is written as a money value (`0::money`): PostgreSQL cannot cast it to
   bigint, so the ALTER would fail.
 - **`SMALLINT_MONEY`:** `... TYPE bigint;`
 - **`null`** for a conversion of `FLOAT_MONEY` or `NUMERIC_MONEY` when the name is money only by a
-  guess (§3.5: `total_passengers`, `total_deposited`) and the column is not in `money_columns`: a
+  guess (§3.5: `total_passengers`, `water_total`) and the column is not in `money_columns`: a
   measure must not be multiplied by 100. Widening a whole-number column (`... TYPE bigint;`) is still
   offered.
 - **`null`** also for domain, array and generated columns and for a column a child table inherits,
@@ -674,7 +681,8 @@ conversion follows the name and the declared scale; the test suite runs each kin
 - **`null`** too for a conversion that multiplies by 100 (pounds to pence, the money type) while
   something else may hold amounts of the column in the old unit, in its table or in any partition or
   inheritance child (an ALTER of the parent changes their column too): a default other than zero or
-  `NULL`; a CHECK constraint that holds a number other than zero, calls a function or also uses
+  `NULL`; a CHECK constraint that holds a number other than zero, calls a function, reads the whole row (`x.*`, as
+  `to_jsonb(x.*)` does) or also uses
   another column; or a unique or exclusion index whose expression or `WHERE` clause does (it decides
   which rows may exist together). `ALTER COLUMN ... TYPE` converts the stored rows with `USING`, but
   leaves those as written: a default of 2.50 becomes 3 pence, and `CHECK (amount <= 1000.00)` a cap of
@@ -703,7 +711,7 @@ shows it: the tool runs the new migration too.
 ### 3.7 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found). "N money columns in M tables" counts only the tables that hold a money column. When not every finding is listed (more than 50, or cut to fit 20,000 characters), it ends: "Not every finding is listed (findings_truncated), and the lint has no pages: fix those listed and run again, or put the columns already reviewed in ignore_columns." |
+| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found). "N money columns in M tables" counts only the tables that hold a money column. When not every finding is listed (more than 50, or cut to fit 20,000 characters), it ends: "Not every finding is listed (findings_truncated): pass next_offset as offset for the next ones." |
 | `migrations` | string | The path as given, normalised. |
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
@@ -714,7 +722,8 @@ shows it: the tool runs the new migration too.
 | `money_columns_checked` | integer | Money columns whose type was judged: a number type or `money`. Money-named columns of text, JSON or other types are not counted (§3.6). |
 | `error_count`, `warning_count`, `ignored_count` | integer | Totals, including findings cut by the cap. |
 | `findings` | Finding[] | Errors first, then warnings, then by table and column; **at most 50** (fewer if the result would pass its budget, §2.4). |
-| `findings_truncated` | boolean | |
+| `findings_truncated` | boolean | True when not every finding is in this result: after an `offset`, or with more to come. |
+| `next_offset` | integer or null | Pass it as `offset` for the next findings; `null` when none come after these. |
 | `other_float_columns` | string[] | Float columns whose names do **not** look like money (`schema.table.column`, the first 30, or fewer if the result would pass its budget), so the model can check none of them hold money. |
 | `other_float_columns_count` | integer | |
 | `fixes` | object | One plain explanation per code present (text in §3.10), ending with why `fix_sql` is null where it is. |
@@ -735,7 +744,7 @@ shows it: the tool runs the new migration too.
 |---|---|---|
 | `MIGRATION_FAILED` | A migration file fails, is not UTF-8, leaves the database unusable or silent, or ends inside a transaction it opened (BEGIN with no COMMIT: the files after it would run inside it); or the catalog cannot be read after the last file (§3.4). | The file; the line and column where Postgres gives a `position` (a syntax error or an unknown name does; a missing role or schema, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message, in quotes, a quote inside it escaped (≤ 300 characters; it can quote the migration's own text, as RAISE EXCEPTION writes any, so it can never add a "Fix:" of its own). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
-| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
+| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Check that migrations points at the folder of migrations. Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, more than 10,000 files and folders to look through for them (listing them blocks the server), or folders (or links to folders) nested more than 100 deep. | Points at the folder of migrations, or `files`. |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, or `files` is given with a single `.sql` file. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
@@ -769,8 +778,9 @@ The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42601** (syntax error) on a line starting with `\`: "psql meta-command"; after a
   `COPY ... FROM stdin;` line: "a pg_dump with data; lint a schema-only dump"; otherwise "Fix the SQL
   at that place: PostgreSQL could not read it as written" (setup or a preset cannot help a typo).
-- **25001** (a statement that cannot run inside a script, such as `CREATE INDEX CONCURRENTLY` or
-  `VACUUM`): names the statement, and "if the file does nothing else, leave it out with `files`".
+- **25001** (a statement that cannot run beside others in one script, such as `CREATE INDEX
+  CONCURRENTLY` or `VACUUM`): "move it to a file of its own, or leave the file out with `files`" (alone
+  in its file, it runs).
 - **55P04** (a new enum value used in the transaction that adds it): "split the file in two".
 - **Classes 53 and 54** (out of memory, a program limit): "the file needs more than the lint database
   can give it".
@@ -807,8 +817,8 @@ ROLE ..., CREATE SCHEMA ...).`
   as `MIGRATION_FAILED` (`SETUP_FAILED` for setup) with a hint, and its database is discarded. (The
   worker's JavaScript heap has its own 1 GiB limit too.)
 - One lint at a time, and one database thread at a time (§3.4).
-- At most 50 findings in a result. The counts still cover them all, and the model fixes those and runs
-  the tool again.
+- At most 50 findings in a result, fewer when they would pass 20,000 characters. The counts still cover
+  them all, and `next_offset` gives the next page (the lint runs again for each).
 
 ### 3.10 Example
 Project files:
@@ -836,12 +846,13 @@ shortened):
   "findings": [
     { "code": "FLOAT_MONEY", "severity": "error", "table": "public.orders", "column": "total",
       "type": "double precision", "introduced_in": "db/migrations/0001_init.sql",
-      "fix_sql": "ALTER TABLE public.orders ALTER COLUMN total TYPE bigint USING round(total * 100)::bigint;" },
+      "fix_sql": "ALTER TABLE public.orders ALTER COLUMN total TYPE bigint USING pg_catalog.round(total OPERATOR(pg_catalog.*) 100)::bigint;" },
     { "code": "NUMERIC_MONEY", "severity": "warning", "table": "public.orders", "column": "platform_fee",
       "type": "numeric(10,2)", "introduced_in": "db/migrations/0002_fees.sql",
-      "fix_sql": "ALTER TABLE public.orders ALTER COLUMN platform_fee TYPE bigint USING round(platform_fee * 100)::bigint;" }
+      "fix_sql": "ALTER TABLE public.orders ALTER COLUMN platform_fee TYPE bigint USING pg_catalog.round(platform_fee OPERATOR(pg_catalog.*) 100)::bigint;" }
   ],
   "findings_truncated": false,
+  "next_offset": null,
   "other_float_columns": [],
   "other_float_columns_count": 0,
   "fixes": {
@@ -1180,10 +1191,10 @@ mapped.
 | `ok` | boolean | |
 | `entries_verified` | integer | The entries vouched for: all of them when `ok` (the library's `lastSeq + 1`); otherwise those before the break (`break.entry_index`). For `ANCHOR_HEAD_MISMATCH` that is the entries before the one the anchor recorded (its count less one): their chain verified, though the log may have been replaced. |
 | `break` | object or null | `{ entry_index, line, code, reason, writer_key_id? }`. `line` = `entry_index + 1`, or null when that line does not exist (an anchor that counts more entries). `reason` is sealed-audit-chain's wording, cut at 120 characters (a canonicalization error can quote a key name from the line). |
-| `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so entries it vouched for are damaged or gone (a note says so). |
+| `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |
@@ -1253,7 +1264,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 940); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 950); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
@@ -1323,8 +1334,8 @@ The tests are in `test/` (Vitest, about 940); each file starts with a comment sa
   to end, even when ending is slow), and the messages the real thread sends; the limits a lint gets
   when the caller sets none (a 1 GiB JavaScript heap, 1 GiB of growth, a stuck database called stuck
   after 5 seconds and not sooner); memory that the server's own thread holds during a lint, its
-  JavaScript heap and buffers, on both ways of measuring it (the older one in a process of its own); and EPERM and EBUSY, which this
-  machine cannot raise, through a wrapped file system; a lint that waits for the last database thread
+  JavaScript heap and buffers, on both ways of measuring it (the older one in a process of its own); and EPERM and EBUSY, which the test
+  machines cannot raise on demand, through a wrapped file system; a lint that waits for the last database thread
   keeps its time limit and its cancel.
 - **Protocol:** in-process tests in both eras; a separate process over stdio in both eras, with
   `CLAUDE_PROJECT_DIR`; a client's cancel stopping a running lint; a cancel that arrives before the

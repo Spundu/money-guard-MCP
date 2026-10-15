@@ -17,7 +17,8 @@ Rules:
   sql-migrate, node-pg-migrate and tern, and pg_dump's `\restrict` (the error hints also look for
   `COPY ... FROM stdin;` and for a failing line that starts with `\`, a psql meta-command). Whether to
   offer `fix_sql` reads the expressions PostgreSQL writes back (`holdsNoAmount`, `isZeroOrNullDefault`
-  in src/lint/catalog.ts): keep those patterns cautious, so that doubt withholds the fix.
+  in src/lint/amounts.ts): keep those patterns cautious, so that doubt withholds the fix, and linear
+  with a length cap: they run on the main thread, past the time limit's reach.
 - Never `JSON.parse` untrusted JSON: use `parseLedgerJson` (src/ledger/json.ts; V8 12.9+ misparses
   escaped one-character keys). It keeps numbers as their exact text: never turn one into a float.
 - Money is integers: `BigInt` for sums; amounts in results are strings of minor units; no floats.
