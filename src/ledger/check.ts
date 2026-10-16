@@ -178,7 +178,6 @@ function inFieldOrder({ code, severity, transaction_id, lines, pointers, more_ro
 const pointerPrefix = { raw: '', shown: '' };
 function shownPointer(pointer: string): string {
   const cut = pointer.lastIndexOf('/');
-  if (cut < 0) return escapeUnsafe(pointer);
   const prefix = pointer.slice(0, cut);
   if (prefix !== pointerPrefix.raw) Object.assign(pointerPrefix, { raw: prefix, shown: escapeUnsafe(prefix) });
   return pointerPrefix.shown + pointer.slice(cut);

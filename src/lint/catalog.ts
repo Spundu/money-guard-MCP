@@ -145,7 +145,7 @@ export const DETAIL_SQL = `
                  WHERE p3.refclassid = p2.refclassid AND p3.refobjid = p2.refobjid AND p3.refobjsubid = p2.refobjsubid
                    AND ((p3.classid = p2.classid AND p3.objid = p2.objid)
                      OR (p3.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass AND p3.objid IN (
-                       SELECT k.oid FROM pg_catalog.pg_constraint k WHERE k.conindid = p2.objid AND k.contype IN ('u', 'x', 'p'))))) > 1)
+                       SELECT k.oid FROM pg_catalog.pg_constraint k WHERE k.conindid = p2.objid AND k.contype IN ('u', 'x'))))) > 1)
            ) THEN NULL ELSE d.expr END) AS index_exprs
     FROM idx d
     JOIN members m ON m.rel = d.indrelid AND (d.whole_row OR EXISTS (
@@ -219,7 +219,7 @@ export interface DetailRow {
   defaults: string[] | null;
   /** Each CHECK constraint on the column (in its table, partitions and children) as written back; null for one that also uses another column. Null when there are none. */
   checks: Array<string | null> | null;
-  /** The expressions and WHERE clauses, as written back, of each unique or exclusion index that has either and uses the column, in its table, partitions and children; null for one that also reads another number-typed column there. Null when there are none. */
+  /** The expressions and WHERE clauses, as written back, of each unique or exclusion index that has either and uses the column, in its table, partitions and children; null for one that also reads another column there of a number type or one that can hold a number (an array, a range, a composite, jsonb; not uuid). Null when there are none. */
   index_exprs: Array<string | null> | null;
   via_array: boolean;
   domain_name: string | null;

@@ -98,6 +98,15 @@ describe('parseAuditKeys', () => {
     expect(ok.ok && ok.value.ids.length).toBe(64);
     expect(errorText(parseAuditKeys(ring(65)))).toMatch(/^KEYS_INVALID: MONEY_GUARD_AUDIT_KEYS is malformed: it has 65 pairs; at most 64 are allowed\./);
   });
+
+  it('says to remove quotes kept around the value, and shows none of it', () => {
+    // Review round 17: "'k1=<hex>'" was "a key that is not an even number of hex digits".
+    for (const raw of [`'k1=${KEY_A}'`, `"k1=${KEY_A}"`, ` 'k1=${KEY_A}`]) {
+      const text = errorText(parseAuditKeys(raw));
+      expect(text, raw).toMatch(/^KEYS_INVALID: .* Fix: Remove the quotes around the value/);
+      expect(text).not.toContain(KEY_A);
+    }
+  });
 });
 
 describe('resolveConfig root', () => {

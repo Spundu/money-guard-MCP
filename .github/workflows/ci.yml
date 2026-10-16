@@ -42,8 +42,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # npm test, run once more only after Node.js 24's V8 abort (SPEC.md §1 fact 7).
       - name: Test
-        run: npm test
+        run: node scripts/test-ci.mjs
 
   floor:
     # package.json promises Node >= 22.12; the matrix's 22.x is the newest 22. ESLint 10 itself needs

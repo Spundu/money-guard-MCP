@@ -287,6 +287,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
     options.signal?.addEventListener('abort', onAbort);
 
     worker.on('message', (m: Message) => {
+      if (finished) return; // a message queued before the end must not start a timer again (review round 17)
       switch (m.type) {
         case 'ready':
           postgres = versionOf(m.version);

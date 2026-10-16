@@ -318,6 +318,6 @@ function unknownColumn(param: 'money_columns' | 'ignore_columns', entry: string,
   return new ToolError(
     'BAD_COLUMN_NAME',
     `${param} names ${quoted(given, 120)}, which is not a column of any table the migrations create.${hint}`,
-    'Write each entry as the name appears in the database (PostgreSQL folds unquoted names to lowercase): table.column, or schema.table.column outside the public schema. Name an inherited column by the table that defines it, and a partition\'s column by its parent table.',
+    `Write each entry as the name appears in the database (PostgreSQL folds unquoted names to lowercase): table.column, or schema.table.column outside the public schema. Name an inherited column by the table that defines it, and a partition's column by its parent table.${near?.includes('\\') === true ? ' Write each backslash once: results show it doubled.' : ''}`, // round 17
   );
 }

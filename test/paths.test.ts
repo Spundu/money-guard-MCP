@@ -124,7 +124,7 @@ describe('resolveInRoot', () => {
 
   it('never shows the absolute path of the project, only its folder name', () => {
     const text = messageOf(() => resolveInRoot(root, '../outside/other.csv', CSV));
-    expect(text).toContain(`(${root.name})`);
+    expect(text).toContain(`the project folder "${root.name}".`);
     expect(text).not.toContain(root.real);
   });
 
@@ -380,8 +380,8 @@ describe('isSensitive', () => {
       'AWSCredentials.csv', 'GCPCredentials.json', 'DBPasswords.csv', 'JWTSecret.json', 'AWSSecrets.json', // round 16: an acronym first
       'firebaseCredentials.json', 'awsCredentials.csv', 'userPasswords.csv', 'ChromePasswords.csv', 'App Secrets.json', 'private key.json',
       'key - Copy.json', 'key - Copy (2).json', 'key copy.json', 'key copy 2.json', 'Copy of key.json', 'auth - Copy.json', 'token - Copy.json', 'myproject-1a2b3c4d5e6f - Copy.json', // round 16: system copies
-      'token(1).json', 'key(1).json', 'sa-key(1).json', 'myproject-1a2b3c4d5e6f(1).json', // round 16: no space before the bracket
-      'secrets (1).json', 'access_token (1).json', 'token (1).json', 'key (1).json', 'auth (1).json', 'sa-key (1).json', 'myproject-1a2b3c4d5e6f (1).json']) {
+      'key - Copy - Copy.json', 'key copy copy.json', 'Copy of Copy of key.json', 'key (1) - Copy.json', 'token - Copy (2) - Copy.json', 'myproject-1a2b3c4d5e6f - Copy - Copy.json', // round 17: copies of copies
+      'token(1).json', 'key(1).json', 'sa-key(1).json', 'myproject-1a2b3c4d5e6f(1).json', 'secrets (1).json', 'access_token (1).json', 'token (1).json', 'key (1).json', 'auth (1).json', 'sa-key (1).json', 'myproject-1a2b3c4d5e6f (1).json']) {
       expect(isSensitive(p), p).toBe(true);
     }
     for (const p of [

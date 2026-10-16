@@ -102,8 +102,9 @@ export function internalFix(err: unknown): string {
 export function createServer(config: Config, log: Log = stderrLog): McpServer {
   const server = new McpServer(
     { name: NAME, version: VERSION },
-    // The tool list never changes (SPEC.md §2.7): say so, as the SDK would otherwise advertise listChanged.
-    { capabilities: { tools: { listChanged: false } }, instructions: INSTRUCTIONS, maxToolInputElements: 2500 },
+    // The tool list never changes (SPEC.md §2.7): say so, as the SDK would otherwise advertise listChanged,
+    // and let a 2026-era client keep it a day (review round 17: it was sent as ttlMs 0, private).
+    { capabilities: { tools: { listChanged: false } }, instructions: INSTRUCTIONS, maxToolInputElements: 2500, cacheHints: { 'tools/list': { ttlMs: 86_400_000, cacheScope: 'public' } } },
   );
   const root = (): Root => {
     if (!config.root.ok) throw config.root.error;

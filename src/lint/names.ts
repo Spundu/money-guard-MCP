@@ -201,15 +201,15 @@ const VOCABULARY: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * A folded name split into known words, in as few as can be ("totaldiscount": total + discount, not
- * total + dis + count); undefined when it cannot be split entirely into known words.
+ * A folded name split into known words of two letters or more, in as few as can be ("totaldiscount": total + discount;
+ * round 17: not "marketing" as market + in + g); undefined when it cannot be split entirely into known words.
  */
 function split(word: string): string[] | undefined {
   const best: Array<string[] | undefined> = [[]]; // best[i]: the fewest words that make up word[0, i)
   for (let end = 1; end <= word.length; end += 1) {
     for (let start = 0; start < end; start += 1) {
       const head = best[start];
-      if (head === undefined || !VOCABULARY.has(word.slice(start, end))) continue;
+      if (head === undefined || end - start < 2 || !VOCABULARY.has(word.slice(start, end))) continue;
       const current = best[end];
       if (current === undefined || head.length + 1 < current.length) best[end] = [...head, word.slice(start, end)];
     }
@@ -266,14 +266,17 @@ export function moneyByGuess(name: string): boolean {
   return judgeWords(knownWords(name)) === 'guess';
 }
 
+/** What a balance, budget or allowance holds when it is not money: time off, errors, data (review round 17). */
+const HELD_WORDS: ReadonlySet<string> = new Set([...TOTALLED_WORDS, 'leave', 'holiday', 'holidays', 'pto', 'vacation', 'sick', 'error', 'data', 'baggage', 'luggage', 'stock', 'inventory', 'mass', 'fluid', 'calorie', 'token', 'point']);
+
 /**
- * Whether the total at `at` totals a count or a measure: one of those stands between it and the money
- * word nearest before it ("fee_count_total", "weight_total"), not before that word ("energy_cost_total",
- * "usage_charge_total" total costs and charges).
+ * Whether the total (or balance, budget, allowance) at `at` holds a count or a measure: one of `words`
+ * stands between it and the money word nearest before it ("fee_count_total", "weight_total",
+ * "hours_balance"), not before that word ("energy_cost_total" totals costs).
  */
-function totalsAMeasure(ws: readonly string[], at: number): boolean {
-  const money = ws.slice(0, at).map((w) => MONEY_WORDS.has(w) && w !== 'total' && w !== 'totals').lastIndexOf(true);
-  return ws.slice(money + 1, at).some((w) => TOTALLED_WORDS.has(w));
+function totalsAMeasure(ws: readonly string[], at: number, words: ReadonlySet<string> = TOTALLED_WORDS): boolean {
+  const money = ws.slice(0, at).map((w, i) => MONEY_WORDS.has(w) && w !== 'total' && w !== 'totals' && i !== at).lastIndexOf(true);
+  return ws.slice(money + 1, at).some((w) => words.has(w));
 }
 
 function judgeWords(all: readonly string[]): Verdict {
@@ -293,10 +296,10 @@ function judgeWords(all: readonly string[]): Verdict {
   const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
   if (NOT_MONEY_LAST_WORDS.has(last) && !unitOfAmount) return 'not';
   if ((last === 'value' || last === 'values') && VALUE_WORDS.has(ws.at(-2) ?? '')) return 'money'; // "order_value"
-  // A count or measure between the last money word and a final total says what it totals:
-  // "weight_total", and "fee_count_total" is a count of fees (review round 10); "energy_cost_total" is a
-  // total of costs (review round 11).
+  // A count or measure between the last money word and a final total, balance, budget or allowance says
+  // what it holds: "weight_total", "fee_count_total" (round 10), "leave_balance" (round 17), not "energy_cost_total".
   if ((last === 'total' || last === 'totals') && totalsAMeasure(ws, ws.length - 1)) return 'not';
+  if (/^(?:balance|budget|allowance)s?$/.test(last) && totalsAMeasure(ws, ws.length - 1, HELD_WORDS)) return 'not';
   // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
   // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
   // exponent), it is not an amount.

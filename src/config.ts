@@ -62,7 +62,7 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
   }
   // A whole disk would put every file on it in reach of the tools.
   if (path.parse(real).root === real) return invalid('is the root of a disk');
-  return { ok: true, value: { real, name: clip(path.basename(real), 80) } };
+  return { ok: true, value: { real, name: clip(path.basename(real), 80, true) } };
 }
 
 const HEX = /^[0-9a-fA-F]+$/;
@@ -99,6 +99,11 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
         'Set that variable in the environment that starts your MCP client, or fill in the setting, then restart the client. Never paste a key into the chat.',
       ),
     };
+  }
+  // Quotes left around the value, as some ways of setting a variable keep them (review round 17): say so,
+  // without showing any of the value.
+  if (/^\s*["']|["']\s*$/.test(raw)) {
+    return { ok: false, error: new ToolError('KEYS_INVALID', 'MONEY_GUARD_AUDIT_KEYS starts or ends with a quote mark: the quotes around the value were kept as part of it.', 'Remove the quotes around the value, then restart the client. Never paste a key into the chat.') };
   }
   const fix = 'Write MONEY_GUARD_AUDIT_KEYS as id=hex pairs separated by commas, e.g. k1=<64 hex digits>,k2=<64 hex digits>.';
   const invalid = (what: string) => ({ ok: false as const, error: new ToolError('KEYS_INVALID', `MONEY_GUARD_AUDIT_KEYS is malformed: ${what}.`, fix) });

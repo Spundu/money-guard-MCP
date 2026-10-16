@@ -8,6 +8,7 @@ import { clip, NAME_MAX, quoted } from '../echo.js';
 import { MAX_FIELDS, MAX_ROW_CHARS, rowWithTooManyFields, startLines } from './csv-lines.js';
 import { ToolError } from '../errors.js';
 import { JsonLimitError, JsonNumber, JsonSyntaxError, MAX_FIELD_NAMES, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
+import { isRecord, resolvePointer } from './pointer.js';
 
 export type LedgerFormat = 'csv' | 'json' | 'jsonl';
 
@@ -215,28 +216,6 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
 
 // --------------------------------------------------------------------------------------------- JSON
 
-/** The value at RFC 6901 pointer `pointer` inside `doc`, or undefined. Own properties only. */
-export function resolvePointer(doc: unknown, pointer: string): unknown {
-  if (pointer === '') return doc;
-  let node: unknown = doc;
-  for (const raw of pointer.slice(1).split('/')) {
-    const token = raw.replaceAll('~1', '/').replaceAll('~0', '~');
-    if (Array.isArray(node)) {
-      if (!/^(?:0|[1-9]\d*)$/.test(token)) return undefined;
-      node = node[Number(token)];
-    } else if (isRecord(node) && Object.hasOwn(node, token)) {
-      node = (node as Record<string, unknown>)[token];
-    } else {
-      return undefined;
-    }
-  }
-  return node;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof JsonNumber);
-}
-
 /** How many records the field names for hints are gathered from: a field the first record lacks still counts. */
 const NAMED_RECORDS = 1000;
 
@@ -279,6 +258,16 @@ function describe(value: unknown): string {
 }
 
 /**
+ * The pointer of a field one level down whose name is the last part of `name` ("id" or "meta/id" for
+ * {"meta": {"id": …}}: "/meta/id"), the first in the record's order (review round 17).
+ */
+function nestedPointer(name: string, record: Record<string, unknown>): string | undefined {
+  const last = name.split(/[/.]/).at(-1) ?? '';
+  const parent = Object.keys(record).find((k) => { const v = record[k]; return isRecord(v) && Object.hasOwn(v, last); });
+  return parent === undefined ? undefined : `/${[parent, last].map((p) => p.replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`;
+}
+
+/**
  * JSON and JSONL: a mapped field that no record has is a wrong mapping, not a problem in every row.
  * Report it once, with the first record's fields, as a missing CSV column is reported.
  */
@@ -288,7 +277,7 @@ function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, fir
   for (const [field, name] of mappedEntries(columns)) {
     if (good.some((row) => row.values[field] !== undefined)) continue;
     const keys = Object.keys(first);
-    const near = name.startsWith('/') ? undefined : (dottedPointer(name, first) ?? closest(name, keys));
+    const near = name.startsWith('/') ? nestedPointer(name, first) : (dottedPointer(name, first) ?? nestedPointer(name, first) ?? closest(name, keys));
     const hint = near === undefined ? '' : ` Did you mean ${quoted(near, NAME_MAX)}?`;
     const shown = keys.slice(0, 30).map((k) => `${quoted(k)}`).join(', ');
     const fields = keys.length === 0 ? 'The first record has no fields.' : `The first record's fields are: ${shown}${keys.length > 30 ? ` and ${keys.length - 30} more` : ''}.`;

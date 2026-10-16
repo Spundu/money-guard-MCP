@@ -117,6 +117,9 @@ describe('money_check_double_entry: the rules', () => {
       ['MISSING_VALUE', 'C', 'side', undefined],
     ]);
     expect(r.transactions_not_checked).toBe(3);
+    // Review round 17 (found by mutation): a JSON null side is missing too.
+    const nul = check('.jsonl', '{"t":"A","a":1,"s":null}\n{"t":"A","a":1,"s":"C"}\n', { columns });
+    expect(nul.findings.map((f) => [f.code, f.field])).toEqual([['MISSING_VALUE', 'side']]);
   });
 
   it('reads DR as a debit and CR as a credit', () => {
@@ -199,9 +202,13 @@ describe('money_check_double_entry: the rules', () => {
     const later = check('.jsonl', '{"t":"T0","a":5}\n{"t":"T0","a":-5}\n{"t":"T1","a":10000,"ccy":"GBP"}\n{"t":"T1","a":-10000,"ccy":"EUR"}\n', { columns });
     expect(later.summary).toMatch(/ "ccy" looks like a currency and is not mapped/);
     // Review round 15: currency words in other languages, and ISO 4217.
-    for (const name of ['Währung', 'Devise', 'Moneda', 'valuta', 'iso_4217', 'ISOCurrencyCode']) { // the last: round 16
+    for (const name of ['Währung', 'Devise', 'Moneda', 'valuta', 'iso_4217', 'ISOCurrencyCode', 'ISO4217', 'Divisa']) { // the last two: round 17
       const other = check('.csv', `t,a,${name}\nT1,5,GBP\nT1,-5,EUR\n`, { columns: { transaction_id: 't', amount: 'a' } });
       expect(other.summary, name).toContain(`"${name}" looks like a currency and is not mapped`);
+    }
+    // Round 17: "curr" before a date or a period is "current".
+    for (const name of ['curr_month', 'Curr Date']) {
+      expect(check('.csv', `t,a,${name}\nT1,5,GBP\nT1,-5,EUR\n`, { columns: { transaction_id: 't', amount: 'a' } }).summary, name).not.toContain('looks like a currency');
     }
     const laterJson = check('.json', '[{"t":"T0","a":5},{"t":"T0","a":-5},{"t":"T1","a":10000,"ccy":"GBP"},{"t":"T1","a":-10000,"ccy":"EUR"}]', { columns });
     expect(laterJson.summary).toMatch(/ "ccy" looks like a currency and is not mapped/);

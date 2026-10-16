@@ -15,7 +15,7 @@ import { ToolError } from './errors.js';
 export interface Root {
   /** Absolute real path. Never shown in a result or an error. */
   real: string;
-  /** Its folder name, the only part of it that messages show, as they show it (through `clip`). */
+  /** Its folder name, the only part of it that messages show: escaped and cut (`clip`), a double quote in it escaped, so that messages put it in quotes (review round 17: unquoted, a name could add a "Fix:" of its own). */
   name: string;
 }
 
@@ -111,14 +111,15 @@ export function isSensitive(rel: string): boolean {
   if (segments.includes('.git')) return true;
   // Azure Functions' local secrets, and Docker's registry logins (review round 12).
   if (segments.at(-1) === 'local.settings.json' || (segments.at(-1) === 'config.json' && segments.at(-2) === '.docker')) return true;
-  // A copy's " (1)" before the extension is not part of the name, and camelCase words are words too
-  // (review round 15: "secrets (1).json", "awsCredentials.csv"; round 16: "AWSCredentials.csv"). Both forms are tried: "KeePass" and
-  // "GitHub" are one word each.
-  // A copy the system made is the same file too (review round 16): Windows' "key - Copy (2).json",
-  // macOS's "key copy 2.json", and "Copy of key.json".
-  const last = (raw.at(-1) ?? '')
-    .replace(/^copy of /i, '')
-    .replace(/(?: - copy(?: \(\d+\))?| copy(?: \d+)?| ?\(\d+\))(?=\.[^.]+$)/i, '');
+  // A copy is the same file: " (1)", Windows' " - Copy (2)", macOS's " copy 2" and "Copy of " are left
+  // out, a copy of a copy too, so until nothing changes (review rounds 15-17; each pass shortens the
+  // name, so this ends). camelCase words are words too, also after an acronym ("awsCredentials.csv",
+  // "AWSCredentials.csv"); both forms are tried, as "KeePass" and "GitHub" are one word each.
+  let last = raw.at(-1) ?? '';
+  for (let before = ''; before !== last; ) {
+    before = last;
+    last = last.replace(/^copy of /i, '').replace(/(?: - copy(?: \(\d+\))?| copy(?: \d+)?| ?\(\d+\))(?=\.[^.]+$)/i, '');
+  }
   return [last.toLowerCase(), last.replace(/([a-z0-9])([A-Z])|([A-Z])(?=[A-Z][a-z])/g, (_m, a: string | undefined, b: string | undefined, c: string | undefined) => (c === undefined ? `${a}_${b}` : `${c}_`)).toLowerCase()].some(sensitiveName);
 }
 
@@ -136,7 +137,7 @@ function sensitiveName(base: string): boolean {
     // or a copy adds (review round 14: logins (1).csv, logins-2026-10-16.csv). Words are bounded by anything
     // but a letter or digit, and a space joins two-word names (review round 15: "Bitwarden Export.json").
     (/\.(?:csv|tsv|json|jsonl|ndjson)$/.test(base) &&
-      (/^(?:logins|keystore)(?:[ _-]*(?:\(\d+\)|\d[\d-]*|backup|export|copy))*\.(?:csv|json)$|(?:^|[^a-z])(?:passwords?|credentials?)(?:[^a-z]|$)|(?:^|[^a-z0-9])(?:secrets?|creds|bitwarden|lastpass|1password|keepass|dashlane|private[-_ ]?keys?|secret[-_ ]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_ ]?tokens?)(?:[^a-z0-9]|$)|^\.?secrets[._-]|api[-_ ]?keys?|access[-_ ]?keys?|keyfile|oauth[-_ ]?tokens?|accesstokens|rootkey|client_secret|service[-_ ]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
+      (/^(?:logins|keystore)(?:[ _-]+(?:\d+|backup|export|copy)|[ _-]*\(\d+\))*\.(?:csv|json)$|(?:^|[^a-z])(?:passwords?|credentials?)(?:[^a-z]|$)|(?:^|[^a-z0-9])(?:secrets?|creds|bitwarden|lastpass|1password|keepass|dashlane|private[-_ ]?keys?|secret[-_ ]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_ ]?tokens?)(?:[^a-z0-9]|$)|^\.?secrets[._-]|api[-_ ]?keys?|access[-_ ]?keys?|keyfile|oauth[-_ ]?tokens?|accesstokens|rootkey|client_secret|service[-_ ]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
         // a Google Cloud key as downloaded: the project's name, then 12 hex digits with at least one letter
         /-(?=[0-9a-f]*[a-f])[0-9a-f]{12}\.json$/.test(base)))
   );
@@ -175,7 +176,7 @@ function checkExtension(root: Root, input: string, rel: string, extensions: read
     throw new ToolError(
       'FILE_TYPE_NOT_ALLOWED',
       `${shown(input)} is not one of the file types this tool reads.`,
-      `Pass a file ending in ${extensions.join(', ')} inside the project folder (${root.name}).`,
+      `Pass a file ending in ${extensions.join(', ')} inside the project folder "${root.name}".`,
     );
   }
 }
@@ -205,7 +206,7 @@ export function tooManyLinks(input: string): ToolError {
 }
 
 function linkOutside(root: Root, input: string): ToolError {
-  return new ToolError('PATH_OUTSIDE_ROOT', `${shown(input)} is a link to a place outside the project folder (${root.name}).`, 'Pass a file or folder that really lives inside the project.');
+  return new ToolError('PATH_OUTSIDE_ROOT', `${shown(input)} is a link to a place outside the project folder "${root.name}".`, 'Pass a file or folder that really lives inside the project.');
 }
 
 /**
@@ -222,7 +223,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     const gitBash = process.platform === 'win32' && input.startsWith('/') && !input.startsWith('//');
     throw new ToolError(
       'PATH_OUTSIDE_ROOT',
-      `${shown(input)} is outside the project folder (${root.name}).`,
+      `${shown(input)} is outside the project folder "${root.name}".`,
       `Pass a path inside the project, relative to its root.${gitBash ? ' On Windows a path that starts with "/" begins at the root of the drive: Git Bash paths such as /c/Users/... are not understood.' : ''}`,
     );
   }
@@ -247,7 +248,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     throw new ToolError(
       'PATH_NOT_FOUND',
       `${shown(input)} does not exist. The nearest existing folder is ${quotedPath(near.shown)}.`,
-      `Check the spelling. Paths are relative to the project folder (${root.name}).`,
+      `Check the spelling. Paths are relative to the project folder "${root.name}".`,
     );
   }
   // A link inside the project may point outside it: the REAL target is what gets read.

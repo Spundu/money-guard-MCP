@@ -172,15 +172,18 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
     (name.startsWith('/') ? name.slice(name.lastIndexOf('/') + 1) : name)
       .replace(/([a-z0-9])([A-Z])|([A-Z])(?=[A-Z][a-z])/g, (_m, a: string | undefined, b: string | undefined, c: string | undefined) => (c === undefined ? `${a} ${b}` : `${c} `)) // "ISOCurrencyCode" too (round 16)
       .toLowerCase()
+      .replace(/(\p{L})(?=\p{N})/gu, '$1 ') // "ISO4217" too (round 17)
       .split(/[^\p{L}\p{N}]+/u)
       .filter((w) => w !== '');
-  // hledger, beancount: commodity; German, French, Spanish, Italian and Dutch; ISO 4217 (review round 15)
-  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities', 'währung', 'devise', 'moneda', 'valuta', '4217'];
+  // hledger, beancount: commodity; German, French, Spanish (two words), Italian and Dutch; ISO 4217 (review rounds 15, 17)
+  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities', 'währung', 'devise', 'moneda', 'divisa', 'valuta', '4217'];
+  // "curr" before a date or a period is "current" (review round 17: curr_month, Curr Date).
+  const PERIOD_WORDS = ['date', 'day', 'week', 'month', 'quarter', 'year', 'period', 'time'];
   const looksLikeCurrency = (name: string) => {
     const ws = wordsOf(name);
     // A flag (is_foreign_currency) or a pair (ccy_pair, GBPUSD) is not the currency of a row (review round 12).
     if (['is', 'has'].includes(ws[0] ?? '') || ws.includes('pair') || ws.includes('pairs')) return false;
-    const currency = ws.some((w) => CURRENCY.includes(w)) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
+    const currency = ws.some((w, i) => CURRENCY.includes(w) && !(w === 'curr' && PERIOD_WORDS.includes(ws[i + 1] ?? ''))) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
     return currency && !ws.some((w) => AMOUNT_WORDS.includes(w));
   };
   const endsLikeOne = (name: string) => [...CURRENCY, 'cur', 'code'].includes(wordsOf(name).at(-1) ?? '');

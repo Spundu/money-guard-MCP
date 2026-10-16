@@ -135,9 +135,43 @@ async function main() {
   // Said first, so a time limit or a failure while the catalog is read says so, rather than seeming to
   // happen while the last file ran.
   send({ type: 'reading' });
-  const detail = (await db.query(job.detailSql)).rows;
+  const detail = bounded((await db.query(job.detailSql)).rows);
   send({ type: 'done', detail });
   await db.close();
+}
+
+/**
+ * The catalog rows with their expression texts bounded here, where a migration cannot change the code
+ * (review round 17: it can replace pg_catalog.length, and an inheritance chain multiplied distinct
+ * defaults to 194 million characters). A text over 2,000 characters, past the 50th of a column, or past
+ * 1,000,000 characters in all is left out, and one stand-in takes the place of all a column lost, which
+ * the main thread reads as possibly holding an amount: for defaults a text over 2,000 characters, for
+ * CHECKs and index texts null. A value that is not text is passed on, for the main thread to refuse.
+ * @param {unknown[]} rows
+ */
+function bounded(rows) {
+  let left = 1_000_000;
+  /** @param {unknown} texts @param {string | null} stand */
+  const bound = (texts, stand) => {
+    if (!Array.isArray(texts)) return texts;
+    /** @type {unknown[]} */
+    const out = [];
+    let lost = false;
+    for (const t of texts) {
+      if (typeof t === 'string' && (t.length > 2000 || t.length > left || out.length >= 50)) {
+        lost = true;
+        continue;
+      }
+      if (typeof t === 'string') left -= t.length;
+      out.push(t);
+    }
+    if (lost) out.push(stand);
+    return out;
+  };
+  return rows.map((r) => {
+    const row = /** @type {Record<string, unknown>} */ (r);
+    return { ...row, defaults: bound(row.defaults, 'x'.repeat(2001)), checks: bound(row.checks, null), index_exprs: bound(row.index_exprs, null) };
+  });
 }
 
 main().catch((err) => send({ type: 'crashed', error: dbError(err) }));

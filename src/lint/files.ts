@@ -134,7 +134,7 @@ function countOther(seen: Seen, name: string): void {
 }
 
 function tooManyFiles(): ToolError {
-  return new ToolError('TOO_MANY_FILES', `The folder holds more than ${MAX_FILES.toLocaleString('en-GB')} .sql files.`, 'Point migrations at the folder of migrations only. To lint them all, lint one schema-only dump of the database they build (pg_dump --schema-only): files holds at most as many.');
+  return new ToolError('TOO_MANY_FILES', `The folder holds more than ${MAX_FILES.toLocaleString('en-GB')} .sql files.`, 'Point migrations at the folder of migrations only. To lint them all, lint one schema-only dump of the database they build (pg_dump --schema-only): the files parameter cannot hold more than 2,000 either.');
 }
 
 /**
@@ -189,7 +189,7 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       // inside the project, not look like a secret and, for a file, be .sql. A hostile repository could
       // otherwise ship db/migrations/0002.sql pointing at ../../.env, and run the secrets as SQL.
       const shown = quotedPath(toPosix(path.relative(root.real, full)));
-      const outside = () => new ToolError('PATH_OUTSIDE_ROOT', `${shown} is a link to a place outside the project folder (${root.name}).`, 'Remove the link, or pass files with the migrations to run.');
+      const outside = () => new ToolError('PATH_OUTSIDE_ROOT', `${shown} is a link to a place outside the project folder "${root.name}".`, 'Remove the link, or pass files with the migrations to run.');
       try {
         real = realpathSync.native(full);
       } catch (err) {
@@ -298,7 +298,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
   } else if (args.files !== undefined) {
     chosen = args.files.flatMap((entry) => {
       // An entry written from the project root, as a model may write it (review round 16).
-      const fromRoot = toPosix(entry).startsWith(`${target.rel}/`);
+      const fromRoot = target.rel !== '.' && toPosix(entry).startsWith(`${target.rel}/`); // not "./" of the root itself (round 17)
       const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `${quotedPath(entry)} is not a file in ${folder}.`, fromRoot ? `Every entry of files is a path relative to ${folder}: leave out the leading ${quotedPath(`${target.rel}/`)}.` : `Every entry of files is a path relative to ${folder}. Check the spelling.`);
       const lexical = path.resolve(target.real, entry);
       if (!isInside(target.real, lexical)) throw notInFolder;

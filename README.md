@@ -33,7 +33,9 @@ cautious patterns that withhold the fix when in doubt.
 ## Quick start with Claude Code
 
 You need Node.js 22.12 or newer, and git. (On 22.12, `npm ci` warns that ESLint wants 22.13; the
-warning is harmless, as ESLint is only used in development.)
+warning is harmless, as ESLint is only used in development. Until sealed-audit-chain is on npm, it
+comes from GitHub at a pinned commit, so `npm ci` also warns that it skips an integrity check for
+that git dependency; no GitHub account or SSH key is needed.)
 
 ```sh
 git clone https://github.com/Spundu/money-guard-mcp.git
@@ -118,7 +120,7 @@ money_check_double_entry:
 audit_verify_chain:
   The log does NOT verify: entry 0 (line 1) was edited after it was sealed (CONTENT_TAMPERED).
 money_check_double_entry:
-  PATH_OUTSIDE_ROOT: "../../package.json" is outside the project folder (shop). Fix: Pass a path inside the project, relative to its root.
+  PATH_OUTSIDE_ROOT: "../../package.json" is outside the project folder "shop". Fix: Pass a path inside the project, relative to its root.
 ```
 
 A problem the agent can fix comes back as a tool error whose text starts with a code, then says how
@@ -319,7 +321,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   the catalog in full; the main
   thread judges each column (`names.ts`, `catalog.ts`) and writes `fix_sql` itself. A new lint's
   thread starts only once the last one has ended: on Node.js 24, one that starts while another is
-  being torn down can crash the process (a V8 bug, fixed upstream).
+  being torn down can crash the process (a V8 bug, fixed upstream; the rule makes it rare, and CI
+  runs the tests once more after that crash only).
 - **Ledger check** (`src/ledger/`): strict CSV and JSON readers keep every number as its exact text
   (`json.ts` never uses `JSON.parse`); amounts become `BigInt` minor units, summed per transaction
   and currency.
@@ -345,8 +348,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   and column names stay whole, so the agent can act on them; a path over 400 characters is cut in the
   middle. A result is at most 20,000 characters.
 - **A secrets file the name list misses is not safe from the ledger tool.** The agent chooses which
-  columns to map, so paging through findings can show any three columns of every row in one call, and
-  every column over a few calls. A column name that matches none also lists up to 30 cells of the
+  columns to map, so with one mapping, paging through the findings can show any three columns of
+  every row, and with a few mappings every column. A column name that matches none also lists up to 30 cells of the
   first line, which in a file with no header is data.
 - **Hidden characters are escaped.** In results and errors, characters that can hide text are shown
   as escapes, by Unicode category: control characters, the zero-width and direction characters of
@@ -360,8 +363,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   position only. An agent with shell access can still read its host's environment: see
   [Settings](#settings). The log (stderr) has a startup line and one line per call: the tool, the time
   it took and the outcome code, plus a line for a transport error and, for an unexpected error, its
-  type and code locations (file:line:column), never file content. Writing it never holds up an answer: a host that does not read it
-  loses log lines, not answers.
+  type and code locations (file:line:column), never file content. Writing it never holds up an
+  answer: a host that does not read it loses log lines, not answers.
 - **One schema lint at a time.** A second one gets `BUSY` straight away, and so do the ledger and
   audit tools while a lint runs, so that its memory limit keeps being checked. Otherwise the server
   answers one call after another. Cancelling a lint stops its database at once.
@@ -384,10 +387,11 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 980 tests, about 500 of them rows of the column-name table. They pass on
+- `npm test` runs about 1,000 tests, about 500 of them rows of the column-name table. They pass on
   Windows (Node 24) and on Linux (Node 22, in WSL), where the file-link and permission tests that
-  Windows skips run too. The CI workflow is set up to run them on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
-  has not run yet, and the badge at the top will show its latest run.
+  Windows skips run too. The CI workflow is set up to run them on Linux and Windows with Node 22,
+  24 and 26, and on Node 22.12, the oldest the package supports; it has not run yet, and the badge
+  at the top will show its latest run.
   - This README's example output and JSON, and the example results in SPEC.md (field by field, in
     order), are checked against what the tools return on the demo project.
   - Every sealed-audit-chain failure reason maps to a code that names it: none falls through to `OTHER`.

@@ -39,7 +39,7 @@ internet and never touches a real database.
 | 4 | SDK v2 version and API? | **`@modelcontextprotocol/server` 2.3.1** (2026-10-05), Node ≥ 20, zod ^4.2, Apache-2.0. `registerTool(name, { title, description, inputSchema, outputSchema, annotations, icons, _meta }, handler(args, ctx))`; `ctx.mcpReq.signal` reports cancellation. Arguments that fail the schema come back as an `isError` result before the handler runs; a thrown error becomes an `isError` result; output validation is skipped on `isError`. `maxToolInputElements` caps argument size. **Correction to the plan:** `serveStdio(factory, { legacy })` takes a **factory**, and its default is already `'serve'` (it also serves 2025 clients). **Testing correction:** `InMemoryTransport.createLinkedPair()` connects **2025-era** instances only; 2026-era in-process tests go through `createMcpHandler(factory)` + `handler.fetch`; stdio via `StdioClientTransport`; a client picks the era with `versionNegotiation` (`'auto'` or a pin on `'2026-07-28'`; the default is the 2025 handshake). | npm registry; SDK docs: [tools](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/tools.md), [errors](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/errors.md), [stdio](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/stdio.md), [legacy clients](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/legacy-clients.md), [testing](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/testing.md), [protocol versions](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/protocol-versions.md); the installed `.d.ts` | Entry point is `serveStdio(createServer)`. Tests cover both eras (§7). |
 | 5 | Inspector CLI flags? | **v2.11.0** (Node ≥ 22.19); the v1 flags changed. `npx --yes @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list --format json`; `--method tools/call --tool-name X --tool-args-json '{...}'`; `--protocol-era legacy\|auto\|modern`; `--strict` checks schema portability (exit 6). Exit codes: 0 ok, 1 usage, 4 unreachable, 5 tool error. | [Inspector README](https://github.com/modelcontextprotocol/inspector), [CLI smoke-testing guide](https://github.com/modelcontextprotocol/inspector/blob/main/docs/cli-smoke-testing.md), [CLI README](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md) | CI smoke test in both eras, `--strict` must report nothing (§7). |
 | 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib modules ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start): 33 extensions and auto_explain, a module, not an extension. §3.4 lists the 38 names `CREATE EXTENSION` can load: those 33, autoinc, insert_username and refint (built in, with no module of their own), plpgsql and pgvector. pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code`, and a 1-based `position` when the error points at a place in the text (a syntax error, often an unknown name or schema; not a missing role or a duplicate table). A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
-| 7 | Can one process start a PGlite thread while another ends? | **Not safely on Node.js 24.** Its V8 (13.6) can free a wasm-to-JS import wrapper twice when a thread with WebAssembly is torn down while another thread looks the wrapper up, and then aborts the whole process (`Check failed: jit_page_->allocations_.erase(addr) == 1`). Fixed in V8 (9b8ca54d5a, 68210d500a); the Node.js 24 backport is still open; Node.js 22 and 26 are not affected. Review round 4 saw it twice in nine full test runs. | [nodejs/node#66366](https://github.com/nodejs/node/issues/66366), [nodejs/node#66376](https://github.com/nodejs/node/pull/66376) | One database thread at a time (§3.4). |
+| 7 | Can one process start a PGlite thread while another ends? | **Not safely on Node.js 24.** Its V8 (13.6) can free a wasm-to-JS import wrapper twice when a thread with WebAssembly is torn down while another thread looks the wrapper up, and then aborts the whole process (`Check failed: jit_page_->allocations_.erase(addr) == 1`). Fixed in V8 (9b8ca54d5a, 68210d500a); the Node.js 24 backport is still open; Node.js 22 and 26 are not affected. Review round 4 saw it twice in nine full test runs. | [nodejs/node#66366](https://github.com/nodejs/node/issues/66366), [nodejs/node#66376](https://github.com/nodejs/node/pull/66376) | One database thread at a time (§3.4). That makes it rare, not impossible: review round 17 saw a full test run on a busy Windows machine end with it once. CI runs the tests once more only after this abort (`scripts/test-ci.mjs`). |
 | 8 | Other | `money-guard-mcp` and `sealed-audit-chain` are both **still free on npm**. `csv-parse` 7.0.3 is MIT with no dependencies. The 2026-07-28 security page: servers meant to run locally "SHOULD ... use the `stdio` transport to limit access to just the MCP client". | npm registry; [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) | stdio only. |
 
 ---
@@ -306,7 +306,8 @@ Shared error codes:
 
 ### 2.7 How the tools are shown to the model
 - Order: `money_lint_schema`, `money_check_double_entry`, `audit_verify_chain`. It never changes, and
-  the tool list never changes: the capabilities say `tools.listChanged: false`.
+  the tool list never changes: the capabilities say `tools.listChanged: false`, and in the 2026-07-28
+  era `tools/list` says it may be kept a day (`ttlMs` 86,400,000, `cacheScope` public).
 - Titles:
   - `money_lint_schema`: "Lint money column types"
   - `money_check_double_entry`: "Check double-entry balance"
@@ -329,8 +330,8 @@ Shared error codes:
   > - audit_verify_chain: on an audit log written with sealed-audit-chain, to prove no entry was
   >   edited, reordered or forged, and, given the head an earlier run returned, that none was cut off.
   >
-  > Paths are relative to the project root. Run money_lint_schema on its own: while it runs, the other
-  > tools answer BUSY. Fix schema findings with a NEW migration; never edit migrations that may
+  > Paths are relative to the project root; if you cannot list the project's files, ask the user for
+  > the path. Run money_lint_schema on its own: while it runs, the other tools answer BUSY. Fix schema findings with a NEW migration; never edit migrations that may
   > already have run. Never repair or re-seal an audit log that fails verification: report it.
 
 ### 2.8 Dependencies
@@ -473,7 +474,7 @@ never converged: verify by executing, not by parsing.
 8. **One database thread at a time.** The lint answers at once, but the next lint's worker starts only
    once the last one has ended (a fraction of a second after it was told to). On Node.js 24, a thread
    with WebAssembly that starts while another is being torn down can make V8 abort the whole process
-   (§1, fact 7), and the server would end with it. The tests keep to the same rule: SQL that a test runs
+   (§1, fact 7), and the server would end with it. This makes that rare; it does not rule it out. The tests keep to the same rule: SQL that a test runs
    itself goes through the same path (`test/support/sql.ts`), never PGlite on the test's own thread
    beside lints. A lint that waits for the last thread keeps its time limit (counted from the call:
    `TIMEOUT` "while starting the database") and its cancel, so a thread that never ended would cost
@@ -622,9 +623,15 @@ The word lists:
     calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
     power, usage, capacity, speed, temperature, precision, scale, growth
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
+- **A balance, budget or allowance of something else** is not money: a count or measure word, or one
+  of leave, holiday(s), pto, vacation, sick, error, data, baggage, luggage, stock, inventory, mass,
+  fluid, calorie, token or point, between it and the money word before it (`hours_balance`,
+  `holiday_allowance`, `error_budget`, `data_allowance`; `account_balance` and `travel_allowance` are
+  money), as for a total.
 - **Minor-unit words** (`fix_sql` only rounds; the word right after "per" does not count, as it says
   what the amount is for, as in `price_per_cent`, but a unit word after that does: `price_per_unit_cents`
-  is in cents, and `cost_per_click_micros` or `price_per_unit_kwd` gives `null`; before the money
+  is in cents, and `cost_per_click_micros`, `price_per_unit_kwd` and `price_per_month_minor_units`,
+  whose unit word there is unsure, give `null`; before the money
   word only pence, cents and pennies do: `subunit_price` or `kobo_price` may name a product or a brand,
   so the unit is unsure; "minor", "smallest" or "lowest" before unit, units or denomination count only
   when no money word follows, as `lowest_unit_price` is a product's unit price): pence, penny, pennies, cent, cents, paise, paisa,
@@ -709,7 +716,9 @@ conversion follows the name and the declared scale; the test suite runs each kin
   `NULL`; a CHECK constraint that holds a number other than zero, calls a function, reads the whole row (`x.*`, as
   `to_jsonb(x.*)` does) or also uses
   another column; or a unique or exclusion index whose expression or `WHERE` clause holds such an
-  amount, or also reads another column of a number type (`WHERE amount > approval_limit`, also when
+  amount, or also reads another column of a number type, or of one that can hold a number (an array,
+  a range, a composite, jsonb; not uuid, and not text, so a text column cast to a number there,
+  `WHERE amount > threshold::numeric`, is not seen) (`WHERE amount > approval_limit`, also when
   `approval_limit` is a key column of the index; a key column that no expression or `WHERE` reads does
   not count) (it decides which rows may exist together). A number in such a
   condition withholds the fix even when it is compared only with another column (`WHERE kind = 2`,
@@ -720,24 +729,32 @@ conversion follows the name and the declared scale; the test suite runs each kin
   function's body held as text (plpgsql, or SQL written as a string) to a column, so the ALTER succeeds
   and such a cap becomes a hundred times lower. (A SQL function with a `BEGIN ATOMIC` body is linked:
   the ALTER fails with 0A000, and the hint says to drop and recreate it.)
-  Check triggers and functions that use the column before running a fix that multiplies. Fine, and the fix is offered: a
-  CHECK such as `amount >= 0`; digits in a name (`q1_revenue >= 0`) or a type's size
-  (`0::numeric(10,2)`); a two-decimal guard (`total = round(total, 2)`, `scale(total) <= 2`), which
-  holds for pence as it did for pounds (`trunc(total, 2)` and `scale(total) < 3` too, but not
-  `scale(total) = 2`: a `bigint` has scale 0, so that guard would refuse every value; nor a guard of
-  fewer places, `round(total, 0)`, `scale(total) = 0`, which would stop guarding; nor a cast of the
-  column to a bounded type, `amount::numeric(5,2) = amount`, `amount::smallint`, `amount::bigint` (whole
-  pounds only) or a text of fixed length such as `amount::varchar(5)`, which is a cap or a guard of
-  whole units; nor a cast to a type other than a number, `money`, text, bits, or a built-in type with
-  no rules of its own (a date or time, `interval`, `boolean`, `uuid`, `inet`, `cidr`, JSON, `bytea`):
-  a domain (`price::small_amt`) or an enum, whose own rules may bound the amount. So `price::text <>
-  ''` keeps the fix, and so does a unique index on `(user_id, amount, (created_at::date))`; nor a pattern over the amount's text, `~`, `LIKE`
-  or `SIMILAR TO`, which checks its form in pounds; nor a default, CHECK or index expression longer than
-  2,000 characters, which is not read and counts as holding an amount); a
-  unique index whose condition holds no amount (`WHERE
-  deleted_at IS NULL`); and an ordinary index with a condition (it only decides which rows it speeds
-  up). A `money` column whose default, CHECK or index condition holds a money value (`0::money`) gets
-  `null`: such a value cannot work on a `bigint`, so the ALTER would fail.
+  Check triggers and functions that use the column before running a fix that multiplies.
+
+  **Offered** beside these, which hold no amount of the column:
+  - a CHECK such as `amount >= 0`; digits in a name (`q1_revenue >= 0`) or a type's size
+    (`0::numeric(10,2)`);
+  - a two-decimal guard (`total = round(total, 2)`, `trunc(total, 2)`, `scale(total) <= 2`,
+    `scale(total) < 3`), which holds for pence as it did for pounds;
+  - a cast of the column to text compared with text (`price::text <> ''`), and another column cast to
+    a type with no rules of its own (a unique index on `(user_id, amount, (created_at::date))`);
+  - a unique index whose condition holds no amount (`WHERE deleted_at IS NULL`), and an ordinary index
+    with a condition (it only decides which rows it speeds up).
+
+  **Withheld** (`null`) beside these:
+  - `scale(total) = 2`: a `bigint` has scale 0, so that guard would refuse every value; and a guard of
+    fewer places, `round(total, 0)` or `scale(total) = 0`, which would stop guarding;
+  - a cast of the column to a bounded type, `amount::numeric(5,2) = amount`, `amount::smallint`,
+    `amount::bigint` (whole pounds only) or a text of fixed length such as `amount::varchar(5)`, which
+    is a cap or a guard of whole units;
+  - a cast to a type other than a number, `money`, text, bits, or a built-in type with no rules of its
+    own (a date or time, `interval`, `boolean`, `uuid`, `inet`, `cidr`, JSON, `bytea`): a domain
+    (`price::small_amt`) or an enum, whose own rules may bound the amount;
+  - a pattern over the amount's text, `~`, `LIKE` or `SIMILAR TO`, which checks its form in pounds;
+  - a default, CHECK or index expression longer than 2,000 characters, which is not read and counts as
+    holding an amount;
+  - a money value (`0::money`) in a default, CHECK or index condition of a `money` column: such a
+    value cannot work on a `bigint`, so the ALTER would fail.
 
 When any finding of a code has a null `fix_sql`, that code's text in `fixes` ends with a sentence
 that says why. If a fix fails, for example because a view depends on the column, the next lint run
@@ -781,7 +798,7 @@ shows it: the tool runs the new migration too.
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
 | `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Check that migrations points at the folder of migrations. Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, more than 10,000 files and folders to look through for them (listing them blocks the server), or folders (or links to folders) nested more than 100 deep. | Points at the folder of migrations, or `files`; for more than 2,000 files, which `files` cannot hold either, at one schema-only dump (`pg_dump --schema-only`). |
-| `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, names a file another entry names too, or `files` is given with a single `.sql` file. | |
+| `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, names a file another entry names too, or `files` is given with a single `.sql` file. | For an entry that starts with the migrations folder (written from the project root), the fix says to leave out that leading folder. |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
 | `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: pass a larger `timeout_seconds`, or lint one schema-only dump of the database they build; linting the files in groups would fail, as each group needs the ones before it; while the catalog was read, after every file had run: none of these), and that a limit over 60 seconds helps only with a client that waits longer than that. |
 
@@ -845,7 +862,7 @@ ROLE ..., CREATE SCHEMA ...).`
 - Each file at most 5 MiB; all files together at most 20 MiB.
 - A default, CHECK or index expression is read up to 2,000 characters for `fix_sql` (§3.6), each
   distinct text once, and at most 1,000,000 characters in one lint; a longer one, or one past that, counts
-  as holding an amount, so the fix is withheld (this runs after the time limit has ended).
+  as holding an amount, so the fix is withheld (this runs on the main thread, outside the time limit).
 - Time limit from `timeout_seconds`.
 - Memory: while the files run, the lint may take at most 1 GiB more than it had once the database
   had started. That is the database thread's own memory: its JavaScript heap and what it holds outside
@@ -1080,7 +1097,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung, Devise, Moneda, Valuta or 4217 (`iso_4217`), anywhere in it, or cur alone or before code, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung, Devise, Moneda, Divisa, Valuta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`), or cur alone or before code, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -1094,7 +1111,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.7 Errors (besides §2.5)
 | Code | When |
 |---|---|
-| `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields, a row of more than 1 MiB of values or more than 10,000 fields) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). |
+| `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields, a row of more than 1 MiB of values or more than 10,000 fields) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). When the CSV header holds none of the delimiter but another one, the fix names it: "The header looks separated by ";", not ",": pass delimiter ";"." |
 | `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match (≤ 200 characters, so a long name can be mapped). When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. |
@@ -1250,7 +1267,7 @@ mapped.
 | Code | When |
 |---|---|
 | `KEYS_NOT_CONFIGURED` | `MONEY_GUARD_AUDIT_KEYS` is unset or empty. The fix text says how to set it in the server's env (`.mcp.json` with `${...}`), never in chat. |
-| `KEYS_INVALID` | The setting is malformed, or has more than 64 pairs. Names the pair by its position only, never any of its text. |
+| `KEYS_INVALID` | The setting is malformed, or has more than 64 pairs. Names the pair by its position only, never any of its text. A value that starts or ends with a quote mark is told to drop the quotes kept around it. |
 
 A bad `anchor` (wrong hex, a negative count) is refused by the input schema.
 
@@ -1316,7 +1333,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 980); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 1,000); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit

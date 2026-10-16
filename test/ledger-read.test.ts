@@ -55,6 +55,9 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(check('.csv', 'sep=;', { columns: { transaction_id: 't', amount: 'a' } }).rows_read).toBe(0);
     expect(errorText(() => check('.csv', 'Transaction ID;Amount;Währung\nA;1,00;EUR\n', { columns: { transaction_id: 'Transaction ID', amount: 'Amount' } })))
       .toMatch(/^PARSE_ERROR: Line 2: .* Fix: The header looks separated by ";", not ",": pass delimiter ";"\.$/);
+    // Review round 17 (found by mutation): not when the header holds the delimiter given; the one it holds most.
+    expect(errorText(() => check('.csv', 'id,amount;note\nT1,"1\n', { columns: { transaction_id: 'id', amount: 'amount;note' } }))).toMatch(/ Fix: Fix the CSV at that line/);
+    expect(errorText(() => check('.csv', 'a|b;c;d\nx;1|2,3;4\n', { columns: { transaction_id: 'a', amount: 'b' } }))).toMatch(/ Fix: The header looks separated by ";", not ","/);
     // Review round 16 (found by mutation): "sep = ;" before decimal commas breaks the parse: the same fix.
     expect(errorText(() => check('.csv', 'sep = ;\nid;amount\nT1;12,50\n', { columns: { transaction_id: 'id', amount: 'amount' } }))).toMatch(/^PARSE_ERROR: .* Fix: The first line looks like Excel's "sep=" line/);
     // A sep= line in a form it does not read says to delete it, never to pass a delimiter.
@@ -68,6 +71,10 @@ describe('money_check_double_entry: reading CSV', () => {
       expect(errorText(() => check('.csv', `${bom}sep=;\r\nt;"a\r\n`, { columns: { transaction_id: 't', amount: 'a' } })), bom).toMatch(/^PARSE_ERROR: Line 2: /);
     }
     expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1},{"txn":{"id":"T1"},"a":-1}]', { columns: { transaction_id: 'txn.id', amount: 'a' } }))).toContain('Did you mean "/txn/id"?');
+    // Review round 17: "id", "txn/id" and "/id" find the nested field too.
+    for (const name of ['id', 'txn/id', '/id']) {
+      expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1}]', { columns: { transaction_id: name, amount: 'a' } })), name).toContain('Did you mean "/txn/id"?');
+    }
     expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1}]', { columns: { transaction_id: 'txn.constructor', amount: 'a' } }))).not.toContain('/txn/constructor'); // its own fields only (round 13)
     expect(errorText(() => check('.json', '[{"t~x":{"id":"T1"},"a":1}]', { columns: { transaction_id: 't~x.id', amount: 'a' } }))).toContain('Did you mean "/t~0x/id"?'); // ~ written as ~0 (round 13)
     // Review round 9: a quote in a name is escaped, so a header cannot close the quotes and write a

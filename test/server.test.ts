@@ -53,7 +53,10 @@ describe.each(ERAS)('the server, %s era', (era) => {
   });
 
   it('lists the three tools in a fixed order, read-only, with the texts of SPEC.md', async () => {
-    const { tools } = await (await connect(era)).listTools();
+    const listed = await (await connect(era)).listTools();
+    const { tools } = listed;
+    // Review round 17: a list that never changes may be kept a day (2026-07-28 cache fields only).
+    if (era === 'modern') expect([listed.ttlMs, listed.cacheScope]).toEqual([86_400_000, 'public']);
     expect(tools.map((t) => [t.name, t.title, t.description])).toEqual([
       ['money_lint_schema', 'Lint money column types', LINT_DESCRIPTION],
       ['money_check_double_entry', 'Check double-entry balance', LEDGER_DESCRIPTION],
@@ -116,7 +119,7 @@ describe.each(ERAS)('the server, %s era', (era) => {
     const client = await connect(era);
     const r = await client.callTool({ name: 'money_check_double_entry', arguments: { ...JOURNAL_ARGS, file: '../outside.csv' } });
     expect(r.isError).toBe(true);
-    expect(textOf(r)).toMatch(/^PATH_OUTSIDE_ROOT: "\.\.\/outside\.csv" is outside the project folder \(shop\)\. Fix: /);
+    expect(textOf(r)).toMatch(/^PATH_OUTSIDE_ROOT: "\.\.\/outside\.csv" is outside the project folder "shop"\. Fix: /); // in quotes (review round 17)
     expect(r.structuredContent).toBeUndefined();
   });
 

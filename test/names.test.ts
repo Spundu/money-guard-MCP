@@ -18,6 +18,7 @@ describe('words', () => {
 // Real column names: Stripe's API fields, Shopify's, Supabase templates, and ledgers like
 // integer-pence-ledger. Each line says what the rule must answer.
 const MONEY = [
+  'travel_allowance', 'marketing_budget', 'costing', 'opening_balance', // review round 17
   'amount', 'amount_pence', 'amountMinor', 'amount_minor', 'amount_due', 'amount_paid', 'amount_refunded',
   'amount_captured', 'amount_received', 'amount_capturable', 'amount_subtotal', 'amount_total',
   'amount_remaining', 'application_fee_amount', 'unit_amount', 'unit_price', 'price', 'price_per_unit',
@@ -83,6 +84,8 @@ const MONEY = [
   'distance_fee_total', 'weight_surcharge_total', 'kwh_cost_total', 'current_total', 'day_total', 'month_total',
 ];
 const NOT_MONEY = [
+  // review round 17: a balance, budget or allowance of time off, errors, data or stock
+  'hours_balance', 'leave_balance', 'holiday_allowance', 'error_budget', 'data_allowance', 'stock_balance',
   'amount_g', 'amount_mg', // review round 15: grams
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
   'tax_rate', 'vat_rate', 'fee_bps', 'discount_percent', 'total_items', 'payment_method',
@@ -180,6 +183,8 @@ describe('unitOfName', () => {
     // Review round 16: a unit word after "per" and what the amount is for is the amount's own unit.
     const perUnit = ['price_per_unit_cents', 'cost_per_unit_pence', 'price_per_kg_pence', 'fee_per_item_pennies', 'pricePerUnitCents', 'price_per_unit_in_cents', 'cost_per_click_micros', 'price_per_unit_kwd', 'price_per_unit_minor'];
     expect(perUnit.map(unitOfName)).toEqual(['minor', 'minor', 'minor', 'minor', 'minor', 'minor', 'unsure', 'unsure', 'unsure']);
+    // Review round 17 (found by mutation): a zero-decimal currency there is whole units; an unsure one is unsure.
+    expect(['price_per_unit_jpy', 'price_per_unit_yen', 'price_per_unit_won', 'price_per_unit_ore'].map(unitOfName)).toEqual(['minor', 'minor', 'unsure', 'unsure']);
   });
 
   it('is unsure of "minor" and "sat" without "unit" after them: they may name the unit, or a child\'s price or Saturday\'s', () => {

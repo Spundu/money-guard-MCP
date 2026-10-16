@@ -282,6 +282,15 @@ describe('money_lint_schema: fix_sql', () => {
       'create unique index j2_u on j2 (id) where amount > all (limits);',
     ].join('\n') });
     expect(held.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.j1', true], ['public.j2', true]]);
+    // Review round 17 (found by mutation): a composite can hold an amount too; a uuid cannot.
+    const typed = await lint({ 'db/migrations/0001.sql': [
+      'create type cap as (lim numeric);',
+      'create table t1 (id int, c cap, amount double precision);',
+      'create unique index t1_u on t1 (id) where amount > (c).lim;',
+      'create table t2 (id int, owner uuid, amount double precision);',
+      'create unique index t2_u on t2 (id) where amount >= 0 and owner is not null;',
+    ].join('\n') });
+    expect(typed.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.t1', true], ['public.t2', false]]);
   });
 
   it('reads a long unique-index condition once per index, not once per column', async () => {
@@ -301,6 +310,14 @@ describe('money_lint_schema: fix_sql', () => {
     const inherited = (await sql(chain, DETAIL_SQL)) as Array<{ defaults: string[] | null }>;
     expect(inherited.map((row) => row.defaults)).toEqual([['x'.repeat(2001)]]);
   }, 60_000);
+
+  it('reads at most 50 expressions of a column, in the database thread, past which it may hold an amount', async () => {
+    // Review round 17: the SQL's cut() relies on functions a migration can replace, and distinct texts
+    // through an inheritance chain still grew with its square; the worker now bounds what it sends.
+    const checks = (n: number) => Array.from({ length: n }, (_, i) => `check (amount >= 0${' or amount is null'.repeat(i + 1)})`).join(', ');
+    const r = await lint({ 'db/migrations/0001.sql': `create table few (amount double precision, ${checks(40)});\ncreate table many (amount double precision, ${checks(60)});` });
+    expect(r.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.few', false], ['public.many', true]]);
+  });
 
   it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {
     // Review round 11 (CVE-2018-1058): public.* (double precision, integer) matches exactly and is picked

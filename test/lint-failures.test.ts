@@ -112,6 +112,9 @@ describe('money_lint_schema: failures', () => {
     writeTree(dir, { 'db/migrations/0001.sql': 'select 1;' });
     const e = (() => { try { collectSources(rootOf(dir), { migrations: 'db/migrations', files: ['db/migrations/0001.sql'] }); } catch (err) { return err as { toText(): string }; } return undefined; })();
     expect(e?.toText()).toBe('FILE_NOT_IN_FOLDER: "db/migrations/0001.sql" is not a file in "db/migrations". Fix: Every entry of files is a path relative to "db/migrations": leave out the leading "db/migrations/".');
+    // Review round 17: not for the root itself ("./0002.sql"), nor for a sibling folder's name.
+    const fix = (migrations: string, entry: string) => { try { collectSources(rootOf(dir), { migrations, files: [entry] }); } catch (err) { return (err as { fix: string }).fix; } return ''; };
+    expect([fix('.', './0002.sql'), fix('db/migrations', 'db/migrations_old/0001.sql')].map((f) => f.includes('leave out'))).toEqual([false, false]);
   });
 
   it('runs CREATE INDEX CONCURRENTLY alone in its file, as the 25001 hint says', async () => {

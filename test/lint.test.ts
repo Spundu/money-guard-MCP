@@ -139,6 +139,9 @@ describe('money_lint_schema: judging columns', () => {
     const r = await lint({ 'db/migrations/0001.sql': 'create table t (price numeric(12,2));' }, { accept_numeric: true });
     expect(r.findings).toEqual([]);
     expect(r.money_columns_checked).toBe(1);
+    // Review round 17 (found by mutation): only numeric; smallint, money and floats are still reported.
+    const mixed = await lint({ 'db/migrations/0001.sql': 'create table m (price numeric(12,2), fee smallint, total money, tax real);' }, { accept_numeric: true });
+    expect(mixed.findings.map((f) => [f.column, f.code])).toEqual([['tax', 'FLOAT_MONEY'], ['total', 'MONEY_TYPE'], ['fee', 'SMALLINT_MONEY']]);
   });
 
   it('says so when no column looks like money, pointing at the float columns', async () => {
@@ -188,6 +191,10 @@ describe('money_lint_schema: judging columns', () => {
       /^BAD_COLUMN_NAME: money_columns names "Orders\.GrossValue", which is not a column of any table the migrations create\. Did you mean "public\.orders\.grossvalue"\?/,
     );
     expect(await codeOf(files, { ignore_columns: ['orders.amount', 'orders.nothing_like_it'] })).toBe('BAD_COLUMN_NAME');
+    // Review round 17: a name with a backslash, copied doubled from a result, is told to write it once.
+    const slash = await failure({ 'db/migrations/0001.sql': 'create table t ("wid\\get" double precision);' }, { money_columns: ['t.wid\\\\get'] });
+    expect(slash.fix).toMatch(/ Write each backslash once: results show it doubled\.$/);
+    expect((await failure(files, { money_columns: ['orders.grossvalu'] })).fix).not.toContain('backslash');
   });
 
   it('keeps long names whole in the suggestion, and counts an ignored numeric money column', async () => {
@@ -262,8 +269,8 @@ describe('money_lint_schema: judging columns', () => {
     const three = await lint({ 'db/migrations/0001.sql': 'create table t (price_a real, price_b real, price_c real);' }, { offset: 1 });
     expect(three.summary).toMatch(/ These are findings 2-3 of 3, the last\.$/); // offset 1 is a later page (round 13)
     const clean = await lint({ 'db/migrations/0001.sql': 'create table t (price bigint);' }, { offset: 50 });
-    expect([clean.findings_truncated, clean.summary.includes('offset')]).toEqual([false, false]);
-    expect((await lint({ 'db/migrations/0001.sql': 'create table t (price real);' }, { offset: 100 })).summary).toMatch(/ No findings from offset 100: there is 1\.$/); // round 16 // nothing to page on a clean schema (round 13)
+    expect([clean.findings_truncated, clean.summary.includes('offset')]).toEqual([false, false]); // nothing to page on a clean schema (round 13)
+    expect((await lint({ 'db/migrations/0001.sql': 'create table t (price real);' }, { offset: 100 })).summary).toMatch(/ No findings from offset 100: there is 1\.$/); // round 16
     expect((await lint(files, { offset: 999 })).findings).toEqual([]);
     // Review round 9: the summary says so, as the ledger's does.
     expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);

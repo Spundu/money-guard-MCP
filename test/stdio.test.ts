@@ -218,7 +218,9 @@ describe('the stdio process', () => {
       server.child.stdin.end();
       expect(await Promise.race([server.exited, new Promise((r) => setTimeout(() => r('still running'), 30_000))])).toBe(0);
       expect(server.stdout()).toContain('Balanced: all 500,000 transactions net to zero');
-      expect(server.stderr()).toMatch(/money-guard-mcp: money_check_double_entry ok \d+ms/);
+      // Review round 17: the call took well past the 500 ms at which stdin closed, so it was running then.
+      const took = Number(/money-guard-mcp: money_check_double_entry ok (\d+)ms/.exec(server.stderr())?.[1] ?? 0);
+      expect(took).toBeGreaterThan(700);
     } finally {
       server.child.kill();
     }
