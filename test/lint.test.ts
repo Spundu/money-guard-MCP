@@ -250,6 +250,8 @@ describe('money_lint_schema: judging columns', () => {
     expect(second.summary).toMatch(/ These are findings 51-60 of 60, the last\.$/);
     expect((await lint(files, { offset: 999 })).summary).toMatch(/ No findings from offset 999: there are 60\.$/);
     expect((await lint(files, { offset: 59 })).summary).toMatch(/ This is finding 60 of 60, the last\.$/); // round 13
+    const three = await lint({ 'db/migrations/0001.sql': 'create table t (price_a real, price_b real, price_c real);' }, { offset: 1 });
+    expect(three.summary).toMatch(/ These are findings 2-3 of 3, the last\.$/); // offset 1 is a later page (round 13)
     const clean = await lint({ 'db/migrations/0001.sql': 'create table t (price bigint);' }, { offset: 50 });
     expect([clean.findings_truncated, clean.summary.includes('offset')]).toEqual([false, false]); // nothing to page on a clean schema (round 13)
     expect((await lint(files, { offset: 999 })).findings).toEqual([]);
@@ -289,6 +291,7 @@ describe('money_lint_schema: judging columns', () => {
     // Review round 12: on a later page too, it carries on from where that page was cut, never back.
     const later = await lint({ [`db/migrations/${'d'.repeat(100)}/0001.sql`]: `create table t_${'y'.repeat(61)} (${columns.join(', ')});` }, { offset: 10 });
     expect(later.next_offset).toBe(10 + later.findings.length);
+    expect(later.summary).toMatch(/ pass next_offset as offset for the next ones\.$/); // a middle page too (round 13)
     expect(fewer.summary.split('Not every finding').length).toBe(2); // once, however many were cut to fit (review round 10)
     expect(fewer.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);
     expect(r.findings[0]?.column).toBe(`price_00_${'x'.repeat(54)}`);

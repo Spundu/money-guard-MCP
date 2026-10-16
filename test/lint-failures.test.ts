@@ -99,6 +99,10 @@ describe('money_lint_schema: failures', () => {
     // Review round 12: it ran twice and then read as an object created twice.
     const e = await failure({ 'db/migrations/0001.sql': 'create table t (id int);' }, { files: ['0001.sql', './0001.sql'] });
     expect(e.toText()).toMatch(/^FILE_NOT_IN_FOLDER: "[^"]+\/0001\.sql" is named twice in files: each file runs once\. Fix: Name each file once\.$/);
+    // Review round 13: two spellings of one file whose relative paths differ (capitals, on Windows and macOS).
+    const cased = await failure({ 'db/migrations/0001.sql': 'create table t (id int);' }, { files: ['0001.sql', '0001.SQL'] });
+    const insensitive = existsSync(path.join(projectRoot().real, lastDir(), 'db/migrations/0001.SQL'));
+    expect(cased.message).toMatch(insensitive ? / is named twice in files: / : /"0001\.SQL" is not a file in /);
   });
 
   it('runs CREATE INDEX CONCURRENTLY alone in its file, as the 25001 hint says', async () => {

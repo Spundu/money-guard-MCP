@@ -291,6 +291,11 @@ describe('money_check_double_entry: the rules', () => {
       { currency: shown, net: '-5' },
     ]);
     expect(r.findings[0]?.message).toBe(`"${shown}" legs net to 5 and more…`); // cut at a whole part, each currency in quotes (round 12)
+    // A message of exactly 120 characters, the limit, is whole (review round 13).
+    const [a, b] = ['A'.repeat(38), 'B'.repeat(37)];
+    const whole = check('.csv', `t,a,c\nA,5,${a}\nA,-5,${b}\n`, { columns: { transaction_id: 't', amount: 'a', currency: 'c' } });
+    const full = `"${a}" legs net to 5 and "${b}" legs net to -5, not 0`;
+    expect([full.length, whole.findings[0]?.message]).toEqual([120, full]);
   });
 
   it('lists at most 20 currencies that are off, and says how many there are', () => {
@@ -339,13 +344,16 @@ describe('money_check_double_entry: the rules', () => {
   it('shows fewer locations of a finding that is too long on its own, counting the rest', () => {
     // Review round 12: 20 pointers under 255 backslashes (shown doubled, then escaped by JSON) passed
     // 20,000 characters in one finding, and the call failed as "a bug in money-guard".
+    // With 25 legs, the 5 past the first 20 are already in more_rows: they must still be counted (round 13).
     const key = '\\'.repeat(255);
-    const content = JSON.stringify({ [key]: Array.from({ length: 20 }, () => ({ t: 'T1', a: 1 })) });
-    const r = check('.json', content, { columns: { transaction_id: 't', amount: 'a' }, records_pointer: `/${key}` });
-    expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
-    const [finding] = r.findings;
-    expect(finding?.code).toBe('UNBALANCED');
-    expect((finding?.pointers?.length ?? 0) + (finding?.more_rows ?? 0)).toBe(20);
-    expect(finding?.pointers?.length).toBeLessThan(20);
+    for (const legs of [20, 25]) {
+      const content = JSON.stringify({ [key]: Array.from({ length: legs }, () => ({ t: 'T1', a: 1 })) });
+      const r = check('.json', content, { columns: { transaction_id: 't', amount: 'a' }, records_pointer: `/${key}` });
+      expect(JSON.stringify(r).length, String(legs)).toBeLessThanOrEqual(20_000);
+      const [finding] = r.findings;
+      expect(finding?.code, String(legs)).toBe('UNBALANCED');
+      expect((finding?.pointers?.length ?? 0) + (finding?.more_rows ?? 0), String(legs)).toBe(legs);
+      expect(finding?.pointers?.length, String(legs)).toBeLessThan(20);
+    }
   });
 });

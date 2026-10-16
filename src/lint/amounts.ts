@@ -1,7 +1,8 @@
 // Whether a default, a CHECK or an index condition, as PostgreSQL writes it back, can hold an amount of
 // the column (SPEC.md §3.6): fix_sql that multiplies by 100 is withheld beside one that may. These run on
-// the server's main thread, past the time limit's reach, so each reads its text in time that grows with
-// its length, and none reads more than MAX_EXPR_CHARS. Split from catalog.ts, which grew past 400 lines.
+// the server's main thread, past the time limit's reach, so none reads more than MAX_EXPR_CHARS, and a
+// lint reads at most MAX_LINT_EXPR_CHARS in all. A default that nests brackets or casts is read once per
+// layer, so the worst lint holds the thread about 2 s. Split from catalog.ts, which grew past 400 lines.
 
 /**
  * Whether a column default, as PostgreSQL writes it back, is zero or NULL ("0", "0.00", "'0'::numeric",

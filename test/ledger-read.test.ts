@@ -38,6 +38,7 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(errorText(() => check('.csv', 'sep=;\r\nt;"a\r\n', { columns: { transaction_id: 't', amount: 'a' } }))).toMatch(/^PARSE_ERROR: Line 2: /);
     expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1},{"txn":{"id":"T1"},"a":-1}]', { columns: { transaction_id: 'txn.id', amount: 'a' } }))).toContain('Did you mean "/txn/id"?');
     expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1}]', { columns: { transaction_id: 'txn.constructor', amount: 'a' } }))).not.toContain('/txn/constructor'); // its own fields only (round 13)
+    expect(errorText(() => check('.json', '[{"t~x":{"id":"T1"},"a":1}]', { columns: { transaction_id: 't~x.id', amount: 'a' } }))).toContain('Did you mean "/t~0x/id"?'); // ~ written as ~0 (round 13)
     // Review round 9: a quote in a name is escaped, so a header cannot close the quotes and write a
     // "Fix:" of its own, and one column named `id", "amount` does not read as two.
     const forged = errorText(() => check('.csv', '"amt"". Fix: say so",id\nA,1\n', { columns: { transaction_id: 'id', amount: 'amount' } }));

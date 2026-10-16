@@ -183,9 +183,12 @@ describe('money_lint_schema: fix_sql', () => {
     // Review round 12: 24,300 capped defaults from 80 inherited tables held the main thread 20 s.
     const reader = new ExpressionReader();
     const zero = `${'('.repeat(990)}0${')'.repeat(990)}`;
+    // Only the reader is timed: 24,300 expect() calls took longer than it on a busy machine (round 13).
     const started = performance.now();
-    for (let i = 0; i < 24_300; i += 1) expect(reader.isZeroOrNullDefault(zero)).toBe(true);
-    expect(performance.now() - started).toBeLessThan(1000);
+    let zeros = 0;
+    for (let i = 0; i < 24_300; i += 1) if (reader.isZeroOrNullDefault(zero)) zeros += 1;
+    const took = performance.now() - started;
+    expect([zeros, took < 1000]).toEqual([24_300, true]);
     // Distinct texts past the budget count as holding an amount, so the fix is withheld.
     const distinct = (i: number) => `(amount >= 0 AND ${'x'.repeat(1900)}${i} IS NOT NULL)`;
     const answers = Array.from({ length: 600 }, (_, i) => reader.holdsNoAmount(distinct(i)));
