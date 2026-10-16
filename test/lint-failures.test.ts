@@ -4,9 +4,10 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { describe, expect, it } from 'vitest';
+import { collectSources } from '../src/lint/files.js';
 import { lintSchema } from '../src/lint/run.js';
 import { SPEC_FILES, codeOf, failure, lastDir, lint, newDir, projectRoot } from './support/lint.js';
-import { tempDir, writeTree } from './support/tmp.js';
+import { rootOf, tempDir, writeTree } from './support/tmp.js';
 
 describe('money_lint_schema: failures', () => {
   it('names the file, line and column of a failing statement', async () => {
@@ -103,6 +104,14 @@ describe('money_lint_schema: failures', () => {
     const cased = await failure({ 'db/migrations/0001.sql': 'create table t (id int);' }, { files: ['0001.sql', '0001.SQL'] });
     const insensitive = existsSync(path.join(projectRoot().real, lastDir(), 'db/migrations/0001.SQL'));
     expect(cased.message).toMatch(insensitive ? / is named twice in files: / : /"0001\.SQL" is not a file in /);
+  });
+
+  it('says to leave out the migrations folder from an entry of files written from the project root', () => {
+    // Review round 16: a likely mistake, answered only with "Check the spelling".
+    const dir = tempDir();
+    writeTree(dir, { 'db/migrations/0001.sql': 'select 1;' });
+    const e = (() => { try { collectSources(rootOf(dir), { migrations: 'db/migrations', files: ['db/migrations/0001.sql'] }); } catch (err) { return err as { toText(): string }; } return undefined; })();
+    expect(e?.toText()).toBe('FILE_NOT_IN_FOLDER: "db/migrations/0001.sql" is not a file in "db/migrations". Fix: Every entry of files is a path relative to "db/migrations": leave out the leading "db/migrations/".');
   });
 
   it('runs CREATE INDEX CONCURRENTLY alone in its file, as the 25001 hint says', async () => {

@@ -254,6 +254,34 @@ describe('money_lint_schema: fix_sql', () => {
       'create unique index one_a_day on charges (user_id, amount, (created_at::date));',
     ].join('\n') });
     expect(other.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.charges', false], ['public.deposits', true], ['public.refunds', true]]);
+    // Review round 16: a key column that the WHERE or an expression reads as well counts.
+    const keyed = await lint({ 'db/migrations/0001.sql': [
+      'create table k1 (approval_limit numeric(10,2), amount double precision);',
+      'create unique index k1_u on k1 (approval_limit) where amount > approval_limit;',
+      'create table k2 (id int, amount double precision, other int);',
+      'create unique index k2_u on k2 (id, amount, other) where other > amount;',
+      'create table k3 (other int, amount double precision);',
+      'create unique index k3_u on k3 (other, (amount - other));',
+      'create extension btree_gist;',
+      'create table k4 (cap int, amount double precision, exclude using gist (cap with =) where (amount > cap));',
+    ].join('\n') });
+    expect(keyed.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.k1', true], ['public.k2', true], ['public.k3', true], ['public.k4', true]]);
+    // Review round 16 (found by mutation): a condition on the money column alone keeps the fix.
+    const own = await lint({ 'db/migrations/0001.sql': [
+      'create table orders (customer_id int, amount double precision);',
+      'create unique index orders_u on orders (customer_id) where amount > 0;',
+      'create table subs (plan text, price numeric(10,2));',
+      'create unique index subs_u on subs (plan) where price is not null;',
+    ].join('\n') });
+    expect(own.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.orders', false], ['public.subs', false]]);
+    // Review round 16: a jsonb or an array column read by the condition can hold an amount too.
+    const held = await lint({ 'db/migrations/0001.sql': [
+      'create table j1 (id int, meta jsonb, amount double precision);',
+      "create unique index j1_u on j1 (id) where amount > (meta->>'limit')::numeric;",
+      'create table j2 (id int, limits numeric[], amount double precision);',
+      'create unique index j2_u on j2 (id) where amount > all (limits);',
+    ].join('\n') });
+    expect(held.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.j1', true], ['public.j2', true]]);
   });
 
   it('reads a long unique-index condition once per index, not once per column', async () => {
@@ -268,6 +296,10 @@ describe('money_lint_schema: fix_sql', () => {
     const rows = (await sql([schema], DETAIL_SQL)) as Array<{ index_exprs: string[] | null }>;
     const texts = rows.flatMap((row) => row.index_exprs ?? []);
     expect([texts.length, Math.max(...texts.map((t) => t.length))]).toEqual([1001, 2001]);
+    // Review round 16: defaults too, each text once a column, through a chain of inheriting tables.
+    const chain = [`create table c0 (price double precision default (0 + ${'0 + '.repeat(600)}0));`, ...Array.from({ length: 40 }, (_, i) => `create table c${i + 1} () inherits (c${i});`)];
+    const inherited = (await sql(chain, DETAIL_SQL)) as Array<{ defaults: string[] | null }>;
+    expect(inherited.map((row) => row.defaults)).toEqual([['x'.repeat(2001)]]);
   }, 60_000);
 
   it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {

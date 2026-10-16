@@ -131,6 +131,7 @@ describe('the stdio process', () => {
     // reads this one, and 6,000 logged calls (about 330 KB of log, in batches so that the log reaches
     // the pipe between them) fill it several times over.
     const child = spawn(process.execPath, [ENTRY], { env: { ...getDefaultEnvironment(), MONEY_GUARD_ROOT: SHOP }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const exited = new Promise<number | null>((resolve) => child.on('exit', resolve));
     let stdout = '';
     child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
     try {
@@ -155,6 +156,9 @@ describe('the stdio process', () => {
         answers = now;
         expect(quiet, `no answer for 20 s after ${answers} answers`).toBeLessThan(20);
       }
+      // Review round 16: and when the host then closes stdin, the server still exits.
+      child.stdin.end();
+      expect(await Promise.race([exited, new Promise((r) => setTimeout(() => r('still running'), 15_000))])).toBe(0);
     } finally {
       child.kill();
     }
@@ -196,6 +200,25 @@ describe('the stdio process', () => {
       expect(server.stdout()).toContain('Balanced: all 500,000 transactions net to zero');
       await vi.waitFor(() => expect(server.stderr()).toMatch(/money-guard-mcp: money_check_double_entry ok \d+ms/), { timeout: 5000 });
       expect(server.stderr()).not.toContain('CANCELLED');
+    } finally {
+      server.child.kill();
+    }
+  }, 60_000);
+
+  it('answers a ledger call and logs it ok when stdin closes while it runs, then exits', async () => {
+    // Review round 16: SPEC.md §2.1 promised it, and no test ran it.
+    const project = tempDir();
+    const rows = Array.from({ length: 1_000_000 }, (_, i) => `T${i >> 1},${i % 2 === 0 ? 100 : -100}`);
+    writeTree(project, { 'exports/big.csv': `txn_id,amount_pence\n${rows.join('\n')}\n` });
+    const server = raw({ MONEY_GUARD_ROOT: project });
+    try {
+      await server.initialize();
+      server.send({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'money_check_double_entry', arguments: { file: 'exports/big.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence' } } } });
+      await new Promise((r) => setTimeout(r, 500)); // the check has started
+      server.child.stdin.end();
+      expect(await Promise.race([server.exited, new Promise((r) => setTimeout(() => r('still running'), 30_000))])).toBe(0);
+      expect(server.stdout()).toContain('Balanced: all 500,000 transactions net to zero');
+      expect(server.stderr()).toMatch(/money-guard-mcp: money_check_double_entry ok \d+ms/);
     } finally {
       server.child.kill();
     }

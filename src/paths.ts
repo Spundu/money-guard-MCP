@@ -112,10 +112,14 @@ export function isSensitive(rel: string): boolean {
   // Azure Functions' local secrets, and Docker's registry logins (review round 12).
   if (segments.at(-1) === 'local.settings.json' || (segments.at(-1) === 'config.json' && segments.at(-2) === '.docker')) return true;
   // A copy's " (1)" before the extension is not part of the name, and camelCase words are words too
-  // (review round 15: "secrets (1).json", "awsCredentials.csv"). Both forms are tried: "KeePass" and
+  // (review round 15: "secrets (1).json", "awsCredentials.csv"; round 16: "AWSCredentials.csv"). Both forms are tried: "KeePass" and
   // "GitHub" are one word each.
-  const last = (raw.at(-1) ?? '').replace(/ ?\(\d+\)(?=\.[^.]+$)/, '');
-  return [last.toLowerCase(), last.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()].some(sensitiveName);
+  // A copy the system made is the same file too (review round 16): Windows' "key - Copy (2).json",
+  // macOS's "key copy 2.json", and "Copy of key.json".
+  const last = (raw.at(-1) ?? '')
+    .replace(/^copy of /i, '')
+    .replace(/(?: - copy(?: \(\d+\))?| copy(?: \d+)?| ?\(\d+\))(?=\.[^.]+$)/i, '');
+  return [last.toLowerCase(), last.replace(/([a-z0-9])([A-Z])|([A-Z])(?=[A-Z][a-z])/g, (_m, a: string | undefined, b: string | undefined, c: string | undefined) => (c === undefined ? `${a}_${b}` : `${c}_`)).toLowerCase()].some(sensitiveName);
 }
 
 /** Whether a file name, in lower case, is one isSensitive refuses. */

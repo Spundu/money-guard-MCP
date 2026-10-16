@@ -30,7 +30,7 @@ function pageNote(offset: number, shown: number, total: number, next: number | n
   if (offset === 0 || total === 0) return '';
   const n = (x: number) => x.toLocaleString('en-GB');
   if (shown === 1) return ` This is finding ${n(offset + 1)} of ${n(total)}, the last.`;
-  return shown > 0 ? ` These are findings ${n(offset + 1)}-${n(offset + shown)} of ${n(total)}, the last.` : ` No findings from offset ${n(offset)}: there are ${n(total)}.`;
+  return shown > 0 ? ` These are findings ${n(offset + 1)}-${n(offset + shown)} of ${n(total)}, the last.` : ` No findings from offset ${n(offset)}: there ${total === 1 ? 'is' : 'are'} ${n(total)}.`;
 }
 /** Longest column type a finding shows: a schema-qualified domain and its base type fit. */
 const MAX_TYPE_CHARS = 200;

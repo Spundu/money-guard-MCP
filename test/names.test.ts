@@ -177,6 +177,9 @@ describe('unitOfName', () => {
       // Review round 10: a product's unit price, and what the amount is for after "per", are not the unit.
       'lowest_unit_price', 'lowest_unit_cost', 'smallest_unit_price', 'lowestunitprice', 'price_per_subunit', 'price_per_cent'];
     expect(no.map(unitOfName)).toEqual(no.map(() => 'major'));
+    // Review round 16: a unit word after "per" and what the amount is for is the amount's own unit.
+    const perUnit = ['price_per_unit_cents', 'cost_per_unit_pence', 'price_per_kg_pence', 'fee_per_item_pennies', 'pricePerUnitCents', 'price_per_unit_in_cents', 'cost_per_click_micros', 'price_per_unit_kwd', 'price_per_unit_minor'];
+    expect(perUnit.map(unitOfName)).toEqual(['minor', 'minor', 'minor', 'minor', 'minor', 'minor', 'unsure', 'unsure', 'unsure']);
   });
 
   it('is unsure of "minor" and "sat" without "unit" after them: they may name the unit, or a child\'s price or Saturday\'s', () => {
@@ -206,6 +209,9 @@ describe('unitOfName', () => {
       'amount_btc', 'amount_eth', 'price_usdc', 'amount_usdt', 'amount_sol', 'fee_xbt'];
     expect(unsure.map(unitOfName)).toEqual(unsure.map(() => 'unsure'));
     expect(['costmicros', 'pricemicros'].map(looksLikeMoney)).toEqual([true, true]);
+    // Review round 16 (found by mutation): a folded word is split only as a whole name (SPEC.md §3.5),
+    // so after another word it stays unknown; pinned so that a change here is a choice.
+    expect(['costbasis', 'new_cost_basis', 'new_costbasis', 'base_pricepoint'].map(looksLikeMoney)).toEqual([true, true, false, false]);
     const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats', 'amount_yen', 'price_yen',
       // Review round 9: folded (an unquoted AmountJPY) they were multiplied by 100.
       'amountjpy', 'feeyen', 'pricekrw', 'totaljpy', 'balancejpy', 'priceyen',

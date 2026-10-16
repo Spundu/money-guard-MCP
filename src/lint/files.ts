@@ -134,7 +134,7 @@ function countOther(seen: Seen, name: string): void {
 }
 
 function tooManyFiles(): ToolError {
-  return new ToolError('TOO_MANY_FILES', `The folder holds more than ${MAX_FILES.toLocaleString('en-GB')} .sql files.`, 'Point migrations at the folder of migrations only, or pass files with the ones to run.');
+  return new ToolError('TOO_MANY_FILES', `The folder holds more than ${MAX_FILES.toLocaleString('en-GB')} .sql files.`, 'Point migrations at the folder of migrations only. To lint them all, lint one schema-only dump of the database they build (pg_dump --schema-only): files holds at most as many.');
 }
 
 /**
@@ -297,7 +297,9 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     chosen = [target];
   } else if (args.files !== undefined) {
     chosen = args.files.flatMap((entry) => {
-      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `${quotedPath(entry)} is not a file in ${folder}.`, `Every entry of files is a path relative to ${folder}. Check the spelling.`);
+      // An entry written from the project root, as a model may write it (review round 16).
+      const fromRoot = toPosix(entry).startsWith(`${target.rel}/`);
+      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `${quotedPath(entry)} is not a file in ${folder}.`, fromRoot ? `Every entry of files is a path relative to ${folder}: leave out the leading ${quotedPath(`${target.rel}/`)}.` : `Every entry of files is a path relative to ${folder}. Check the spelling.`);
       const lexical = path.resolve(target.real, entry);
       if (!isInside(target.real, lexical)) throw notInFolder;
       try {

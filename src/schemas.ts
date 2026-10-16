@@ -33,8 +33,8 @@ export const lintInput = z
     preset: z.enum(['supabase']).nullish().describe('Built-in setup for a Supabase project: its roles, auth.users, auth.uid(), storage and extensions schema.'),
     setup: z.string().min(1).max(1024).nullish().describe('A .sql file, relative to the project root, run before the migrations (after preset) to create what your platform provides: roles, schemas, functions. Its columns are not checked; if it lies in the migrations folder it is not run again as a migration.'),
     accept_numeric: z.boolean().meta({ title: 'Accept numeric' }).nullish().describe('Treat numeric/decimal money columns as fine instead of warning about them. Default false.'),
-    money_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Extra columns to treat as money: "table.column" (schema public) or "schema.table.column".'),
-    ignore_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Columns never to report (false positives), as "table.column" or "schema.table.column". The findings they would raise are counted in ignored_count.'),
+    money_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Extra columns to treat as money: "table.column" (schema public) or "schema.table.column". Write a backslash in a name once, though results show it doubled.'),
+    ignore_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Columns never to report (false positives), as "table.column" or "schema.table.column". Write a backslash in a name once, though results show it doubled. The findings they would raise are counted in ignored_count.'),
     timeout_seconds: z.number().int().min(5).max(300).nullish().describe('Stop after this many seconds. Default 45: most clients wait at most 60 for an answer.'),
     offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish().describe('The first finding to return: 0 (default), or the next_offset of the previous result. The lint runs again for each page.'),
   })

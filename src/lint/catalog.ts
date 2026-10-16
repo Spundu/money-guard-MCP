@@ -56,6 +56,14 @@ export const SNAPSHOT_SQL = `
  * once, by table and column name, and joined to the columns: looked up column by column, it searched
  * the whole catalog for each, and a schema of 1,000 tables took longer than the time limit.
  */
+/**
+ * An expression's text, or past 2,000 characters (MAX_EXPR_CHARS) a stand-in of 2,001, which counts as
+ * holding an amount as the text would, so that a long text is not copied to every column.
+ */
+function cut(expr: string): string {
+  return `CASE WHEN pg_catalog.length(${expr}) > 2000 THEN pg_catalog.repeat('x', 2001) ELSE ${expr} END`;
+}
+
 export const DETAIL_SQL = `
   WITH RECURSIVE descendants AS (
     SELECT i.inhparent AS root, i.inhrelid AS rel FROM pg_catalog.pg_inherits i
@@ -84,14 +92,16 @@ export const DETAIL_SQL = `
     JOIN pg_catalog.pg_attribute fa ON fa.attrelid = f.rel AND fa.attnum > 0 AND NOT fa.attisdropped
   ),
   col_defaults AS (
-    SELECT m.root, m.attname, pg_catalog.array_agg(pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)) AS defaults
+    -- Each text once per column, cut past 2,000 characters as the index texts are (review round 16: a
+    -- chain of 450 inheriting tables gave 204 million characters of defaults to the main thread).
+    SELECT m.root, m.attname, pg_catalog.array_agg(DISTINCT ${cut('pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)')}) AS defaults
     FROM members m
     JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = m.rel AND ad.adnum = m.attnum
     GROUP BY m.root, m.attname
   ),
   col_checks AS (
     SELECT m.root, m.attname,
-           pg_catalog.array_agg(CASE WHEN pg_catalog.array_length(k.conkey, 1) = 1 AND k.conkey[1] <> 0 THEN pg_catalog.pg_get_expr(k.conbin, k.conrelid) END) AS checks
+           pg_catalog.array_agg(DISTINCT CASE WHEN pg_catalog.array_length(k.conkey, 1) = 1 AND k.conkey[1] <> 0 THEN ${cut('pg_catalog.pg_get_expr(k.conbin, k.conrelid)')} END) AS checks
     FROM pg_catalog.pg_constraint k
     CROSS JOIN LATERAL pg_catalog.unnest(k.conkey) AS ck (attnum)
     JOIN members m ON m.rel = k.conrelid AND (m.attnum = ck.attnum OR ck.attnum = 0)
@@ -102,9 +112,7 @@ export const DETAIL_SQL = `
   -- per dependency, one index of 1,000 terms on 1,000 columns ran the database thread out of memory).
   idx AS MATERIALIZED (
     SELECT i.indexrelid, i.indrelid, i.indkey::pg_catalog.int2[] AS keycols,
-      -- Past 2,000 characters (MAX_EXPR_CHARS) a stand-in of 2,001, which counts as holding an amount as
-      -- the text would, so that a long text is not copied to every column.
-      CASE WHEN pg_catalog.length(x.expr) > 2000 THEN pg_catalog.repeat('x', 2001) ELSE x.expr END AS expr,
+      ${cut('x.expr')} AS expr,
       -- An index that reads the whole row ("WHERE t IS NOT NULL", written back as t.*) records no
       -- dependency on it, and one of expressions (lower(sku)) records one on the whole table that reads
       -- no other column: so the whole row is found in the text, not in pg_depend (review round 12).
@@ -118,7 +126,10 @@ export const DETAIL_SQL = `
   col_indexes AS (
     -- One row per index and column it reads, however many pg_depend rows say so. Null for an index whose
     -- expressions or WHERE clause also read another column of a number type (not one of its plain key
-    -- columns): "WHERE amount > approval_limit" would compare pence with pounds (review round 15).
+    -- columns): "WHERE amount > approval_limit" would compare pence with pounds (review round 15). A key
+    -- column that they read too has a second pg_depend row, from the expressions or the WHERE clause
+    -- (review round 16: "on t (approval_limit) where amount > approval_limit"); for an exclusion or
+    -- unique constraint, PostgreSQL records the key columns on the constraint, so its rows count too.
     SELECT m.root, m.attname,
            pg_catalog.array_agg(DISTINCT CASE WHEN EXISTS (
              SELECT FROM pg_catalog.pg_depend p2
@@ -126,7 +137,15 @@ export const DETAIL_SQL = `
              JOIN pg_catalog.pg_type t2 ON t2.oid = a2.atttypid
              WHERE p2.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p2.objid = d.indexrelid
                AND p2.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p2.refobjid = d.indrelid
-               AND p2.refobjsubid <> m.attnum AND p2.refobjsubid <> ALL (d.keycols) AND t2.typcategory = 'N'
+               AND p2.refobjsubid <> m.attnum
+               -- a number, or what can hold one: an array, a range, a composite, jsonb (review round 16)
+               AND (t2.typcategory IN ('N', 'A', 'R', 'C') OR (t2.typcategory = 'U' AND t2.typname <> 'uuid'))
+               AND (p2.refobjsubid <> ALL (d.keycols) OR (
+                 SELECT pg_catalog.count(*) FROM pg_catalog.pg_depend p3
+                 WHERE p3.refclassid = p2.refclassid AND p3.refobjid = p2.refobjid AND p3.refobjsubid = p2.refobjsubid
+                   AND ((p3.classid = p2.classid AND p3.objid = p2.objid)
+                     OR (p3.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass AND p3.objid IN (
+                       SELECT k.oid FROM pg_catalog.pg_constraint k WHERE k.conindid = p2.objid AND k.contype IN ('u', 'x', 'p'))))) > 1)
            ) THEN NULL ELSE d.expr END) AS index_exprs
     FROM idx d
     JOIN members m ON m.rel = d.indrelid AND (d.whole_row OR EXISTS (

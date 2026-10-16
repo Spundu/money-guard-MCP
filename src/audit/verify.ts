@@ -215,9 +215,12 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
       return countMismatch(read.lastSeq + 1, anchor, result);
     }
     const replaced = headMismatch(completed, anchor, result);
-    if (replaced) return replaced;
+    if (replaced) {
+      notes.push(NO_FINAL_NEWLINE_TOO_NOTE); // as with a count mismatch (review round 16); the result holds this array
+      return replaced;
+    }
   }
-  if (!verdict.ok) return broken(bytes, verdict, anchor, notes, result, onlyFinalNewline);
+  if (!verdict.ok) return broken(bytes, verdict, anchor, notes, result, onlyFinalNewline, completed ?? bytes);
 
   const count = verdict.lastSeq + 1;
   const head: Anchor = { count, last_hash: count === 0 ? GENESIS_HASH : entryHashAt(bytes, count - 1) };
@@ -251,7 +254,8 @@ const KEY_SETTING_NOTE = 'A wrong key setting gives this answer too, for an unto
  * before the break verified, so an anchor that covers only them is still checked: a replaced log must
  * not hide behind a later break that looks like an accident (a torn last line).
  */
-function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: string | null }, anchor: Anchor | undefined, notes: string[], result: MakeResult, onlyFinalNewline = false): AuditResult {
+/** `entryBytes`: the log with its last LF, if it lacked one, from which an entry's key id is read (review round 16). */
+function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: string | null }, anchor: Anchor | undefined, notes: string[], result: MakeResult, onlyFinalNewline = false, entryBytes: Uint8Array = bytes): AuditResult {
   const index = verdict.brokenAt ?? 0;
   const crlf = firstCrlfLine(bytes);
   if (crlf !== null) notes.push(crlfNote(crlf));
@@ -267,7 +271,7 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
     const replaced = headMismatch(bytes, anchor, result);
     if (replaced) return replaced;
     if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
-  } else if (anchor && code === 'TORN_LAST_LINE' && !onlyFinalNewline) {
+  } else if (anchor && code === 'TORN_LAST_LINE') {
     // The anchor proves the entries before its count were once whole: a log that ends inside one of them
     // was cut short, not interrupted while writing (review round 12).
     notes.push(`The anchor covers ${entries(anchor.count)}, but the log ends inside entry ${index}: it was cut short, and entries the anchor vouched for are gone.`);
@@ -280,12 +284,12 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const reason = clip(raw, MAX_REASON);
   const line = index < lineCount(bytes) ? index + 1 : null;
   const brk: AuditBreak = { entry_index: index, line, code, reason };
-  const rawKeyId = code === 'UNKNOWN_KEY_ID' || code === 'HMAC_MISMATCH' ? writerKeyIdAt(bytes, index) : undefined;
+  const rawKeyId = code === 'UNKNOWN_KEY_ID' || code === 'HMAC_MISMATCH' ? writerKeyIdAt(entryBytes, index) : undefined;
   if (rawKeyId !== undefined) brk.writer_key_id = clip(rawKeyId, 64);
   // An unknown key id, or a seal that fails from the first entry of its key (the first entry, or the first
   // after a key change), is what a wrong key setting gives an untouched log (review rounds 11 and 12):
   // say so, so that the setting is checked before tampering is reported.
-  const firstOfItsKey = index === 0 || (rawKeyId !== undefined && writerKeyIdAt(bytes, index - 1) !== rawKeyId);
+  const firstOfItsKey = index === 0 || (rawKeyId !== undefined && writerKeyIdAt(entryBytes, index - 1) !== rawKeyId);
   if (code === 'UNKNOWN_KEY_ID' || (code === 'HMAC_MISMATCH' && firstOfItsKey)) notes.push(KEY_SETTING_NOTE);
 
   const where = line === null ? `entry ${index}` : `entry ${index} (line ${line})`;

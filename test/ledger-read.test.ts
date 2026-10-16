@@ -50,6 +50,13 @@ describe('money_check_double_entry: reading CSV', () => {
     expect(near24.findings.map((f) => [f.code, f.lines])).toEqual([['UNBALANCED', [3, 4]]]);
     expect(errorText(() => check('.csv', 'SEP=;;\nt;a\nT1;1\n', { columns: { transaction_id: 't', amount: 'a' } }))).toMatch(/Fix: The first line looks like Excel's "sep=" line/);
     expect(errorText(() => check('.csv', 'sep=;x\nt;a\n', { columns: { transaction_id: 'sep=;y', amount: 'a' } }))).not.toContain('Did you mean');
+    // Review round 16: a file of only the sep= line is empty, not unread; a semicolon export with comma
+    // decimals that breaks on line 2 is told its delimiter.
+    expect(check('.csv', 'sep=;', { columns: { transaction_id: 't', amount: 'a' } }).rows_read).toBe(0);
+    expect(errorText(() => check('.csv', 'Transaction ID;Amount;Währung\nA;1,00;EUR\n', { columns: { transaction_id: 'Transaction ID', amount: 'Amount' } })))
+      .toMatch(/^PARSE_ERROR: Line 2: .* Fix: The header looks separated by ";", not ",": pass delimiter ";"\.$/);
+    // Review round 16 (found by mutation): "sep = ;" before decimal commas breaks the parse: the same fix.
+    expect(errorText(() => check('.csv', 'sep = ;\nid;amount\nT1;12,50\n', { columns: { transaction_id: 'id', amount: 'amount' } }))).toMatch(/^PARSE_ERROR: .* Fix: The first line looks like Excel's "sep=" line/);
     // A sep= line in a form it does not read says to delete it, never to pass a delimiter.
     for (const delimiter of [undefined, ';'] as const) {
       const e = errorText(() => check('.csv', `${delimiter === ';' ? 'sep=;;' : 'sep = ;'}\nt;a\nT1;1\n`, { columns: { transaction_id: 't', amount: 'a' }, ...(delimiter ? { delimiter } : {}) }));
@@ -324,6 +331,10 @@ describe('money_check_double_entry: arguments', () => {
     expect(last.summary).not.toContain('No findings from offset');
     // Review round 15: past the end, the summary says so, as the lint's does.
     expect(check('.csv', `t,a\n${rows}\n`, { columns, offset: 500 }).summary).toMatch(/ No findings from offset 500: there are 30 to page\.$/);
+    expect(check('.csv', 't,a\nT1,1\n', { columns, offset: 5 }).summary).toMatch(/ No findings from offset 5: there is 1 to page\.$/); // round 16
+    // Round 16 (found by mutation): only the first 10,000 can be paged, so past them it says 10,000.
+    const many = Array.from({ length: 15_000 }, (_, i) => `T${i},1`).join('\n');
+    expect(check('.csv', `t,a\n${many}\n`, { columns, offset: 12_000 }).summary).toMatch(/ No findings from offset 12,000: there are 10,000 to page\.$/);
     expect(check('.csv', `t,a\n${rows}\n`, { columns, limit: 500 }).limit).toBe(50);
     expect(first.counts_by_code).toEqual({ TOO_FEW_LEGS: 30 });
   });

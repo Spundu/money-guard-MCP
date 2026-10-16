@@ -170,12 +170,26 @@ function inFieldOrder({ code, severity, transaction_id, lines, pointers, more_ro
   };
 }
 
+/**
+ * A record's pointer (records_pointer, then "/" and its index) as a result shows it. The prefix is the
+ * same for every record, so it is escaped once (review round 16: a 256-character one, escaped for each
+ * of a million findings, held the server 19 s); the index needs no escaping.
+ */
+const pointerPrefix = { raw: '', shown: '' };
+function shownPointer(pointer: string): string {
+  const cut = pointer.lastIndexOf('/');
+  if (cut < 0) return escapeUnsafe(pointer);
+  const prefix = pointer.slice(0, cut);
+  if (prefix !== pointerPrefix.raw) Object.assign(pointerPrefix, { raw: prefix, shown: escapeUnsafe(prefix) });
+  return pointerPrefix.shown + pointer.slice(cut);
+}
+
 /** What a finding needs to point at its rows. */
 function refs(rows: readonly LedgerRow[]): Pick<Finding, 'lines' | 'pointers' | 'more_rows'> {
   const shown = rows.slice(0, MAX_REFS);
   const more = rows.length - shown.length;
   const out: Pick<Finding, 'lines' | 'pointers' | 'more_rows'> =
-    shown[0]?.pointer !== undefined ? { pointers: shown.map((r) => escapeUnsafe(r.pointer ?? '')) } : { lines: shown.map((r) => r.line ?? 0) }; // a pointer holds the caller's text and the file's keys
+    shown[0]?.pointer !== undefined ? { pointers: shown.map((r) => shownPointer(r.pointer ?? '')) } : { lines: shown.map((r) => r.line ?? 0) }; // a pointer holds the caller's text and the file's keys
   if (more > 0) out.more_rows = more;
   return out;
 }
@@ -201,9 +215,12 @@ const SIDES: Readonly<Record<string, 1n | -1n>> = { D: 1n, DR: 1n, DEBIT: 1n, C:
 /** One row's leg, or the findings that stop it being one. */
 function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: boolean, txId: string | null, tally: CheckOutcome['amounts']): { leg?: Leg; findings: Finding[] } {
   const findings: Finding[] = [];
-  const at = refs([row]);
+  // Built for a finding only: escaping a 256-character pointer for each of a million rows held the
+  // server 17 s (review round 16).
+  let at: ReturnType<typeof refs> | undefined;
+  const where = () => (at ??= refs([row]));
   const problem = (code: FindingCode, field: MappedField | 'debit/credit', message: string, raw?: unknown): void => {
-    const f: Finding = { code, severity: 'error', transaction_id: txId, ...at, field, message };
+    const f: Finding = { code, severity: 'error', transaction_id: txId, ...where(), field, message };
     if (raw !== undefined) f.value = shownValue(raw);
     findings.push(f);
   };
@@ -264,7 +281,7 @@ function legOf(row: LedgerRow, mode: Mode, opts: CheckOptions, hasCurrency: bool
   }
   if (findings.length > 0 || minor === undefined) return { findings };
   if (minor === 0n) {
-    findings.push({ code: 'ZERO_LEG', severity: 'warning', transaction_id: txId, ...at, field: mode === 'debit_credit' ? 'debit/credit' : 'amount', value: '0', message: 'a leg of 0 moves nothing' });
+    findings.push({ code: 'ZERO_LEG', severity: 'warning', transaction_id: txId, ...where(), field: mode === 'debit_credit' ? 'debit/credit' : 'amount', value: '0', message: 'a leg of 0 moves nothing' });
   }
   return { leg: { minor, currency }, findings };
 }

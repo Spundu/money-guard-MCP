@@ -377,13 +377,17 @@ describe('isSensitive', () => {
       'Dashlane Export.csv', 'KeePass Export.csv', 'LastPass Export.csv', 'Bitwarden Export.json', 'my secrets.json', 'Secrets (1).json',
       'app secret.json', 'api key.json', 'access token.json', 'service account.json',
       // review round 15: camelCase words, and a second download of any of them
+      'AWSCredentials.csv', 'GCPCredentials.json', 'DBPasswords.csv', 'JWTSecret.json', 'AWSSecrets.json', // round 16: an acronym first
       'firebaseCredentials.json', 'awsCredentials.csv', 'userPasswords.csv', 'ChromePasswords.csv', 'App Secrets.json', 'private key.json',
+      'key - Copy.json', 'key - Copy (2).json', 'key copy.json', 'key copy 2.json', 'Copy of key.json', 'auth - Copy.json', 'token - Copy.json', 'myproject-1a2b3c4d5e6f - Copy.json', // round 16: system copies
+      'token(1).json', 'key(1).json', 'sa-key(1).json', 'myproject-1a2b3c4d5e6f(1).json', // round 16: no space before the bracket
       'secrets (1).json', 'access_token (1).json', 'token (1).json', 'key (1).json', 'auth (1).json', 'sa-key (1).json', 'myproject-1a2b3c4d5e6f (1).json']) {
       expect(isSensitive(p), p).toBe(true);
     }
     for (const p of [
       // review round 13: wallets and logins name ledgers too
       'wallet_transactions.csv', 'wallet.csv', 'wallet-2024-10.csv', 'customer_wallet_entries.json', 'customer_logins_revenue.csv', 'wallet_ledger.jsonl',
+      'tokens_used 2024.json', 'monkey copy.json', // round 16: a number or "copy" alone does not make a name a copy of a secret
       'logins_revenue.csv', 'daily_logins.csv', 'customer_logins.csv', 'passwordless_signups.csv', 'credentialing_fees.csv', // round 14: logins as the whole name, password as a word
       'ledger.csv', 'environment.csv', 'db/migrations/0001.sql', 'keys.csv', 'monkey.json', '.github/x.csv', 'credit_notes.csv', 'secretary.csv', 'accessories.csv',
       // credential words in a migration or a folder name: not a credential download

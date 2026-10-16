@@ -96,7 +96,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
 
   const result: LedgerResult = {
     summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names) + (total > MAX_LISTED_FINDINGS ? ` Only the first ${num(MAX_LISTED_FINDINGS)} findings can be paged; the counts cover all ${num(total)}.` : '')
-      + (offset > 0 && page.length === 0 && total > 0 ? ` No findings from offset ${num(offset)}: there are ${num(Math.min(total, MAX_LISTED_FINDINGS))} to page.` : ''), // as the lint says (round 15)
+      + (offset > 0 && page.length === 0 && total > 0 ? ` No findings from offset ${num(offset)}: there ${total === 1 ? 'is' : 'are'} ${num(Math.min(total, MAX_LISTED_FINDINGS))} to page.` : ''), // as the lint says (round 15)
     file: clipPath(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -170,7 +170,7 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   // For a JSON Pointer, the field's own name: "/amount/currency" is a currency beside an amount.
   const wordsOf = (name: string) =>
     (name.startsWith('/') ? name.slice(name.lastIndexOf('/') + 1) : name)
-      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/([a-z0-9])([A-Z])|([A-Z])(?=[A-Z][a-z])/g, (_m, a: string | undefined, b: string | undefined, c: string | undefined) => (c === undefined ? `${a} ${b}` : `${c} `)) // "ISOCurrencyCode" too (round 16)
       .toLowerCase()
       .split(/[^\p{L}\p{N}]+/u)
       .filter((w) => w !== '');

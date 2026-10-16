@@ -223,11 +223,15 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(all.anchor_checked).toBe(true); // the completed log ends in the entry it recorded (round 14)
     // Review round 15: an anchor of count 0 covers no entry, so no note says they are intact.
     expect(run(bytes(FIVE.slice(0, -1)), { count: 0, last_hash: GENESIS_HASH }).notes).toEqual([FINAL]);
+    // Review round 16 (found by mutation): an anchor that ends just before the last entry: the break comes after it.
+    const four = { count: 4, last_hash: (JSON.parse(FIVE.split('\n')[3] ?? '{}') as { entry_hash: string }).entry_hash };
+    expect(run(bytes(FIVE.slice(0, -1)), four).notes).toEqual(['The entries the anchor covers are intact; the break comes after them.', FINAL]);
     expect(all.notes).toEqual(['The anchor matches the log once the line end after its last entry is restored.', FINAL]); // not "comes after them" (round 15)
     // Review round 14: another chain of 5 under the same key, its last LF dropped, was replaced, not edited.
     const other = text(chain([...DRAFTS, { event: 'payment.capture', amount_pence: 999 }, { event: 'user.login', user: 'eve' }]));
     const swapped = run(bytes(other.slice(0, -1)), { count: 5, last_hash: (JSON.parse(FIVE.split('\n')[4] ?? '{}') as { entry_hash: string }).entry_hash });
-    expect([swapped.ok, swapped.break?.code, swapped.notes]).toEqual([false, 'ANCHOR_HEAD_MISMATCH', []]);
+    // Round 16: with the note that the last line lacks its LF, as a count mismatch has.
+    expect([swapped.ok, swapped.break?.code, swapped.notes]).toEqual([false, 'ANCHOR_HEAD_MISMATCH', ['The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands.']]);
     // A log cut inside a line still is.
     expect(run(bytes(FIVE.slice(0, -5)), HEAD).notes).not.toContain(FINAL);
     // Review round 14: cut back to 2 entries of the 3 the anchor covers, and the last LF lost too, is cut short.
@@ -249,12 +253,20 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     const r = run(bytes(text(entries)), undefined, keysFrom(`k1=${KEY_HEX},k2=${'5a'.repeat(32)}`));
     expect([r.break?.code, r.break?.entry_index]).toEqual(['HMAC_MISMATCH', 2]);
     expect(r.notes.some((n) => n.startsWith('A wrong key setting gives this answer too'))).toBe(true);
+    // Review round 16: the same log without its last LF keeps the key id and the note.
+    const noLf = run(bytes(text(entries).slice(0, -1)), undefined, keysFrom(`k1=${KEY_HEX},k2=${'5a'.repeat(32)}`));
+    expect([noLf.break?.code, noLf.break?.writer_key_id, noLf.notes.some((n) => n.startsWith('A wrong key setting gives this answer too'))]).toEqual(['HMAC_MISMATCH', 'k2', true]);
     // An entry of the same key as the one before it, with a broken seal, was changed: no such note.
     const lines = VALID.split('\n');
     lines[2] = (lines[2] ?? '').replace(/"entry_hmac":"[0-9a-f]{64}"/, `"entry_hmac":"${'0'.repeat(64)}"`);
     const forged = run(bytes(lines.join('\n')));
     expect([forged.break?.code, forged.break?.entry_index]).toEqual(['HMAC_MISMATCH', 2]);
     expect(forged.notes.some((n) => n.startsWith('A wrong key setting'))).toBe(false);
+    // Review round 16 (found by mutation): entry 1 too, under entry 0's key.
+    const first = VALID.split('\n');
+    first[1] = (first[1] ?? '').replace(/"entry_hmac":"[0-9a-f]{64}"/, `"entry_hmac":"${'0'.repeat(64)}"`);
+    const forgedOne = run(bytes(first.join('\n')));
+    expect([forgedOne.break?.code, forgedOne.break?.entry_index, forgedOne.notes.some((n) => n.startsWith('A wrong key setting'))]).toEqual(['HMAC_MISMATCH', 1, false]);
   });
 
   it('checks the anchor when the chain breaks at the entry right after it: an accident stays one, a replaced log cannot hide behind one', () => {

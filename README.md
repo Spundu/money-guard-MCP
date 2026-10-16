@@ -41,8 +41,7 @@ cd money-guard-mcp
 npm ci    # installs the dependencies, then builds dist/
 ```
 
-Then, in your own project's folder, add the server to Claude Code (to verify audit logs as well, which
-needs a key, set it up as [Settings](#settings) says instead):
+Then, in your own project's folder, add the server to Claude Code:
 
 ```sh
 claude mcp add --transport stdio money-guard -- node /path/to/money-guard-mcp/dist/index.js
@@ -341,22 +340,19 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   `..`, absolute paths outside the project, and Windows device and UNC paths are refused. Files that
   look like secrets (`.env`, private keys, `.npmrc`, cloud credential downloads, anything in `.git`)
   are refused even inside the project.
-- **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
-  cut to 40 characters (a few longer texts, such as a Postgres error, have their own limits: SPEC.md
-  §2.4). But the agent chooses which columns to map: paging through findings can show any three
-  columns of every row in one call, 40 characters each, and every column over a few calls; a column
-  name that matches none also lists up to 30 cells of the first line, which in a file with no header
-  is data. So a
-  secrets file the name list misses is not safe from the ledger tool. Table and column names stay
-  whole, so the agent can act on them; a path over
-  400 characters is cut in the middle. Characters that can hide text are escaped in money-guard's
-  results and errors, by Unicode category: control characters, the zero-width and direction
-  characters of the "Trojan Source" trick, and the invisible TAG characters that can spell out
-  instructions a person cannot see but a model reads. (A few blank-looking characters, such as wide
-  spaces, are outside those categories and pass as they are; every backslash outside `fix_sql` is
-  doubled, as JSON shows one, so text cannot pass for an escape. `fix_sql` is SQL to run, so it keeps
-  a name's backslashes single, and is null for a name that holds `\u`.) A result is at most 20,000 characters.
-  SPEC.md §2.4 has the exact rules.
+- **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id)
+  is cut to 40 characters. A few longer texts, such as a Postgres error, have their own limits. Table
+  and column names stay whole, so the agent can act on them; a path over 400 characters is cut in the
+  middle. A result is at most 20,000 characters.
+- **A secrets file the name list misses is not safe from the ledger tool.** The agent chooses which
+  columns to map, so paging through findings can show any three columns of every row in one call, and
+  every column over a few calls. A column name that matches none also lists up to 30 cells of the
+  first line, which in a file with no header is data.
+- **Hidden characters are escaped.** In results and errors, characters that can hide text are shown
+  as escapes, by Unicode category: control characters, the zero-width and direction characters of
+  the "Trojan Source" trick, and the invisible TAG characters that can spell out instructions a person
+  cannot see but a model reads. A few blank-looking characters, such as wide spaces, pass as they are.
+  SPEC.md §2.4 has the exact rules, including how backslashes are shown.
 - **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
   project that does not look like a secret.
 - **Keys are never shown.** They come only from the server's environment, and never appear in a

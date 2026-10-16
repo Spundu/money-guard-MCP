@@ -342,6 +342,14 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   const per = all.indexOf('per');
   const ws = per > 0 ? all.slice(0, per) : all;
   if (ws.some((w) => FINER_UNIT_WORDS.has(w) || MORE_DECIMAL_CURRENCIES.has(w))) return 'unsure';
+  // Only the word right after "per" says what the amount is for; a unit word after that is the amount's
+  // own ("price_per_unit_cents", "cost_per_click_micros"): review round 16, where they read as pounds.
+  const after = per > 0 ? all.slice(per + 2) : [];
+  const isUnit = (w: string) => MINOR_UNIT_WORDS.has(w) || UNSURE_UNIT_WORDS.has(w) || FINER_UNIT_WORDS.has(w) || MORE_DECIMAL_CURRENCIES.has(w) || ZERO_DECIMAL_CURRENCIES.has(w);
+  if (after.some(isUnit)) {
+    const last = all.at(-1) ?? '';
+    return (MINOR_UNIT_WORDS.has(last) && !UNSURE_UNIT_WORDS.has(last)) || ZERO_DECIMAL_CURRENCIES.has(last) ? 'minor' : 'unsure';
+  }
   // "minor unit", "smallest unit", "lowest denomination", when no money word follows: "lowest_unit_price"
   // is the lowest price of a product's unit, in pounds.
   const unitAfter = (i: number) => ['unit', 'units', 'denomination'].includes(ws[i + 1] ?? '') && !ws.slice(i + 2).some((w) => MONEY_WORDS.has(w));

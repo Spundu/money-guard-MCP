@@ -262,7 +262,8 @@ describe('money_lint_schema: judging columns', () => {
     const three = await lint({ 'db/migrations/0001.sql': 'create table t (price_a real, price_b real, price_c real);' }, { offset: 1 });
     expect(three.summary).toMatch(/ These are findings 2-3 of 3, the last\.$/); // offset 1 is a later page (round 13)
     const clean = await lint({ 'db/migrations/0001.sql': 'create table t (price bigint);' }, { offset: 50 });
-    expect([clean.findings_truncated, clean.summary.includes('offset')]).toEqual([false, false]); // nothing to page on a clean schema (round 13)
+    expect([clean.findings_truncated, clean.summary.includes('offset')]).toEqual([false, false]);
+    expect((await lint({ 'db/migrations/0001.sql': 'create table t (price real);' }, { offset: 100 })).summary).toMatch(/ No findings from offset 100: there is 1\.$/); // round 16 // nothing to page on a clean schema (round 13)
     expect((await lint(files, { offset: 999 })).findings).toEqual([]);
     // Review round 9: the summary says so, as the ledger's does.
     expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);

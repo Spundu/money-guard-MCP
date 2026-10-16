@@ -14,11 +14,11 @@ vi.mock('sealed-audit-chain', async (importOriginal) => {
 
 const KEY_HEX = '6b'.repeat(32);
 
-function sealed(): string {
+function sealed(users: readonly string[] = ['alice', 'bob', 'carol']): string {
   const provider = new InMemoryKeyProvider({ k1: Buffer.from(KEY_HEX, 'hex') }, 'k1');
   let prev: SealedEntry | null = null;
   let out = '';
-  for (const user of ['alice', 'bob', 'carol']) {
+  for (const user of users) {
     prev = appendEntry(prev, { event: 'user.login', user }, provider);
     out += toJsonlLine(prev);
   }
@@ -43,6 +43,19 @@ describe('audit_verify_chain reads a log once', () => {
     if (!keys.ok) throw new Error(keys.error.toText());
     const r = verifyAuditLog({ file: 'logs/audit.jsonl', bytes: Buffer.from(sealed().replace('"bob"', '"eve"').slice(0, -1)), keys: keys.value });
     expect([r.break?.code, r.break?.entry_index]).toEqual(['CONTENT_TAMPERED', 1]);
+  });
+
+  it('calls a last line cut inside a character, or too long, torn: it does not read as an entry', () => {
+    // Review round 16 (found by mutation): NOT_UTF8 and LINE_TOO_LARGE at that line are a cut write.
+    const keys = parseAuditKeys(`k1=${KEY_HEX}`);
+    if (!keys.ok) throw new Error(keys.error.toText());
+    const log = Buffer.from(sealed(['alice', 'bob', 'josé']));
+    const cut = log.subarray(0, log.indexOf(Buffer.from('é')) + 1); // after the first of its two bytes
+    const long = Buffer.concat([log, Buffer.from(`{"x":"${'y'.repeat(2 * 1024 * 1024)}"}`)]);
+    for (const bytes of [cut, long]) {
+      const r = verifyAuditLog({ file: 'logs/audit.jsonl', bytes, keys: keys.value });
+      expect([r.break?.code, r.notes.some((n) => n.includes('the entry on it is whole'))]).toEqual(['TORN_LAST_LINE', false]);
+    }
   });
 
   it('reports an edited last entry as edited when its LF is missing too, not as an interrupted write', () => {

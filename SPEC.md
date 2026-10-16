@@ -162,7 +162,8 @@ Every path argument:
      timestamp such as `export-202401011230.json` is not one). A word is bounded by anything but a
      letter or digit (a space, a bracket, `-`, `_`, `.`), and a space may join a two-word name
      (`Bitwarden Export.json`, `Secrets (1).json`, `api key.json`); a camelCase word is a word too
-     (`awsCredentials.csv`), and a copy's ` (1)` before the extension is left out (`token (1).json`,
+     (`awsCredentials.csv`), and a copy's ` (1)`, ` - Copy`, ` - Copy (2)`, ` copy`, ` copy 2` before the extension, or `Copy of `
+     before the name, is left out (`token (1).json`, `key - Copy.json`, `Copy of key.json`,
      `myproject-1a2b3c4d5e6f (1).json`). The same words in another name, such as
      the migration `0002_create_access_keys.sql` or the folder `add_service_accounts`, are not a
      secret. A name the list misses is not refused: the list covers the usual downloads, not every one.
@@ -173,7 +174,8 @@ Every path argument:
      show any three columns of every row (mapped as the id and as two of amount, side, debit, credit
      or currency, echoed through `BAD_AMOUNT`, `BAD_SIDE` and the nets of `UNBALANCED`), 40
      characters each, and a few calls every column. `COLUMN_NOT_FOUND` lists up to 30 cells of the
-     first line, 40 characters each: in a file with no header, they are data.
+     first line, 40 characters each: in a file with no header, they are data. And `file_sha256`, the
+     hash of the whole file, lets a model check a guess at a short secret file's content.
    - anything inside `.git/`
 
    This is defence in depth. The tools echo only tiny pieces of a file, but a read-only tool must
@@ -239,7 +241,9 @@ already read the files).
   U+13440, U+1D159). Each appears as `\uXXXX`, or `\u{XXXXX}` above U+FFFF, in every result and
   error money-guard writes: each tool escapes what it copies, and the server escapes every result and
   error once more on the way out. In text copied from a project or a file, every backslash appears
-  doubled, as JSON shows one: a single backslash always starts an escape, so no two texts look alike.
+  doubled in the text (so as four in the JSON on the wire): a single backslash always starts an
+  escape, so no two texts look alike. `fix_sql` is the exception: it is SQL to run, so it keeps a
+  name's backslashes single, and is null for a name that holds a backslash before `u` (§3.6).
   Where a result or an error puts copied text in double quotes, a double quote inside it appears as
   `\"`, so the text cannot close them (a value shown without quotes keeps its own).
   The six characters `\u200b` show as `\\u200b`, a backslash followed by a real U+200B as `\\\u200b`,
@@ -618,7 +622,9 @@ The word lists:
     calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
     power, usage, capacity, speed, temperature, precision, scale, growth
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
-- **Minor-unit words** (`fix_sql` only rounds; words after "per" do not count, and before the money
+- **Minor-unit words** (`fix_sql` only rounds; the word right after "per" does not count, as it says
+  what the amount is for, as in `price_per_cent`, but a unit word after that does: `price_per_unit_cents`
+  is in cents, and `cost_per_click_micros` or `price_per_unit_kwd` gives `null`; before the money
   word only pence, cents and pennies do: `subunit_price` or `kobo_price` may name a product or a brand,
   so the unit is unsure; "minor", "smallest" or "lowest" before unit, units or denomination count only
   when no money word follows, as `lowest_unit_price` is a product's unit price): pence, penny, pennies, cent, cents, paise, paisa,
@@ -703,8 +709,9 @@ conversion follows the name and the declared scale; the test suite runs each kin
   `NULL`; a CHECK constraint that holds a number other than zero, calls a function, reads the whole row (`x.*`, as
   `to_jsonb(x.*)` does) or also uses
   another column; or a unique or exclusion index whose expression or `WHERE` clause holds such an
-  amount, or also reads another column of a number type (`WHERE amount > approval_limit`; a plain key
-  column of the index does not count) (it decides which rows may exist together). A number in such a
+  amount, or also reads another column of a number type (`WHERE amount > approval_limit`, also when
+  `approval_limit` is a key column of the index; a key column that no expression or `WHERE` reads does
+  not count) (it decides which rows may exist together). A number in such a
   condition withholds the fix even when it is compared only with another column (`WHERE kind = 2`,
   `WHERE created_at > '2020-01-01'`): doubt withholds it. `ALTER COLUMN ... TYPE` converts the stored rows with `USING`, but
   leaves those as written: a default of 2.50 becomes 3 pence, and `CHECK (amount <= 1000.00)` a cap of
@@ -773,7 +780,7 @@ shows it: the tool runs the new migration too.
 | `MIGRATION_FAILED` | A migration file fails, is not UTF-8, leaves the database unusable or silent, or ends inside a transaction it opened (BEGIN with no COMMIT: the files after it would run inside it); or the catalog cannot be read after the last file (§3.4). | The file; the line and column where Postgres gives a `position` (a syntax error does, and often an unknown name or schema; a missing role, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message, in quotes, a quote inside it escaped (≤ 300 characters; it can quote the migration's own text, as RAISE EXCEPTION writes any, so it can never add a "Fix:" of its own). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
 | `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Check that migrations points at the folder of migrations. Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
-| `TOO_MANY_FILES` | More than 2,000 `.sql` files, more than 10,000 files and folders to look through for them (listing them blocks the server), or folders (or links to folders) nested more than 100 deep. | Points at the folder of migrations, or `files`. |
+| `TOO_MANY_FILES` | More than 2,000 `.sql` files, more than 10,000 files and folders to look through for them (listing them blocks the server), or folders (or links to folders) nested more than 100 deep. | Points at the folder of migrations, or `files`; for more than 2,000 files, which `files` cannot hold either, at one schema-only dump (`pg_dump --schema-only`). |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, names a file another entry names too, or `files` is given with a single `.sql` file. | |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
 | `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: pass a larger `timeout_seconds`, or lint one schema-only dump of the database they build; linting the files in groups would fail, as each group needs the ones before it; while the catalog was read, after every file had run: none of these), and that a limit over 60 seconds helps only with a client that waits longer than that. |
@@ -1082,7 +1089,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 | `counts_by_code` | object | e.g. `{ "UNBALANCED": 1 }`, over all pages. |
 | `findings` | Finding[] | This page: at most `limit` findings, fewer if the result would pass its budget (§2.4). |
 | `offset`, `limit`, `total_findings` | integer | `limit` as asked (default 20). |
-| `next_offset` | integer or null | The first finding not on this page; null on the last page of the findings kept (the first 10,000, §4.8). When there are more, the summary says so: "Only the first 10,000 findings can be paged; the counts cover all N. On a page past the last finding: "No findings from offset 500: there are 30 to page."" |
+| `next_offset` | integer or null | The first finding not on this page; null on the last page of the findings kept (the first 10,000, §4.8). When there are more, the summary says so: "Only the first 10,000 findings can be paged; the counts cover all N." On a page past the last finding, it says "No findings from offset 500: there are 30 to page." ("there is 1" for one). |
 
 ### 4.7 Errors (besides §2.5)
 | Code | When |
@@ -1205,7 +1212,7 @@ Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", 
 ### 5.4 Reason codes
 | Code | sealed-audit-chain reason | Plain meaning |
 |---|---|---|
-| `TORN_LAST_LINE` | last line is not terminated (torn) | A write was cut off, or the file was cut mid-line: a last line without LF that does not read as JSON. One that holds a whole entry is checked as it stands, so an edited or forged last entry is `CONTENT_TAMPERED`, `HMAC_MISMATCH` and so on, with the note "The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands." When only the final LF is missing (§5.5 `notes`), the summary says the entry "lacks the line end a sealed log puts after every entry; with it, every entry verifies". |
+| `TORN_LAST_LINE` | last line is not terminated (torn) | A write was cut off, or the file was cut mid-line: a last line without LF that does not read as a JSON line (not JSON, not UTF-8, or too long). One that holds a whole entry is checked as it stands, so an edited or forged last entry is `CONTENT_TAMPERED`, `HMAC_MISMATCH` and so on, with the note "The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands." When only the final LF is missing (§5.5 `notes`), the summary says the entry "lacks the line end a sealed log puts after every entry; with it, every entry verifies". |
 | `LINE_TOO_LARGE` | line exceeds the canonical size limit | |
 | `NOT_UTF8` | line is not valid UTF-8 | |
 | `NOT_JSON` | line is not valid JSON | |

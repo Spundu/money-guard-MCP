@@ -114,6 +114,9 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
       ['language tag', '\u{e0001}', '\\u{e0001}'],
       ['TAG letter A', '\u{e0041}', '\\u{e0041}'],
       ['variation selector 256', '\u{e01ef}', '\\u{e01ef}'],
+      // review round 16: format characters that are not default-ignorable
+      ['interlinear annotation anchor', '\u{fff9}', '\\ufff9'],
+      ['Arabic number sign', '\u{600}', '\\u0600'],
     ];
     for (const [name, char, escape] of invisible) {
       expect(escapeUnsafe(`a${char}b`), name).toBe(`a${escape}b`);

@@ -135,6 +135,17 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   );
 }
 
+/**
+ * The delimiter a header holds when it holds none of `delimiter`: the one it holds most (review round 16:
+ * a semicolon export with comma decimals failed on line 2, before the header's hint could run).
+ */
+function headerDelimiter(bytes: Uint8Array, delimiter: string): string | undefined {
+  const first = new TextDecoder().decode(bytes.subarray(0, 4096)).split(/\r\n?|\n/)[0] ?? '';
+  if (first.includes(delimiter)) return undefined;
+  const count = (d: string) => first.split(d).length - 1;
+  return DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0];
+}
+
 /** For a first line that starts sep= in a form readCsv does not read: whatever the delimiter, it misleads (review round 14). */
 const SEP_FIX = 'The first line looks like Excel\'s "sep=" line, in a form money-guard does not read (sep= then one of , ; | or a tab): delete that line, or write it so.';
 
@@ -150,7 +161,9 @@ const CSV_PROBLEMS: Readonly<Record<string, string>> = {
 function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
   // A first line "sep=;", which Excel reads (tools that write CSV for Excel add it), names the delimiter and is not the header
   // (review round 13). It is skipped, and its delimiter used; lines are still counted from the file's first.
-  const sepLine = /^(?:\uFEFF)?"?sep=([,;\t|])"?[ \t]*(?:\r\n?|\n)/i.exec(new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes.subarray(0, 24))); // quoted, or with spaces after; the BOM kept, so its 3 bytes count (round 14)
+  // Quoted, or with spaces after; the BOM kept, so its 3 bytes count (round 14); or the whole file, with no line end (round 16).
+  const head = bytes.subarray(0, 24);
+  const sepLine = new RegExp(`^(?:\\uFEFF)?"?sep=([,;\\t|])"?[ \\t]*(?:\\r\\n?|\\n${head.length === bytes.length ? '|$' : ''})`, 'i').exec(new TextDecoder('utf-8', { ignoreBOM: true }).decode(head));
   const delimiter = sepLine?.[1] ?? given;
   const sepEnd = sepLine === null ? 0 : Buffer.byteLength(sepLine[0]);
   const lineStarts = (list: readonly number[]) => (sepEnd === 0 ? startLines(bytes, list) : startLines(bytes, [sepEnd, ...list]).slice(1));
@@ -183,7 +196,9 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
     const line = lineStarts([...ends, bytes.length]).at(-1) ?? 1;
     const problem = CSV_PROBLEMS[err.code] ?? 'the CSV structure is broken';
     const unreadSep = sepEnd === 0 && /^(?:\uFEFF)?"?sep\s*=/i.test(new TextDecoder().decode(bytes.subarray(0, 16)));
-    throw new ToolError('PARSE_ERROR', `Line ${line}: ${problem}.`, unreadSep ? SEP_FIX : 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.');
+    const other = unreadSep ? undefined : headerDelimiter(bytes.subarray(sepEnd), delimiter);
+    const fix = other === undefined ? 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.' : `The header looks separated by ${showDelimiter(other)}, not ${showDelimiter(delimiter)}: pass delimiter ${JSON.stringify(other)}.`;
+    throw new ToolError('PARSE_ERROR', `Line ${line}: ${problem}.`, unreadSep ? SEP_FIX : fix);
   }
   const [header, ...data] = records;
   if (header === undefined) return { rows: [], names: [] };
