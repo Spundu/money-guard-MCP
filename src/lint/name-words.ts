@@ -17,7 +17,7 @@ export const MONEY_WORDS: ReadonlySet<string> = new Set([
   'penalties', 'pnl', 'cogs', 'shipping', 'tip', 'tips', 'pay', 'cashback', 'copay', 'copays', 'reimbursement',
   'reimbursements', 'installment', 'installments', 'instalment', 'instalments', 'dividend', 'dividends', 'royalty',
   'royalties', 'arrears', 'overdraft', 'overdrafts', 'payable', 'payables', 'receivable', 'receivables', 'spending',
-  'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi',
+  'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi', 'nav', 'pension', 'pensions',
   'bal', 'bals', 'deduction', 'deductions', 'markup', 'markups', 'gratuity', 'gratuities', 'duty', 'duties', 'excise', 'tariff',
   'tariffs', 'brokerage', 'freight', 'toll', 'tolls', 'ltv', 'ebitda', 'severance', 'debt', 'debts',
   // minor units of other currencies
@@ -107,7 +107,7 @@ export const RATIO_WORDS: ReadonlySet<string> = new Set(['percent', 'percentage'
 export const PAY_RATE_WORDS: ReadonlySet<string> = new Set([
   'hourly', 'daily', 'nightly', 'night', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour', 'room', 'overtime', 'mileage', 'rental', 'hire', 'diem',
   'hour', 'cost', 'costing', 'valuation', 'incoming', 'unit', // ERPNext, Harvest and energy tariffs (review round 21)
-  'billable', 'peak', 'standard', 'export', 'import', // Harvest's billable_rate, energy tariffs' peak_rate (round 22)
+  'billable', 'peak', 'list', 'outgoing', // ERPNext's price_list_rate, outgoing_rate (round 23); Harvest's billable_rate, energy tariffs' peak_rate (round 22; not standard, import or export: VAT and duty rates, round 23)
 ]);
 
 /** What "rate_per_..." can be priced by: "rate_per_hour" is a price; "rate_per_second" stays a rate. */
@@ -209,7 +209,10 @@ export const PER_ORDINARY_WORDS: ReadonlySet<string> = new Set([
 export const PRICED_MEASURE_WORDS: ReadonlySet<string> = new Set(['kg', 'g', 'mg', 'lb', 'km', 'mile', 'kwh', 'ml', 'litre', 'liter', 'gb', 'mb']);
 
 /** A scale other than pounds: "revenue_millions", "amount_k" hold thousands or millions of pounds (review round 20). */
-export const SCALE_WORDS: ReadonlySet<string> = new Set(['k', 'thousand', 'thousands', 'm', 'mm', 'mn', 'mio', 'million', 'millions', 'bn', 'billion', 'billions', 'lakh', 'lakhs', 'lac', 'lacs', 'crore', 'crores', 'cr', 'hundredths']);
+export const SCALE_WORDS: ReadonlySet<string> = new Set(['k', 'thousand', 'thousands', 'm', 'mm', 'mn', 'mio', 'million', 'millions', 'bn', 'billion', 'billions', 'lakh', 'lakhs', 'lac', 'lacs', 'crore', 'crores', 'hundredths']); // not cr: credit (review round 23)
+
+/** Words after nav that make it navigation, not net asset value: "nav_order" (review round 23). */
+export const NAV_UI_WORDS: ReadonlySet<string> = new Set(['order', 'index', 'label', 'bar', 'item', 'items', 'link', 'links', 'menu', 'sort', 'position', 'title', 'icon', 'url', 'path', 'id', 'key']);
 
 /** Words that say a balance's state, looked past for what it holds: "pto_remaining_balance" (review round 22). */
 export const HELD_STATE_WORDS: ReadonlySet<string> = new Set(['remaining', 'available', 'accrued', 'opening', 'closing', 'current', 'used', 'unused', 'carried', 'starting', 'ending']);
@@ -219,4 +222,4 @@ export const HELD_STATE_WORDS: ReadonlySet<string> = new Set(['remaining', 'avai
  * "real", "left" and "off" ("realtimebalance", "allowancedaysleft", "timeoffbalance" as their snake_case forms,
  * rounds 20 and 21).
  */
-export const FOLDING_WORDS: ReadonlySet<string> = new Set(['marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding', 'real', 'left', 'off', 'nav']);
+export const FOLDING_WORDS: ReadonlySet<string> = new Set(['marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding', 'real', 'left', 'off']);

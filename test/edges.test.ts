@@ -120,9 +120,51 @@ describe('the rarer forms of an answer', () => {
       if (!amount.endsWith('…')) expect(fromJson, amount).toContain('(mapped as amount)');
       expect(fromJson, amount).not.toContain('HIDDENPART');
     }
+    // Review round 23: whether a suggestion comes at all must say nothing past what is shown. Guessing the
+    // first hidden character after the 39 shown, every guess gets the same answer, so none can be told right.
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789_';
+    const known = token.slice(29, 39);
+    const answers = (probe: (c: string) => () => unknown) => new Set([...alphabet].map((c) => errorText(probe(c)).includes('Did you mean')));
+    expect(answers((c) => () => check('.csv', csv, { columns: { transaction_id: 'stripe', amount: `${known}${c}` } })).size).toBe(1);
+    expect(answers((c) => () => check('.jsonl', `{"t":"T1","${token}":1}\n`, { columns: { transaction_id: 't', amount: `${known}${c}` } })).size).toBe(1);
+    expect(answers((c) => () => check('.csv', csv, { columns: { transaction_id: 'stripe', amount: `${token.slice(0, 37)}${c}${'x'.repeat(14)}` } })).size).toBe(1); // by edit distance too
     // A cut name maps only when one name is shown so: two that share their first 39 characters do not.
     const twins = `${'x'.repeat(39)}aa,${'x'.repeat(39)}bb,amount\nT1,T1,5\nT1,T1,-5\n`;
     expect(errorText(() => check('.csv', twins, { columns: { transaction_id: `${'x'.repeat(39)}…`, amount: 'amount' } }))).toMatch(/^COLUMN_NOT_FOUND: /);
+  });
+
+  it('says a suggestion that looks like the name given, cut, differs past what is shown', () => {
+    // Review round 23: the two read the same, as a contradiction.
+    const long = 'Transaction Identifier For The General Ledger Entry';
+    const cutName = `${long.slice(0, 39)}…`;
+    expect(errorText(() => check('.csv', `${long},amount_pence\nA,1\n`, { columns: { transaction_id: `${long.slice(0, 45)}x`, amount: 'amount_pence' } })))
+      .toContain(`no column "${cutName}" (mapped as transaction_id). Did you mean "${cutName}" (it differs past the 40 characters shown: pass it back as shown)?`);
+  });
+
+  it('shows two long names that begin alike by their ends too, so each can be mapped as shown', () => {
+    // Review round 23: both showed as "Transaction amount in settlement curren…", and neither could be mapped.
+    const gbp = 'Transaction amount in settlement currency (GBP)';
+    const csv = `id,${gbp},Transaction amount in settlement currency (EUR)\nT1,5,1\nT1,-5,-1\n`;
+    const e = errorText(() => check('.csv', csv, { columns: { transaction_id: 'id', amount: 'amount' } }));
+    const shown = [...e.matchAll(/"(Transaction[^"]*)"/g)].map((m) => m[1] ?? '');
+    expect(new Set(shown).size).toBe(2); // two different names
+    const mine = shown.find((s) => s.includes('GBP')) ?? '';
+    expect([mine.length <= 40, check('.csv', csv, { columns: { transaction_id: 'id', amount: mine } }).rows_read]).toEqual([true, 2]);
+    // A cut name with a quote in it maps written as shown (\\") or plainly (").
+    const quotedName = 'Amount "net" in the settlement currency of the row';
+    const q = `id,"${quotedName.replaceAll('"', '""')}"\nT1,5\nT1,-5\n`;
+    const listed = (errorText(() => check('.csv', q, { columns: { transaction_id: 'id', amount: 'x' } })).match(/"(Amount[^…]*…)"/) ?? [])[1] ?? '';
+    expect(listed).toContain('\\"net\\"');
+    expect([check('.csv', q, { columns: { transaction_id: 'id', amount: listed } }).rows_read, check('.csv', q, { columns: { transaction_id: 'id', amount: listed.replaceAll('\\"', '"') } }).rows_read]).toEqual([2, 2]);
+  });
+
+  it('says in the ledger summary when more findings follow, as the lint does', () => {
+    // Review round 23: page 1 of 45 unbalanced transactions read as if its 20 findings were all.
+    const csv = `t,a\n${Array.from({ length: 45 }, (_, i) => `T${i},5`).join('\n')}\n`;
+    const first = check('.csv', csv, { columns: { transaction_id: 't', amount: 'a' }, limit: 20 });
+    expect([first.next_offset, first.summary.endsWith(' Not every finding is listed: pass next_offset as offset for the next ones.')]).toEqual([20, true]);
+    const last = check('.csv', csv, { columns: { transaction_id: 't', amount: 'a' }, limit: 20, offset: 40 });
+    expect([last.next_offset, last.summary.includes('Not every finding is listed')]).toEqual([null, false]);
   });
 
   it('suggests no name as far from the one asked for as its whole length', () => {

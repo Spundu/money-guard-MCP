@@ -115,8 +115,12 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
     total_findings: total,
     next_offset: null,
   };
+  // The summary says when more findings follow, as the lint's does (review round 23: a model could report 20
+  // of 45 problems as all of them).
+  const base = result.summary;
   const settle = () => {
     result.next_offset = offset + page.length < all.length ? offset + page.length : null;
+    result.summary = base + (result.next_offset === null ? '' : ' Not every finding is listed: pass next_offset as offset for the next ones.');
   };
   settle();
   // Over the budget (long locations): a shorter page, never empty, and next_offset carries on from

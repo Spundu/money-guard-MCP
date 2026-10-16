@@ -106,7 +106,13 @@ const TOOLS: ReadonlyArray<{ up: RegExp | null; down: RegExp }> = [
  * Every line keeps its length, so the positions Postgres reports still point at the right line and column.
  */
 /** A line that only sets the client encoding, as pg_dump writes it. */
-const CLIENT_ENCODING = /^\s*SET\s+(?:SESSION\s+)?(?:client_encoding\s*(?:=|TO)|NAMES)\s*[^;]*;\s*$/i;
+const CLIENT_ENCODING = /^\s*SET\s+(?:SESSION\s+|LOCAL\s+)?(?:client_encoding\s*(?:=|TO)|NAMES)\s*[^;]*;\s*(?:--.*)?$/i; // a comment after it, LOCAL (round 23)
+
+/**
+ * pg_dump's line that empties the search path. The dump names every object with its schema, so it does nothing
+ * there; it emptied the search path of every later file, whose unqualified names then failed (review round 23).
+ */
+const EMPTY_SEARCH_PATH = /^\s*SELECT\s+pg_catalog\.set_config\('search_path',\s*'',\s*false\);\s*$/i;
 
 export function prepareSql(text: string): string {
   const lines = text.split('\n');
@@ -116,7 +122,7 @@ export function prepareSql(text: string): string {
     .map((line) => {
       if (tool?.up?.test(line)) down = false;
       else if (tool?.down.test(line)) down = true;
-      return down || /^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) || CLIENT_ENCODING.test(line) ? ' '.repeat(line.length) : line;
+      return down || /^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) || CLIENT_ENCODING.test(line) || EMPTY_SEARCH_PATH.test(line) ? ' '.repeat(line.length) : line;
     })
     .join('\n');
 }

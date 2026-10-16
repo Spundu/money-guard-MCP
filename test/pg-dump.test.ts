@@ -43,3 +43,25 @@ describe('a pg_dump file', () => {
     expect(performance.now() - started).toBeLessThan(25_000);
   });
 });
+
+describe('a pg_dump baseline among later migrations', () => {
+  it('leaves the search path to the files after it', async () => {
+    // Review round 23: its set_config line emptied the search path, and an unqualified name later was "does not exist".
+    const r = await lint({ 'db/migrations/0000_baseline.sql': `${header('UTF8')}CREATE TABLE public.orders (id integer);\n`, 'db/migrations/0001_fee.sql': 'alter table orders add column fee double precision;' });
+    expect(r.findings.map((f) => f.column)).toEqual(['fee']);
+    for (const line of ["SET client_encoding = 'WIN1252'; -- from the dump", "SET LOCAL client_encoding = 'LATIN1';", "SELECT pg_catalog.set_config('search_path', '', false);"]) {
+      expect(prepareSql(line), line).toBe(' '.repeat(line.length));
+    }
+    expect(prepareSql("SELECT pg_catalog.set_config('search_path', 'app', false);")).toBe("SELECT pg_catalog.set_config('search_path', 'app', false);"); // a migration's own choice stays
+  });
+});
+
+describe('a client encoding set some other way', () => {
+  it('is put back after each file, so a name that is not ASCII is read in time', async () => {
+    // Review round 23: set_config('client_encoding', 'LATIN1') is no line to blank; the catalog read hung to the limit.
+    const started = performance.now();
+    const r = await lint({ 'db/migrations/0001.sql': "select pg_catalog.set_config('client_encoding', 'LATIN1', false);\ncreate table t (\"price_é\" double precision);\n" }, { timeout_seconds: 30 });
+    expect(r.findings.map((f) => f.column)).toEqual(['price_é']);
+    expect(performance.now() - started).toBeLessThan(25_000);
+  });
+});

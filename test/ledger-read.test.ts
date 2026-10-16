@@ -91,7 +91,7 @@ describe('money_check_double_entry: reading CSV', () => {
     const long = 'Transaction Identifier For The General Ledger Entry';
     const cutName = `${long.slice(0, 39)}…`;
     const near = errorText(() => check('.csv', `${long},amount_pence\nA,1\n`, { columns: { transaction_id: `${long.slice(0, 45)}x`, amount: 'amount_pence' } }));
-    expect(near).toContain(`Did you mean "${cutName}"? The columns are: "${cutName}", "amount_pence".`);
+    expect(near).toContain(`Did you mean "${cutName}" (it differs past the 40 characters shown: pass it back as shown)? The columns are: "${cutName}", "amount_pence".`);
     expect(near).not.toContain(long.slice(39));
     const mapped = { transaction_id: cutName, amount: 'amount_pence' };
     expect(check('.csv', `${long},amount_pence\nA,1\nA,-1\n`, { columns: mapped }).rows_read).toBe(2);

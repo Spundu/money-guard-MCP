@@ -43,6 +43,7 @@ import {
   SCALE_WORDS,
   FOLDING_WORDS,
   HELD_STATE_WORDS,
+  NAV_UI_WORDS,
 } from './name-words.js';
 
 
@@ -163,7 +164,8 @@ function judgeWords(all: readonly string[]): Verdict {
   const last = ws.at(-1);
   if (last === undefined) return 'not';
   if (last === 'rate' && PAY_RATE_WORDS.has(ws.at(-2) ?? '')) return 'money'; // "room_rate_per_night" too (review round 22)
-  if (per === 1 && all[0] === 'nav') return 'money'; // "nav_per_share": net asset value; "nav_order" is navigation (round 22)
+  // "nav" is net asset value, money, but before a word of a menu it is navigation ("nav_order", review rounds 22 and 23).
+  if (all[0] === 'nav' && NAV_UI_WORDS.has(all[1] ?? '')) return 'not';
   // "amount_minor_units", "amount_in_smallest_unit": the unit of an amount, not a count of units;
   // "price_unit" (Odoo's unit price on every order line): a price per unit.
   const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
@@ -187,10 +189,17 @@ function judgeWords(all: readonly string[]): Verdict {
     const holds = (words: ReadonlySet<string>) => at >= 0 && words.has(word) && !partOfMoney(ws, at);
     if (holds(budget ? BUDGET_HELD_WORDS : HELD_WORDS) || ws.slice(held + 1).some((w) => HELD_AFTER_WORDS.has(w))) return 'not';
     if (holds(budget ? BUDGET_GUESS_WORDS : HELD_GUESS_WORDS)) return 'guess';
+    // A held word further back may be what it holds ("pto_carryover_balance", hours) or not (India's
+    // "leave_travel_allowance", money): a guess, so no x100 either way (review round 23).
+    if (totalsAMeasure(ws, held, budget ? BUDGET_HELD_WORDS : HELD_WORDS)) return 'guess';
   }
   // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
   // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
   // exponent), it is not an amount.
+  // A tier's or a level's number kept ("price_tier_1") is sure money with a price; "commission_tier_1" may be a
+  // percentage: a guess (review round 23).
+  const tiered = /^\d+$/.test(last) && ['tier', 'level', 'band'].includes(ws.at(-2) ?? '');
+  if (tiered && !ws.some((w) => ['price', 'prices', 'cost', 'costs', 'fee', 'fees', 'amount', 'amounts'].includes(w))) return 'guess';
   if (ws.some((w) => MONEY_WORDS.has(w) && w !== 'minor' && !GENERIC_MONEY_WORDS.has(w))) return 'money';
   // A generic money word counts unless a measure follows it: "total_paid" and "net_ytd" are money,
   // "total_co2" and "credit_utilization" measures. "units" after minor or smallest is the unit of the money.
@@ -269,10 +278,11 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   // Folded too: "amountx100", "salaryk" (review round 21), a money word and then x or k.
   const raw = words(name);
   const foldedX = (w: string) => w.endsWith('x') && MONEY_WORDS.has(w.slice(0, -1));
-  const foldedK = raw.length === 1 && (raw[0] ?? '').endsWith('k') && MONEY_WORDS.has((raw[0] ?? '').slice(0, -1));
+  const foldedK = raw.length === 1 && ['k', 'm'].some((e) => (raw[0] ?? '').endsWith(e) && MONEY_WORDS.has((raw[0] ?? '').slice(0, -1))); // "revenuem" too (round 23)
   // "revenue_000", "revenue_gbp_000": the UK's £000 (round 22).
   const thousands = raw.some((w, i) => w === '000' && (i === raw.length - 1 || (i === raw.length - 2 && raw[i + 1] === 's')));
-  if (ws.some((w) => SCALE_WORDS.has(w)) || foldedK || thousands || raw.some((w, i) => (w === 'x' || foldedX(w)) && /^10+$/.test(raw[i + 1] ?? ''))) return 'unsure';
+  // "m" after a number is months ("revenue_12m"), not millions (review round 23).
+  if (ws.some((w, i) => SCALE_WORDS.has(w) && !(w === 'm' && /^\d+$/.test(ws[i - 1] ?? ''))) || foldedK || thousands || raw.some((w, i) => (w === 'x' || foldedX(w)) && /^10+$/.test(raw[i + 1] ?? ''))) return 'unsure';
   // Only the word right after "per" says what the amount is for; a unit word after that is the amount's
   // own ("price_per_unit_cents", "cost_per_click_micros"): review round 16, where they read as pounds.
   const after = per > 0 ? all.slice(per + 2) : [];
@@ -305,7 +315,8 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
  * an amount (review round 22).
  */
 export function amountInCurrency(name: string): boolean {
-  const ws = knownWords(name);
+  // Words of which amount it is may stand between: Odoo's "amount_residual_currency" (review round 23).
+  const ws = knownWords(name).filter((w) => !['residual', 'foreign', 'original', 'signed', 'company'].includes(w));
   return ['currency', 'ccy'].includes(ws.at(-1) ?? '') && MONEY_WORDS.has(ws.at(-2) ?? '') && !GENERIC_MONEY_WORDS.has(ws.at(-2) ?? '');
 }
 

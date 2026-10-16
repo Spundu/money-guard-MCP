@@ -3,12 +3,11 @@
 // the check carries on and reports it with the rest.
 
 import { CsvError, parse } from 'csv-parse/sync';
-import { closest } from '../closest.js';
 import { clip, ECHO_MAX, hasUnsafe, quoted } from '../echo.js';
 import { MAX_FIELDS, MAX_ROW_CHARS, rowWithTooManyFields, startLines } from './csv-lines.js';
 import { ToolError } from '../errors.js';
 import { JsonLimitError, JsonSyntaxError, MAX_FIELD_NAMES, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
-import { describe, mappedEntries, NAMED_RECORDS, namesOf, requireMappedFields, uncut, uncutColumns, valuesOf } from './fields.js';
+import { closestShown, describe, didYouMean, shownNames, mappedEntries, NAMED_RECORDS, namesOf, requireMappedFields, uncut, uncutColumns, valuesOf } from './fields.js';
 import { encodeToken, isRecord, resolvePointer } from './pointer.js';
 
 export type LedgerFormat = 'csv' | 'json' | 'jsonl';
@@ -111,10 +110,10 @@ function findColumn(header: string[], field: MappedField, given: string, delimit
   if (matches.length > 1) {
     throw new ToolError('COLUMN_AMBIGUOUS', `The header has ${matches.length} columns named ${quoted(name)} (mapped as ${field}).`, 'Rename one of them in the export, or map a different column.');
   }
-  const shown = header.slice(0, 30).map((h) => `${quoted(h)}`);
+  const shown = shownNames(header).slice(0, 30).map((h) => `"${h}"`);
   const more = header.length > 30 ? ` and ${header.length - 30} more` : '';
-  const near = closest(name, header.filter((h) => h !== '')); // never an empty name, from a trailing delimiter (round 14)
-  const hint = near === undefined ? '' : ` Did you mean ${quoted(near)}?`; // cut at 40 like every name shown (round 22)
+  const near = closestShown(name, header.filter((h) => h !== '')); // never an empty name, from a trailing delimiter (round 14); on what is shown (round 23)
+  const hint = didYouMean(name, near, header); // cut at 40 like every name shown (round 22)
   // A header read as one column that holds another delimiter: the file is separated by that one.
   // The one that occurs most in the header, read as one column, is the likeliest delimiter.
   const count = (d: string) => (header[0] ?? '').split(d).length - 1;

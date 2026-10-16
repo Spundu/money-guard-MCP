@@ -14,7 +14,7 @@ Rules:
   protocol; diagnostics go to stderr, never file content, keys or absolute paths.
 - Never parse SQL text: execute it (PGlite, in `src/lint/worker.js`) and read the catalog. The only text
   recognised in the files is file-format markers, matched by line: the up and down markers of dbmate, goose,
-  sql-migrate, node-pg-migrate and tern, and pg_dump's `\restrict` and `SET client_encoding` lines (the error hints also look for
+  sql-migrate, node-pg-migrate and tern, and pg_dump's `\restrict` and `SET client_encoding` / `SET NAMES` lines (the error hints also look for
   `COPY ... FROM stdin;` and for a failing line that starts with `\`, a psql meta-command). Whether to
   offer `fix_sql` reads the expressions PostgreSQL writes back (`holdsNoAmount`, `isZeroOrNullDefault`
   in src/lint/amounts.ts): keep those patterns cautious, so that doubt withholds the fix, and linear

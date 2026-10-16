@@ -242,9 +242,9 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
       return new ToolError(failedCode(script), `${script.name}: ${what} (${why}).`, fix);
     };
     // After a statement PGlite cannot carry out (COPY ... PROGRAM), the database answers wrongly or not at all.
-    const stuck = (step: number, what: string, why = 'a statement PGlite cannot carry out, such as COPY ... PROGRAM'): ToolError => {
+    const stuck = (step: number, what: string, why = 'a statement PGlite cannot carry out, such as COPY ... PROGRAM, or a change of client encoding'): ToolError => {
       const script = scriptAt(step);
-      const fix = wayPast(script, options.single, { setup: 'Take that statement out of the setup file.', folder: 'Leave the file out with files.', single: 'Lint a copy without that statement.' });
+      const fix = wayPast(script, options.single, { setup: 'Take that statement out of the setup file.', folder: 'Lint a copy of the folder without that statement, or leave the file out with files if no later file needs what it creates.', single: 'Lint a copy without that statement.' });
       return new ToolError(failedCode(script), `${script.name}: after this file the database ${what} (${why}).`, fix);
     };
 

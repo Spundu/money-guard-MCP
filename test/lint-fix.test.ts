@@ -346,7 +346,7 @@ describe('money_lint_schema: fix_sql', () => {
     });
   });
 
-  it('gives no fix_sql for a name holding a backslash before "u": in the SQL it would read as an escape', async () => {
+  it('gives no fix_sql for a name holding a backslash, which reads otherwise in the SQL than in the result', async () => {
     const r = await lint({ 'db/migrations/0001.sql': 'create table t ("price_\\u202e_total" double precision, total double precision);' });
     expect(r.findings.map((f) => [f.column, f.fix_sql === null])).toEqual([
       ['price_\\\\u202e_total', true],

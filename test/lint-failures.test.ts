@@ -308,6 +308,7 @@ describe('money_lint_schema: safety', () => {
     const e = await failure({ 'db/migrations/0001.sql': 'create table p (line text);', 'db/migrations/0002.sql': `copy (select 1) to program '${program.replaceAll("'", "''")}';` });
     expect(e.code).toBe('MIGRATION_FAILED');
     expect(e.message).toMatch(/0002\.sql": after this file the database (no longer answers correctly|stopped answering)/);
+    expect(e.fix).toBe('Lint a copy of the folder without that statement, or leave the file out with files if no later file needs what it creates.'); // round 23
     expect(existsSync(marker)).toBe(false);
   });
 

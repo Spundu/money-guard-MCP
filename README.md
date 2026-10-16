@@ -26,7 +26,8 @@ tested](#how-it-is-tested)). macOS is untested.
 Why run the migrations instead of reading them? Patterns over SQL text easily miss a later `ALTER
 COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database that ran the migrations
 does not. It reads the SQL text only for file-format markers (the up and down parts of dbmate,
-goose and the like) and for its error hints; and, to decide whether to offer `fix_sql`, it looks at
+goose and the like, and the pg_dump lines PGlite cannot run: `\restrict` and the client encoding) and for
+its error hints; and, to decide whether to offer `fix_sql`, it looks at
 the defaults, CHECK constraints and index conditions as PostgreSQL writes them back, with simple,
 cautious patterns that withhold the fix when in doubt.
 
@@ -370,7 +371,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 - **Keys are never shown.** They come only from the server's environment, and never appear in a
   result, an error or a log line; an error about a malformed key setting names the bad pair by its
   position only. An agent with shell access can still read its host's environment: see
-  [Settings](#settings). The log (stderr) has a startup line and one line per call: the tool, the time
+  [Settings](#settings). The log (stderr) has a startup line and one line per call (not for a call the SDK
+  refuses before it runs, such as one with bad arguments): the tool, the time
   it took and the outcome code, plus a line for a transport error and, for an unexpected error, its
   type and code locations (file:line:column), never file content. Writing it never holds up an
   answer: a host that does not read it loses log lines, not answers.
@@ -441,7 +443,7 @@ the spec and made the design decisions. The checks come from the author's own ap
 of [integer-pence-ledger](https://github.com/Spundu/integer-pence-ledger) and the log format of
 [audit-chain](https://github.com/Spundu/audit-chain).
 
-Before publishing, it went through rounds of review by AI agents: Claude, each in a fresh session that
+Before publishing, it went through more than 20 rounds of review by AI agents: Claude, each in a fresh session that
 saw only the code and the docs, each with one lens (security, the checkers' correctness, MCP and
 agent use, tests and CI, and the docs as a hiring manager would read them). Each round found tens of
 problems, among them hidden characters reaching the model, a `fix_sql` that broke column defaults, a

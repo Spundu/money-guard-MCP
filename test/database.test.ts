@@ -110,7 +110,7 @@ describe('runScripts with a setup file that goes wrong', () => {
   it('fails the setup file, not a migration, when it leaves the database unusable', async () => {
     await expect(runScripts([setup("copy (select 1) to program 'true';"), migration], { timeoutMs: 30_000, preset: false })).rejects.toMatchObject({
       code: 'SETUP_FAILED',
-      message: 'setup.sql: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
+      message: 'setup.sql: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM, or a change of client encoding).',
       fix: 'Take that statement out of the setup file.',
     });
   });
@@ -120,7 +120,7 @@ describe('runScripts with a setup file that goes wrong', () => {
     try {
       await expect(runScripts([setup('select 1;'), migration], { timeoutMs: 30_000, preset: false, worker: new URL('./support/fake-worker.mjs', import.meta.url), sanityMs: 100 })).rejects.toMatchObject({
         code: 'SETUP_FAILED',
-        message: 'setup.sql: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
+        message: 'setup.sql: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM, or a change of client encoding).',
         fix: 'Take that statement out of the setup file.',
       });
     } finally {
@@ -179,7 +179,7 @@ describe('runScripts with a database that misbehaves', () => {
     const started = performance.now();
     await expect(run('silent')).rejects.toMatchObject({
       code: 'MIGRATION_FAILED',
-      message: 'db/0001.sql: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
+      message: 'db/0001.sql: after this file the database stopped answering (a statement PGlite cannot carry out, such as COPY ... PROGRAM, or a change of client encoding).',
     });
     const ms = performance.now() - started;
     expect(ms).toBeGreaterThanOrEqual(4900); // not sooner: a database that is slow to answer is not stuck
@@ -252,7 +252,7 @@ describe('runScripts with a database that misbehaves', () => {
   it('fails the file when the database answers wrongly after it', async () => {
     await expect(run('unusable')).rejects.toMatchObject({
       code: 'MIGRATION_FAILED',
-      message: 'db/0001.sql: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).',
+      message: 'db/0001.sql: after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM, or a change of client encoding).',
     });
   });
 

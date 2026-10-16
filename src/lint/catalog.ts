@@ -255,7 +255,7 @@ export const FIXES: Readonly<Record<LintCode, string>> = {
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny, the price of one unit in a float or a numeric with no scale, which may be below a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny, the price of one unit in a float or a numeric with no scale, which may be below a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -367,5 +367,5 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
 
 /** Whether `looksLikeMoney`, an amount in another currency of a number type, or the caller's lists make a column money. */
 export function isMoneyColumn(row: DetailRow, listed: ReadonlySet<string>): boolean {
-  return looksLikeMoney(row.column_name) || (baseType(row) !== null && amountInCurrency(row.column_name)) || listed.has(`${row.schema_name}.${row.table_name}.${row.column_name}`);
+  return looksLikeMoney(row.column_name) || (['numeric', 'real', 'double precision', 'money'].includes(baseType(row) ?? '') && amountInCurrency(row.column_name)) /* not an integer: ISO 4217 numeric codes (round 23) */ || listed.has(`${row.schema_name}.${row.table_name}.${row.column_name}`);
 }

@@ -22,7 +22,7 @@ const config = resolveConfig(process.env, process.cwd());
 // Transport problems (a message over the SDK's 10 MiB stdio limit, which closes the connection, or valid
 // JSON that is not a protocol message; the SDK skips a line that is not JSON) arrive here. Log the kind
 // only: the content could quote a file or an argument.
-const handle = serveStdio(() => createServer(config), { onerror: (err) => logLine(`${NAME}: transport error (${err.name})`) });
+const handle = serveStdio(() => createServer(config), { onerror: (err) => logLine(`${NAME}: transport error (${err.name}${typeof (err as NodeJS.ErrnoException).code === 'string' ? ` ${String((err as NodeJS.ErrnoException).code).slice(0, 24)}` : ''})`) });
 
 const root = config.root.ok ? `project folder "${config.root.value.name}"` : 'no usable project folder (the tools answer ROOT_INVALID)';
 const keys = config.auditKeys.ok

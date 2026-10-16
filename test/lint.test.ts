@@ -184,6 +184,8 @@ describe('money_lint_schema: judging columns', () => {
     // a text column of that name, or one with a word between (payment_method_currency), is not.
     const odoo = await lint({ 'db/migrations/0001.sql': 'create table move_line (amount_currency numeric(14,2), balance_ccy float8, payment_method_currency float8, note_currency text);' });
     expect(odoo.findings.map((f) => f.column).sort()).toEqual(['amount_currency', 'balance_ccy']);
+    // Round 23: an integer column of that name holds ISO 4217 numeric codes.
+    expect((await lint({ 'db/migrations/0001.sql': 'create table c (price_currency smallint, amount_residual_currency numeric);' })).findings.map((f) => f.column)).toEqual(['amount_residual_currency']);
     // Review round 22: no fix_sql for a name with any backslash: in a result it reads otherwise than in the SQL.
     const slashed = await lint({ 'db/migrations/0001.sql': 'create table t ("price\\""x" float8, "price\\\\y" float8, "price\\z" float8, price_ok float8);' });
     expect([slashed.findings.length, slashed.findings.filter((f) => f.fix_sql !== null).map((f) => f.column)]).toEqual([4, ['price_ok']]);

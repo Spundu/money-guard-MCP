@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { looksLikeMoney, moneyByGuess, pricesAUnit, unitOfName } from '../src/lint/names.js';
+import { amountInCurrency, looksLikeMoney, moneyByGuess, pricesAUnit, unitOfName } from '../src/lint/names.js';
 
 const verdict = (name: string) => (moneyByGuess(name) ? 'guess' : looksLikeMoney(name) ? 'money' : 'not');
 
@@ -36,7 +36,7 @@ describe('the name rule, review round 20', () => {
 
   it('reads what a balance or an allowance holds from the word right before it', () => {
     expect(['leave_travel_allowance', 'travelallowance', 'leave_balance', 'annual_leave_balance', 'pto_days_budget', 'sick_leave_hours_balance'].map(verdict))
-      .toEqual(['money', 'money', 'not', 'not', 'not', 'not']);
+      .toEqual(['guess', 'money', 'not', 'not', 'not', 'not']); // round 23: a held word further back is a guess
   });
 
   it('reads per diem as a daily allowance, and bals as balances', () => {
@@ -81,16 +81,31 @@ describe('the name rule, review round 22', () => {
   it('reads a measure before the price, a pay rate before per, and the number of a tier', () => {
     expect(['kwh_price', 'litre_price', 'kg_cost'].map((n) => [verdict(n), pricesAUnit(n)])).toEqual([['money', true], ['money', true], ['money', true]]);
     expect(['room_rate_per_night', 'labour_rate_per_hour', 'pay_rate_per_hour', 'mileage_rate_per_mile', 'billable_rate', 'peak_rate', 'off_peak_rate', 'standard_rate', 'export_rate', 'price_tier_1', 'price_level_2', 'tax_rate_per_year'].map(verdict))
-      .toEqual(['money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'not']);
+      .toEqual(['money', 'money', 'money', 'money', 'money', 'money', 'money', 'not', 'not', 'money', 'money', 'not']); // round 23: standard_rate is VAT's
     expect(['price_kg_qty', 'cost_kg_pct', 'price_kg_bps', 'nav_order', 'navorder', 'nav_per_share'].map(verdict)).toEqual(['not', 'not', 'not', 'not', 'not', 'money']);
     // A word before price or cost, and the measure last (found by mutation).
     expect(['standard_price_kwh', 'avg_cost_kg', 'base_price_kwh', 'price_kwh_pct', 'price_kwh_bps'].map((n) => [verdict(n), pricesAUnit(n)])).toEqual([['money', true], ['money', true], ['money', true], ['not', false], ['not', false]]);
   });
 
   it('leaves the unit of more scales to be decided', () => {
-    const scaled = ['revenue_m', 'ebitda_m', 'revenue_mn', 'revenue_mio', 'revenue_000', 'revenue_gbp_000', 'revenue_lacs', 'revenue_cr'];
+    const scaled = ['revenue_m', 'ebitda_m', 'revenue_mn', 'revenue_mio', 'revenue_000', 'revenue_gbp_000', 'revenue_lacs', 'revenue_crores'];
     expect(scaled.map(unitOfName)).toEqual(scaled.map(() => 'unsure'));
     expect(['revenue_100', 'amount_0001'].map(unitOfName)).toEqual(['major', 'major']);
+  });
+});
+
+describe('the name rule, review round 23', () => {
+  it('takes a held word further back for a guess, so no x100 either way', () => {
+    const names = ['pto_carryover_balance', 'leave_entitlement_balance', 'vacation_carry_over_balance', 'overtime_bank_balance', 'pto_accrual_balance', 'leave_travel_allowance'];
+    expect(names.map(verdict)).toEqual(names.map(() => 'guess'));
+  });
+
+  it('reads VAT and duty rates as rates, nav as money but navigation as not, and m after a number as months', () => {
+    expect(['standard_rate', 'vat_standard_rate', 'import_rate', 'export_rate', 'nav', 'fund_nav', 'daily_nav', 'nav_order', 'nav_index', 'navorder'].map(verdict))
+      .toEqual(['not', 'not', 'not', 'not', 'money', 'money', 'money', 'not', 'not', 'not']);
+    expect(['revenue_12m', 'arr_3m', 'revenue_m', 'cr_amount', 'amount_cr', 'revenuem', 'salarym'].map(unitOfName)).toEqual(['major', 'major', 'unsure', 'major', 'major', 'unsure', 'unsure']);
+    expect(['price_list_rate', 'outgoing_rate', 'pension', 'commission_tier_1', 'discount_level_2', 'price_tier_1', 'fee_band_3'].map(verdict)).toEqual(['money', 'money', 'money', 'guess', 'guess', 'money', 'money']);
+    expect(['amount_residual_currency', 'amount_currency', 'payment_method_currency'].map(amountInCurrency)).toEqual([true, true, false]);
   });
 });
 
@@ -101,7 +116,7 @@ describe('folded names', () => {
     const names = [...new Set([...section.matchAll(/`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`/g)].map((m) => m[1] ?? ''))];
     expect(names.length).toBeGreaterThan(100);
     // A word the rule does not know (ytd, used, updated, aud, click) cannot be split off, and "percent" is one word, not per + cent.
-    const unknown = ['money_columns', 'net_ytd', 'credit_used', 'price_per_cent', 'price_updated_at', 'price_kwh_aud', 'cost_per_click_micros'];
+    const unknown = ['money_columns', 'net_ytd', 'credit_used', 'price_per_cent', 'price_updated_at', 'price_kwh_aud', 'cost_per_click_micros', 'leave_travel_allowance', 'pto_carryover_balance'];
     expect(names.filter((n) => !unknown.includes(n) && verdict(n) !== verdict(n.replaceAll('_', '')))).toEqual([]);
     // Round 21: the unit and the unit price too.
     const answer = (n: string) => `${unitOfName(n)} ${pricesAUnit(n)}`;

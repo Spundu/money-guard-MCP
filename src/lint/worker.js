@@ -132,6 +132,10 @@ async function main() {
       send({ type: 'unusable', step });
       return;
     }
+    // A client encoding set by the file however it was written (set_config, a DO block): put back, as under
+    // LATIN1 a catalog read of a name that is not ASCII hangs (review round 23). SET is a statement, which no
+    // migration can replace.
+    await db.exec("SET client_encoding = 'UTF8'");
     // A file that ends inside a transaction it opened (BEGIN with no COMMIT) would make the next files
     // run inside it, and the check after them could not tell what they changed. A savepoint can only
     // be set inside a transaction.

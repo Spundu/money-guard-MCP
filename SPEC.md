@@ -247,7 +247,9 @@ already read the files).
   file name, so one finding or one error always fits the budget. A header or field name `COLUMN_NOT_FOUND`
   suggests is cut at 40 too, as the list beside it is, and a name passed back cut, as shown, maps the one name
   shown so: a first line may be data, and with a whole name shown, 40 characters and a guess gave back a whole
-  token (review round 22). A result never holds key material.
+  token (review round 22). Which name is suggested, and whether one is, is judged only on those 40 characters
+  of each name, so no answer can tell what lies past them (round 23: whether a suggestion came at all gave a
+  secret back one character a call). A result never holds key material.
   (A value can still be up to 40 characters of a file that holds a key: the tools refuse the files
   named in §2.3, and cannot know what every other file holds.)
 - **Hidden characters are always escaped,** by Unicode category: controls (Cc); format characters (Cf:
@@ -432,10 +434,12 @@ never converged: verify by executing, not by parsing.
     part would drop what the up part created, and the lint would see nothing to check.
   - **pg_dump 17.6+/18:** lines starting `\restrict ` or `\unrestrict ` are blanked, keeping the same
     length, so line numbers stay exact.
-  - **pg_dump's client encoding:** a line that only sets it (`SET client_encoding = 'WIN1252';`, `SET NAMES 'LATIN1';`)
-    is blanked the same way. The file was read as UTF-8 already; under most other encodings PGlite stops answering,
+  - **pg_dump's client encoding:** a line that only sets it (`SET client_encoding = 'WIN1252';`, `SET NAMES 'LATIN1';`,
+    `SET LOCAL …`, a `--` comment after it) is blanked the same way, and so is pg_dump's
+    `SELECT pg_catalog.set_config('search_path', '', false);`: the dump names every object with its schema, and
+    the empty search path broke unqualified names in every later file (review round 23). The file was read as UTF-8 already; under most other encodings PGlite stops answering,
     and under LATIN1 a catalog read of a name that is not ASCII hangs (review round 22: a schema dump of a Windows
-    database, WIN1252, could not be linted). A migration that sets it some other way (`set_config`) still can.
+    database, WIN1252, could not be linted). One that sets it some other way (`set_config`, a DO block) is put back to UTF8 after each file (review round 23).
 
   Any other psql meta-command (a line starting `\`) fails with a hint. If no table exists after the
   files ran (a format with an unknown down marker, say), the summary says that nothing was checked.
@@ -535,8 +539,10 @@ take for money, so that none is passed over silently.
 A column is checked as money when any of these is true:
 - its **name** looks like money (rule below);
 - its **type** is `money` (whatever its name);
-- its type is a number and its name a money word then currency or ccy (`amount_currency`, Odoo's amount in
-  the foreign currency: the name alone says a currency, so it is not money by name; review round 22);
+- its type is numeric, a float or money (not an integer, which may hold ISO 4217 numeric codes) and its name a
+  money word then currency or ccy, with residual, foreign, original, signed or company between allowed
+  (`amount_currency`, `amount_residual_currency`: Odoo's amounts in the foreign currency; the name alone says a
+  currency, so it is not money by name; review rounds 22 and 23);
 - it is listed in `money_columns`.
 
 Columns in `ignore_columns` are never reported.
@@ -559,7 +565,7 @@ word**, with these refinements:
   hour or day is not, as cloud prices per hour are fractions of a penny.
 - **Rates that are prices:** "rate" after hourly, daily, nightly, night, weekly, pay, day, bill, billing,
   labor, labour, room, overtime, mileage, rental, hire, diem, hour, cost, costing, valuation, incoming, unit,
-  billable, peak, standard, export or import is the price of an hour, a stay, a mile or a unit (ERPNext's
+  billable, peak, list or outgoing is the price of an hour, a stay, a mile or a unit (ERPNext's
   `valuation_rate`, an energy `unit_rate`, Harvest's `billable_rate`), so money, before "per" too
   (`room_rate_per_night`): `hourly_rate`, `room_rate`; so is "rate per" an hour, day, night, week, month, mile, km,
   unit, item, kg, lb, person, guest, visit, session, kwh, gb, litre or liter (`rate_per_hour`, `rate_per_kwh`).
@@ -599,13 +605,14 @@ word**, with these refinements:
   generic words keep theirs: `usage_charge` is money.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
   `totalamount`. Every word the rule does not know is first split into the words it knows (every list in
-  this section, and marketing, listing, advertising, parking, packaging, training, funding, real, left, off or nav,
+  this section, and marketing, listing, advertising, parking, packaging, training, funding, real, left or off,
   words only for splitting), in as few words as
   it can be: `totaldiscount` is total + discount, `platformfee` platform + fee, `totalqty` total +
   qty, and a folded word inside a longer name too: `totalamount_old` is total + amount + old. The split
   name gets the answer its snake_case form gets, for the minor-unit words too (`amountminorunits`,
   `pricecentsusd`: `fix_sql` only rounds). A number at the end is dropped (`price2`,
-  `credit_card_last4`), but not after tier, level or band (`price_tier_1` is the price of tier 1). A one-word name that cannot be split into known words still counts when it
+  `credit_card_last4`), but not after tier, level or band (`price_tier_1` is the price of tier 1; without price,
+  cost, fee or amount in the name it is a guess, as `commission_tier_1` may be a percentage). A one-word name that cannot be split into known words still counts when it
   ends in a long money word (amount, allowance, balance, cost, payment, payout, price, refund, revenue, salary,
   subtotal, surcharge, total), maybe followed by a minor-unit word (below, except the short cent, sat
   and wei), or starts with one and does not end in a non-money word of four letters or more. Words
@@ -629,7 +636,7 @@ The word lists:
     penalties, pnl, cogs, shipping, tip, tips, pay, cashback, copay, copays, reimbursement,
     reimbursements, installment, installments, instalment, instalments, dividend, dividends, royalty,
     royalties, arrears, overdraft, overdrafts, payable, payables, receivable, receivables, spending,
-    contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, bal, bals,
+    contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, nav, pension, pensions, bal, bals,
     deduction, deductions, markup, markups, gratuity, gratuities, duty, duties, excise, tariff, tariffs,
     brokerage, freight, toll, tolls, ltv, ebitda, severance, debt, debts
   - minor units of other currencies: paisa, kobo, sats, satoshi, satoshis, centavo, centavos, kopek,
@@ -678,8 +685,9 @@ The word lists:
   `overtime_balance`), or one of hours, hrs, days, nights, weeks, months, years, minutes, mins,
   seconds, secs, tokens, points, leave, holiday, holidays, pto, vacation or sick after it
   (`balance_hours_remaining`, `allowance_days_left`, `budget_tokens_remaining`); bal counts as balance
-  (`pto_bal`). `account_balance`, `travel_allowance`, `leave_travel_allowance` (India's LTA, paid in money),
-  `balance_after` and `balance_change` are money, and so is cash flow (`cash_flow_total`, `cash_flow_balance`). With
+  (`pto_bal`). A held word further back, with other words between, may be what it holds or not
+  (`pto_carryover_balance` is hours, India's `leave_travel_allowance` money): money by a guess. `account_balance`,
+  `travel_allowance`, `balance_after` and `balance_change` are money, and so is cash flow (`cash_flow_total`, `cash_flow_balance`). With
   stock, inventory, data, time, mileage or flex there it may be either (an inventory balance is money in accounting,
   and so is `real_time_balance`), so it is money by a guess: a finding with a null `fix_sql`. A
   budget is money unless a measure after generic money words, or one of error, token, calorie, calories,
@@ -691,8 +699,8 @@ The word lists:
   (`kwh_price`, `litre_price`), with any unit or currency
   words left out (`price_kwh_pence`, `cost_kwh_gbp`, `price_pence_kwh`), a number before the unit
   (`price_100g`) and any three-letter word after it but a non-money last word, a currency code (`price_kwh_aud`;
-  `price_kg_qty` is not money): the price of one unit (§3.6). Net asset value is money only before "per"
-  (`nav_per_share`; `nav_order` is navigation).
+  `price_kg_qty` is not money): the price of one unit (§3.6). nav (net asset value) is money, but not before a word of a menu
+  (`nav_order`, `nav_index`: navigation).
 - **Minor-unit words** (`fix_sql` only rounds; the word right after "per" does not count, as it says
   what the amount is for, as in `price_per_cent`, but a unit word after that does: `price_per_unit_cents`
   is in cents, and `cost_per_click_micros`, `price_per_unit_kwd` and `price_per_month_minor_units`,
@@ -715,7 +723,7 @@ The word lists:
   unit): micros, micro, millicents, millicent, mills, millis, gwei
 - **Scales** (`fix_sql` is `null`: `revenue_millions` holds millions of pounds, and ×100 would not give pence):
   k, thousand, thousands, m, mm, mn, mio, million, millions, bn, billion, billions, lakh, lakhs, lac, lacs, crore,
-  crores, cr or hundredths, and x100 (`amount_x100`); folded too (`amountx100`, `salaryk`); and 000 at the end
+  crores or hundredths, and x100 (`amount_x100`), but m not after a number (`revenue_12m` is months) and not cr (credit); folded too (`amountx100`, `salaryk`, `revenuem`); and 000 at the end
   (`revenue_gbp_000`, the UK's £000).
 - **Currencies with more than two decimals** (`fix_sql` is `null`: a dinar has 1,000 fils, so
   `amount_kwd` may hold dinars or fils, and neither takes ×100; crypto coins have 8 or 18): bhd, iqd,
@@ -1017,7 +1025,7 @@ type), a generated column (change its expression), a column a child table inheri
 parent), amounts finer than a penny, the price of one unit in a float or a numeric with no scale, which may be below a penny (choose the unit first), a name that may not say its unit
 (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index
 condition that may hold amounts in the old unit (convert
-those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand)."
+those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash (write it by hand)."
 
 ---
 
@@ -1193,13 +1201,13 @@ The fields come in the order of this table. Findings are sorted by their first l
 | `counts_by_code` | object | e.g. `{ "UNBALANCED": 1 }`, over all pages. |
 | `findings` | Finding[] | This page: at most `limit` findings, fewer if the result would pass its budget (§2.4). |
 | `offset`, `limit`, `total_findings` | integer | `limit` as asked (default 20). |
-| `next_offset` | integer or null | The first finding not on this page; null on the last page of the findings kept (the first 10,000, §4.8). When there are more, the summary says so: "Only the first 10,000 findings can be paged; the counts cover all N." On a page past the last finding, it says "No findings from offset 500: there are 30 to page." ("there is 1" for one). |
+| `next_offset` | integer or null | The first finding not on this page; null on the last page of the findings kept (the first 10,000, §4.8). When there are more, the summary says so: "Only the first 10,000 findings can be paged; the counts cover all N." On a page past the last finding, it says "No findings from offset 500: there are 30 to page." ("there is 1" for one). While it is not null, the summary ends "Not every finding is listed: pass next_offset as offset for the next ones." (review round 23). |
 
 ### 4.7 Errors (besides §2.5)
 | Code | When |
 |---|---|
 | `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields, a row of more than 1 MiB of values or more than 10,000 fields) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). When the CSV header holds none of the delimiter but another one, the fix names it: "The header looks separated by ";", not ",": pass delimiter ";"." |
-| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match, or failing one a name that holds the whole name given, of three letters or more (`amount` in `amount_pence`) (≤ 40 characters, as every name shown: a first line may be data, a secret among it, so no name is shown whole past 40, review round 22). A name passed back as shown, cut with "…", maps the one column or field shown so. When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). When a header cell is written like a value (`999`, `-12.50`), the file may have no header line: the message adds `The first line holds "999", written like a value: the first line is always read as the column names, so a file without a header line loses its first row.`, and the fix says to add a header line if there is none (a real header may name a column "2023", so the closest match is kept). |
+| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match, or failing one a name that holds the whole name given, of three letters or more (`amount` in `amount_pence`), judged only on each name as shown (its first 40 characters; where two would show alike, each cut in the middle instead, so its end shows too, round 23) (≤ 40 characters, as every name shown: a first line may be data, a secret among it, so no name is shown whole past 40, review round 22). A name passed back as shown, cut with "…", maps the one column or field shown so. When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). When a header cell is written like a value (`999`, `-12.50`), the file may have no header line: the message adds `The first line holds "999", written like a value: the first line is always read as the column names, so a file without a header line loses its first row.`, and the fix says to add a header line if there is none (a real header may name a column "2023", so the closest match is kept). |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. Says which fields clash ("amount cannot be mapped with debit.", "debit needs credit too."). |
 | `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. `an object with keys "data", "meta"` (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"), if it can be passed back as shown: at most 40 characters (a key could be a secret), with no character `records_pointer` refuses, and no backslash or double quote (which quotes show escaped). |
@@ -1429,14 +1437,15 @@ The tests are in `test/` (Vitest, about 1,000); each file starts with a comment 
   generated columns, quoting, partitions, inheritance, views); renames and type changes; natural order,
   Prisma folders, Flyway `files`, and the up and down markers of dbmate, goose, sql-migrate,
   node-pg-migrate and tern (down before up, and comments that only look like a marker); a pg_dump 18
-  file with `\restrict`; failures with the line and column where PostgreSQL gives a position, and each hint
+  file with `\restrict`; a pg_dump file whose database used another client encoding (WIN1252, LATIN9, SJIS;
+  `SET NAMES` too), and one set by `set_config`; failures with the line and column where PostgreSQL gives a position, and each hint
   as real PostgreSQL triggers it; the Supabase preset; a setup file inside the migrations folder, a
   folder that holds only the setup file, and a setup file that fails in each way (`SETUP_FAILED`,
   with advice for the setup file); advice without `files` when `migrations` is one file; pgvector;
   every kind of `fix_sql` run on stored rows, with names quoted as `quote_ident` quotes them, and
   none offered while a default, a CHECK constraint, or a unique or exclusion index's condition or
   expression would keep amounts in pounds (in the table, or in a partition or child at any depth),
-  while an ordinary index's condition does not count; none for a name with a backslash before "u",
+  while an ordinary index's condition does not count; none for a name with a backslash,
   or with "minor" or "sat" that may not name the unit (`price_sat`); the check after each file reads
   only the columns that file created or changed; a file that leaves a transaction open fails; each
   file may lock thousands of objects; an object created twice gets its own hint; and the setup file

@@ -2,7 +2,7 @@
 // reads, and the hints a wrong mapping gets. Split from read.ts, which grew past 400 lines (review round 22).
 
 import { closest } from '../closest.js';
-import { clip, ECHO_MAX, quoted } from '../echo.js';
+import { clip, clipPath, ECHO_MAX, quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { JsonNumber } from './json.js';
 import { encodeToken, isRecord, resolvePointer } from './pointer.js';
@@ -24,9 +24,46 @@ export function mappedEntries(columns: ColumnMap): Array<[MappedField, string]> 
  * suggestion of up to 200 characters gave back a whole token from 40 shown and a guess).
  */
 export function uncut(name: string, names: readonly string[]): string {
-  if (!name.endsWith('…') || names.includes(name)) return name;
-  const matches = names.filter((n) => clip(n, ECHO_MAX, true) === name);
+  if (!name.includes('…') || names.includes(name)) return name;
+  // As shown, or with a quote in it written plainly, as a model reads \" (review round 23).
+  const shown = shownNames(names);
+  const matches = names.filter((_, i) => shown[i] === name || shown[i]?.replaceAll('\\"', '"') === name);
   return matches.length === 1 ? (matches[0] ?? name) : name;
+}
+
+/**
+ * How results show each of `names`, inside quotes: escaped and cut at 40 characters; where two would show
+ * alike, each cut in the middle instead, so its end shows too (review round 23: two long headers that began
+ * alike could not be told apart, nor either mapped).
+ */
+export function shownNames(names: readonly string[]): string[] {
+  const cut = names.map((n) => clip(n, ECHO_MAX, true));
+  const count = new Map<string, number>();
+  for (const c of cut) count.set(c, (count.get(c) ?? 0) + 1);
+  return names.map((n, i) => ((count.get(cut[i] ?? '') ?? 0) > 1 ? clipPath(n, ECHO_MAX, true) : (cut[i] ?? '')));
+}
+
+/**
+ * The name `closest` suggests, judged only on what results show of each name, its first 40 characters
+ * (review round 23: judged on the whole names, whether a suggestion came at all answered "does the hidden
+ * part hold this?", and a secret past 40 characters came back one character a call).
+ */
+export function closestShown(name: string, names: readonly string[]): string | undefined {
+  const shown = shownNames(names);
+  const near = closest(name, shown);
+  return near === undefined ? undefined : names[shown.indexOf(near)];
+}
+
+/**
+ * " Did you mean \"…\"?", or nothing. When the name given and the one suggested look the same cut at 40
+ * characters, say so, or the two read as a contradiction (review round 23).
+ */
+export function didYouMean(name: string, near: string | undefined, names: readonly string[] = []): string {
+  if (near === undefined) return '';
+  const at = names.indexOf(near);
+  const shown = at >= 0 ? `"${shownNames(names)[at] ?? ''}"` : quoted(near);
+  const same = shown === quoted(name) ? ' (it differs past the 40 characters shown: pass it back as shown)' : '';
+  return ` Did you mean ${shown}${same}?`;
 }
 
 /** The mapping with each name given cut replaced by the name it meant (`uncut`). */
@@ -97,9 +134,9 @@ export function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnM
   for (const [field, name] of mappedEntries(columns)) {
     if (good.some((row) => row.values[field] !== undefined)) continue;
     const keys = Object.keys(first);
-    const near = name.startsWith('/') ? nestedPointer(name, first) : (dottedPointer(name, first) ?? nestedPointer(name, first) ?? closest(name, keys));
-    const hint = near === undefined ? '' : ` Did you mean ${quoted(near)}?`; // cut at 40 like every name shown (round 22)
-    const shown = keys.slice(0, 30).map((k) => `${quoted(k)}`).join(', ');
+    const near = name.startsWith('/') ? nestedPointer(name, first) : (dottedPointer(name, first) ?? nestedPointer(name, first) ?? closestShown(name, keys));
+    const hint = didYouMean(name, near, keys); // cut at 40 like every name shown (round 22)
+    const shown = shownNames(keys).slice(0, 30).map((k) => `"${k}"`).join(', ');
     const fields = keys.length === 0 ? 'The first record has no fields.' : `The first record's fields are: ${shown}${keys.length > 30 ? ` and ${keys.length - 30} more` : ''}.`;
     throw new ToolError(
       'COLUMN_NOT_FOUND',
