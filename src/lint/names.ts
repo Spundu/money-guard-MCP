@@ -42,6 +42,7 @@ import {
   PRICED_MEASURE_WORDS,
   SCALE_WORDS,
   FOLDING_WORDS,
+  HELD_STATE_WORDS,
 } from './name-words.js';
 
 
@@ -60,7 +61,7 @@ const VOCABULARY: ReadonlySet<string> = new Set([
   ...FINER_UNIT_WORDS, ...RATIO_WORDS, ...PAY_RATE_WORDS, ...PRICED_UNITS, ...VALUE_WORDS, ...OTHER_WORDS,
   // every list the rules read, so that "leavebalance", "flexibalance" and "costpergb" split (review rounds 18 and 20)
   ...GENERIC_MEASURE_WORDS, ...HELD_OWN_WORDS, ...HELD_GUESS_WORDS, ...HELD_AFTER_WORDS, ...BUDGET_OWN_WORDS, ...PRICED_MEASURE_WORDS, ...PER_ORDINARY_WORDS, ...SCALE_WORDS,
-  ...FOLDING_WORDS,
+  ...FOLDING_WORDS, ...HELD_STATE_WORDS,
 ]);
 
 /**
@@ -104,7 +105,8 @@ function knownWords(name: string): string[] {
   const all = words(name).flatMap((w) => (VOCABULARY.has(w) || /^\d+$/.test(w) ? [w] : (split(w) ?? [w])));
   // "per diem" is a daily allowance, not a price per something (review round 20: "per_diem_rate", "per_diem_amount").
   const out = all.filter((w, i) => !(w === 'per' && all[i + 1] === 'diem'));
-  while (out.length > 1 && /^\d+$/.test(out.at(-1) ?? '')) out.pop();
+  // The number of a tier or a level stays: "price_tier_1" is the price of tier 1 (review round 22).
+  while (out.length > 1 && /^\d+$/.test(out.at(-1) ?? '') && !['tier', 'level', 'band'].includes(out.at(-2) ?? '')) out.pop();
   return out;
 }
 
@@ -160,6 +162,8 @@ function judgeWords(all: readonly string[]): Verdict {
   const ws = per > 0 ? all.slice(0, per) : all; // "price_per_month": the price is the column, the month what it is for
   const last = ws.at(-1);
   if (last === undefined) return 'not';
+  if (last === 'rate' && PAY_RATE_WORDS.has(ws.at(-2) ?? '')) return 'money'; // "room_rate_per_night" too (review round 22)
+  if (per === 1 && all[0] === 'nav') return 'money'; // "nav_per_share": net asset value; "nav_order" is navigation (round 22)
   // "amount_minor_units", "amount_in_smallest_unit": the unit of an amount, not a count of units;
   // "price_unit" (Odoo's unit price on every order line): a price per unit.
   const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
@@ -175,9 +179,12 @@ function judgeWords(all: readonly string[]): Verdict {
   const held = ws.map((w) => /^(?:balance|budget|allowance|bal)s?$/.test(w)).lastIndexOf(true);
   if (held >= 0 && !ws.slice(held + 1).some((w) => MONEY_WORDS.has(w))) {
     const budget = /^budgets?$/.test(ws[held] ?? '');
-    // "time off" is leave, as pto is (review round 21: time_off_balance, in hours, got x100).
-    const word = ws[held - 1] === 'off' && ws[held - 2] === 'time' ? 'leave' : (ws[held - 1] ?? '');
-    const holds = (words: ReadonlySet<string>) => held > 0 && words.has(word) && !partOfMoney(ws, held - 1);
+    // Past words that say its state (round 22: "pto_remaining_balance" got x100); "time off" is leave, as pto is
+    // (round 21: time_off_balance, in hours, got x100).
+    let at = held - 1;
+    while (at >= 0 && HELD_STATE_WORDS.has(ws[at] ?? '')) at -= 1;
+    const word = ws[at] === 'off' && ws[at - 1] === 'time' ? 'leave' : (ws[at] ?? '');
+    const holds = (words: ReadonlySet<string>) => at >= 0 && words.has(word) && !partOfMoney(ws, at);
     if (holds(budget ? BUDGET_HELD_WORDS : HELD_WORDS) || ws.slice(held + 1).some((w) => HELD_AFTER_WORDS.has(w))) return 'not';
     if (holds(budget ? BUDGET_GUESS_WORDS : HELD_GUESS_WORDS)) return 'guess';
   }
@@ -223,8 +230,10 @@ function isUnitWord(w: string): boolean {
  */
 function pricesAMeasure(ws: readonly string[]): boolean {
   const rest = ws.filter((w) => !isUnitWord(w) && !/^\d+$/.test(w));
-  while (rest.length > 2 && /^[a-z]{3}$/.test(rest.at(-1) ?? '') && !PRICED_MEASURE_WORDS.has(rest.at(-1) ?? '')) rest.pop();
-  return PRICED_MEASURE_WORDS.has(rest.at(-1) ?? '') && ['price', 'cost', 'fee'].includes(rest.at(-2) ?? '');
+  // Not a word that says what the name is instead (round 22: "price_kg_qty", "cost_kg_pct").
+  while (rest.length > 2 && /^[a-z]{3}$/.test(rest.at(-1) ?? '') && !PRICED_MEASURE_WORDS.has(rest.at(-1) ?? '') && !NOT_MONEY_LAST_WORDS.has(rest.at(-1) ?? '')) rest.pop();
+  const priced = (a: number, b: number) => PRICED_MEASURE_WORDS.has(rest.at(a) ?? '') && ['price', 'cost', 'fee'].includes(rest.at(b) ?? '');
+  return priced(-1, -2) || priced(-2, -1); // "kwh_price", "litre_price" too (round 22)
 }
 
 /**
@@ -261,7 +270,9 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   const raw = words(name);
   const foldedX = (w: string) => w.endsWith('x') && MONEY_WORDS.has(w.slice(0, -1));
   const foldedK = raw.length === 1 && (raw[0] ?? '').endsWith('k') && MONEY_WORDS.has((raw[0] ?? '').slice(0, -1));
-  if (ws.some((w) => SCALE_WORDS.has(w)) || foldedK || raw.some((w, i) => (w === 'x' || foldedX(w)) && /^10+$/.test(raw[i + 1] ?? ''))) return 'unsure';
+  // "revenue_000", "revenue_gbp_000": the UK's £000 (round 22).
+  const thousands = raw.some((w, i) => w === '000' && (i === raw.length - 1 || (i === raw.length - 2 && raw[i + 1] === 's')));
+  if (ws.some((w) => SCALE_WORDS.has(w)) || foldedK || thousands || raw.some((w, i) => (w === 'x' || foldedX(w)) && /^10+$/.test(raw[i + 1] ?? ''))) return 'unsure';
   // Only the word right after "per" says what the amount is for; a unit word after that is the amount's
   // own ("price_per_unit_cents", "cost_per_click_micros"): review round 16, where they read as pounds.
   const after = per > 0 ? all.slice(per + 2) : [];
@@ -286,6 +297,16 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   if (only === undefined || withoutUnit(only) === only) return 'major';
   const ending = only.slice(withoutUnit(only).length);
   return UNSURE_UNIT_WORDS.has(ending) || FINER_UNIT_WORDS.has(ending) ? 'unsure' : 'minor';
+}
+
+/**
+ * Whether a name is a money word and then currency or ccy ("amount_currency": Odoo's amount in the foreign
+ * currency). The name alone says a currency, so it is not money (`looksLikeMoney`); of a number type, it is
+ * an amount (review round 22).
+ */
+export function amountInCurrency(name: string): boolean {
+  const ws = knownWords(name);
+  return ['currency', 'ccy'].includes(ws.at(-1) ?? '') && MONEY_WORDS.has(ws.at(-2) ?? '') && !GENERIC_MONEY_WORDS.has(ws.at(-2) ?? '');
 }
 
 /** Sub-lists of the non-money last words that the rule before total uses, for the same test. */
@@ -322,5 +343,6 @@ export const RULE_WORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   perOrdinary: PER_ORDINARY_WORDS,
   budgetGuess: BUDGET_GUESS_WORDS,
   folding: FOLDING_WORDS,
+  heldState: HELD_STATE_WORDS,
   scale: SCALE_WORDS,
 };

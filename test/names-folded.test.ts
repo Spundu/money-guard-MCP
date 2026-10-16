@@ -71,6 +71,29 @@ describe('the name rule, review round 21', () => {
   });
 });
 
+describe('the name rule, review round 22', () => {
+  it('looks past state words for what a balance holds', () => {
+    const hours = ['leave_remaining_balance', 'pto_available_balance', 'vacation_accrued_balance', 'time_off_remaining_balance', 'leaveremainingbalance', 'lieu_balance', 'time_in_lieu_balance', 'comptime_balance', 'flextime_balance'];
+    expect(hours.map(verdict)).toEqual(hours.map(() => 'not'));
+    expect(['flex_balance', 'outstanding_balance', 'available_balance', 'opening_balance', 'current_balance', 'account_available_balance'].map(verdict)).toEqual(['guess', 'money', 'money', 'money', 'money', 'money']);
+  });
+
+  it('reads a measure before the price, a pay rate before per, and the number of a tier', () => {
+    expect(['kwh_price', 'litre_price', 'kg_cost'].map((n) => [verdict(n), pricesAUnit(n)])).toEqual([['money', true], ['money', true], ['money', true]]);
+    expect(['room_rate_per_night', 'labour_rate_per_hour', 'pay_rate_per_hour', 'mileage_rate_per_mile', 'billable_rate', 'peak_rate', 'off_peak_rate', 'standard_rate', 'export_rate', 'price_tier_1', 'price_level_2', 'tax_rate_per_year'].map(verdict))
+      .toEqual(['money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'money', 'not']);
+    expect(['price_kg_qty', 'cost_kg_pct', 'price_kg_bps', 'nav_order', 'navorder', 'nav_per_share'].map(verdict)).toEqual(['not', 'not', 'not', 'not', 'not', 'money']);
+    // A word before price or cost, and the measure last (found by mutation).
+    expect(['standard_price_kwh', 'avg_cost_kg', 'base_price_kwh', 'price_kwh_pct', 'price_kwh_bps'].map((n) => [verdict(n), pricesAUnit(n)])).toEqual([['money', true], ['money', true], ['money', true], ['not', false], ['not', false]]);
+  });
+
+  it('leaves the unit of more scales to be decided', () => {
+    const scaled = ['revenue_m', 'ebitda_m', 'revenue_mn', 'revenue_mio', 'revenue_000', 'revenue_gbp_000', 'revenue_lacs', 'revenue_cr'];
+    expect(scaled.map(unitOfName)).toEqual(scaled.map(() => 'unsure'));
+    expect(['revenue_100', 'amount_0001'].map(unitOfName)).toEqual(['major', 'major']);
+  });
+});
+
 describe('folded names', () => {
   it('get the answer their snake_case form gets, for every example in SPEC.md §3.5', () => {
     const spec = readFileSync(path.resolve(import.meta.dirname, '..', 'SPEC.md'), 'utf8');

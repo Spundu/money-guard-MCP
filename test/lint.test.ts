@@ -180,6 +180,13 @@ describe('money_lint_schema: judging columns', () => {
   it('refuses a badly written column list', async () => {
     expect(await codeOf(SPEC_FILES, { money_columns: ['orders'] })).toBe('BAD_COLUMN_NAME');
     expect(await codeOf(SPEC_FILES, { ignore_columns: ['a.b.c.d'] })).toBe('BAD_COLUMN_NAME');
+    // Review round 22: Odoo's amount_currency is an amount in another currency: of a number type it is checked;
+    // a text column of that name, or one with a word between (payment_method_currency), is not.
+    const odoo = await lint({ 'db/migrations/0001.sql': 'create table move_line (amount_currency numeric(14,2), balance_ccy float8, payment_method_currency float8, note_currency text);' });
+    expect(odoo.findings.map((f) => f.column).sort()).toEqual(['amount_currency', 'balance_ccy']);
+    // Review round 22: no fix_sql for a name with any backslash: in a result it reads otherwise than in the SQL.
+    const slashed = await lint({ 'db/migrations/0001.sql': 'create table t ("price\\""x" float8, "price\\\\y" float8, "price\\z" float8, price_ok float8);' });
+    expect([slashed.findings.length, slashed.findings.filter((f) => f.fix_sql !== null).map((f) => f.column)]).toEqual([4, ['price_ok']]);
     // Review round 21: a name that starts with a digit is quoted in fix_sql, or the ALTER would not parse.
     expect((await lint({ 'db/migrations/0001.sql': 'create table t ("1st_payment" float8);' })).findings[0]?.fix_sql).toContain('ALTER COLUMN "1st_payment" TYPE bigint');
     await expect(lint(SPEC_FILES, { ignore_columns: ['a.b.c.d'] })).rejects.toMatchObject({ message: 'ignore_columns entry "a.b.c.d" is not "table.column" or "schema.table.column".' }); // round 20: the text, not only the code

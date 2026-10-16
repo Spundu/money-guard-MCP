@@ -2,7 +2,7 @@
 // server: it is kept as a ToolError, and every tool that needs it answers with that error, so the model
 // sees what is wrong and the other tools keep working.
 
-import { accessSync, constants, realpathSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { InMemoryKeyProvider, MIN_KEY_BYTES, type KeyProvider } from 'sealed-audit-chain';
 import { clip, hasUnsafe, quoted } from './echo.js';
@@ -48,8 +48,13 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
   const invalid = (why: string) => ({ ok: false as const, error: new ToolError('ROOT_INVALID', `The project root (from ${source}) ${why}.`, fix) });
   // Fail closed: a broken setting must not quietly widen or move what the tools can read.
   if (PLACEHOLDER.test(value)) return invalid(`is ${quoted(value, 80)}, a placeholder the MCP host did not fill in`);
-  // Quotes kept around the value, as for the keys (review round 21: it read as "does not exist").
-  if (/^["']|["']$/.test(value)) return invalid('starts or ends with a quote mark: the quotes around the value were kept as part of it; remove them');
+  // Quotes kept around the value, as for the keys (review round 21: it read as "does not exist"); only in the setting,
+  // and only when no folder has that name (round 22: a project folder "Students'" was refused).
+  if (source === 'MONEY_GUARD_ROOT' && /^["']|["']$/.test(value) && !existsSync(path.resolve(cwd, value))) {
+    return invalid('starts or ends with a quote mark: the quotes around the value were kept as part of it; remove them');
+  }
+  // Forms a shell would expand, which an MCP host passes on as they are (review round 22).
+  const unexpanded = /^~(?:[\\/]|$)|\$\{?[A-Za-z_]|%[A-Za-z_]+%|^file:/i.test(value) && !existsSync(path.resolve(cwd, value));
   // "C:" or "C:folder" means the current folder of drive C on Windows, wherever that is (review round 10).
   if (/^[A-Za-z]:(?![\\/])/.test(value)) return invalid(`is ${quoted(value, 80)}, a drive letter without a backslash after it, which means whatever folder is current on that drive`);
 
@@ -60,7 +65,7 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
     accessSync(real, constants.R_OK | constants.X_OK); // a folder that cannot be listed or entered
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    return invalid(code === 'EACCES' || code === 'EPERM' ? 'cannot be opened (permission denied)' : 'does not exist');
+    return invalid(code === 'EACCES' || code === 'EPERM' ? 'cannot be opened (permission denied)' : unexpanded ? 'does not exist: ~, $VAR, %VAR% and file: are not expanded in this setting; give an absolute path' : 'does not exist');
   }
   // A whole disk would put every file on it in reach of the tools.
   if (path.parse(real).root === real) return invalid('is the root of a disk');

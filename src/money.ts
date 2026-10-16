@@ -29,10 +29,17 @@ function inRange(sign: '' | '-', digits: string): AmountResult {
   return minor > MAX_MINOR || minor < -MAX_MINOR ? TOO_LARGE : { ok: true, minor };
 }
 
+/**
+ * Why an amount with commas is refused: "1,50", "1,500", "1,234.56" or "1.234,56", a decimal comma or a thousands
+ * separator, neither of which the tool reads (review rounds 21 and 22; short, so a message stays within 120 characters).
+ */
+function badAmount(text: string, why: string): AmountResult {
+  const commas = /^-?\d+(?:,\d+)+$/.test(text) || /^-?\d{1,3}(?:,\d{3})+\.\d+$/.test(text) || /^-?\d{1,3}(?:\.\d{3})+,\d+$/.test(text);
+  return { ok: false, problem: 'BAD_AMOUNT', why: commas ? 'has a comma: write it as a plain amount' : why };
+}
+
 function fromText(text: string, format: AmountFormat, places: number): AmountResult {
   const sign = text.startsWith('-') ? '-' : '';
-  // "1,50" or "1,500": a decimal comma or a thousands separator, either way not what the tool reads (review round 21).
-  if (/^-?\d+(?:,\d+)+$/.test(text)) return { ok: false, problem: 'BAD_AMOUNT', why: 'has a comma, a decimal comma or a thousands separator: convert the file to plain amounts first' };
   if (format === 'minor_units') {
     if (INTEGER.test(text)) return inRange(sign, text.slice(sign.length));
     if (DECIMAL.test(text)) {
@@ -40,9 +47,9 @@ function fromText(text: string, format: AmountFormat, places: number): AmountRes
       const why = /^-?\d+\.0+$/.test(text) ? 'has a decimal point; minor units are whole numbers without one' : 'is not a whole number of minor units';
       return { ok: false, problem: 'FRACTIONAL_MINOR_UNITS', why };
     }
-    return { ok: false, problem: 'BAD_AMOUNT', why: 'is not written in plain digits, such as 1234' };
+    return badAmount(text, 'is not written in plain digits, such as 1234');
   }
-  if (!DECIMAL.test(text)) return { ok: false, problem: 'BAD_AMOUNT', why: 'is not a decimal amount such as 12.34' };
+  if (!DECIMAL.test(text)) return badAmount(text, 'is not a decimal amount such as 12.34');
   const [whole = '0', fraction = ''] = text.slice(sign.length).split('.');
   // Digits past the allowed places are fine only when they are zeros (12.340 is 12.34 exactly).
   if (/[1-9]/.test(fraction.slice(places))) {

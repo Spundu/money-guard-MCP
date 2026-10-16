@@ -7,7 +7,7 @@ import process from 'node:process';
 import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ToolError } from '../src/errors.js';
-import { failure, locate } from '../src/lint/advice.js';
+import { PRESET_NAME, failure, locate } from '../src/lint/advice.js';
 import { runScripts } from '../src/lint/database.js';
 import { trace } from '../src/server.js';
 import { lintWhileTaking } from './support/memory.js';
@@ -310,6 +310,15 @@ describe('runScripts with a database that misbehaves', () => {
       code: 'TIMEOUT',
       message: 'The lint ran out of time (2 s) while running db/0000.sql.',
       fix: expect.stringMatching(/^Leave slow data-loading files out with files\. /),
+    });
+  });
+
+  it('does not send the model to a setup file it never gave when the Supabase preset runs out of time', async () => {
+    // Review round 22: the preset runs as setup, and was "Take slow data loading out of the setup file".
+    process.env.MONEY_GUARD_TEST_WORKER = 'hang';
+    await expect(runScripts([{ name: PRESET_NAME, text: 'select 1;', phase: 'setup' }], { timeoutMs: 2000, preset: false, worker: FAKE })).rejects.toMatchObject({
+      code: 'TIMEOUT',
+      fix: expect.stringMatching(/^The Supabase preset is money-guard's own and small: the machine may be busy; call again, with a larger timeout_seconds\. /),
     });
   });
 

@@ -7,7 +7,7 @@
 
 import { hasUnsafe } from '../echo.js';
 import { ExpressionReader, holdsNoAmount, isZeroOrNullDefault } from './amounts.js';
-import { looksLikeMoney, moneyByGuess, pricesAUnit, unitOfName } from './names.js';
+import { amountInCurrency, looksLikeMoney, moneyByGuess, pricesAUnit, unitOfName } from './names.js';
 
 export { holdsNoAmount, isZeroOrNullDefault };
 
@@ -324,9 +324,9 @@ export function quoteIdent(name: string, reserved: ReadonlySet<string>): string 
 export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<string>, listed: ReadonlySet<string> = new Set(), reader = new ExpressionReader()): string | null {
   // A column a child inherits changes with its parent: ALTER refuses it on the child.
   if (row.domain_name !== null || row.via_array || row.generated !== '' || row.inherited) return null;
-  // fix_sql is SQL to run, so it holds the name as it is: a backslash before "u" there would read as
-  // an escape in a result where every other backslash is shown doubled.
-  if ([row.schema_name, row.table_name, row.column_name].some((name) => hasUnsafe(name) || name.includes('\\u'))) return null;
+  // fix_sql is SQL to run, so it holds the name as it is: a backslash there reads differently from the rest
+  // of a result, where every backslash is shown doubled (review round 22: not only one before "u").
+  if ([row.schema_name, row.table_name, row.column_name].some((name) => hasUnsafe(name) || name.includes('\\'))) return null;
   const c = quoteIdent(row.column_name, reserved);
   const head = `ALTER TABLE ${quoteIdent(row.schema_name, reserved)}.${quoteIdent(row.table_name, reserved)} ALTER COLUMN ${c} TYPE bigint`;
   const unit = unitOfName(row.column_name);
@@ -365,7 +365,7 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   }
 }
 
-/** Whether `looksLikeMoney` or the caller's lists make a column money. */
+/** Whether `looksLikeMoney`, an amount in another currency of a number type, or the caller's lists make a column money. */
 export function isMoneyColumn(row: DetailRow, listed: ReadonlySet<string>): boolean {
-  return looksLikeMoney(row.column_name) || listed.has(`${row.schema_name}.${row.table_name}.${row.column_name}`);
+  return looksLikeMoney(row.column_name) || (baseType(row) !== null && amountInCurrency(row.column_name)) || listed.has(`${row.schema_name}.${row.table_name}.${row.column_name}`);
 }

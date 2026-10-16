@@ -45,3 +45,36 @@ describe('money_lint_schema: the texts it reads of each column', () => {
     expect(d.findings.filter((f) => f.table.endsWith('0')).map((f) => [f.table, f.fix_sql === null])).toEqual([['public.few0', false], ['public.many0', true]]);
   }, 60_000);
 });
+
+describe('money_lint_schema: defaults written short', () => {
+  it('withholds fix_sql beside a default of a few characters that is not zero', async () => {
+    // Review round 22 (found by mutation): only defaults of four characters or more were tested ("2.50").
+    const r = await lint({ 'db/migrations/0001.sql': 'create table t (price double precision default 5, fee numeric(10,2) default 1.5, cost double precision default 0, tip real default -1);' });
+    expect(Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql === null]))).toEqual({ price: true, fee: true, cost: false, tip: true });
+  });
+});
+
+describe('money_lint_schema: a result at its size limit', () => {
+  it('cuts the findings, which can be paged, before the float columns, and says how many floats are listed', async () => {
+    // Review round 22: the floats, which no parameter pages through, were cut first, and the summary still
+    // said "the first 30 listed" over 12.
+    // Names at PostgreSQL's 63-byte limit, so 50 findings pass the budget.
+    const tables = Array.from({ length: 55 }, (_, i) => `create table customer_subscription_invoice_line_item_with_a_long_name_${String(i).padStart(3, '0')} (unit_price_amount_in_the_billing_currency_of_the_customer_account double precision, latitude_measurement_of_the_delivery_point_for_this_line_item double precision);`);
+    const r = await lint({ 'db/migrations/0001.sql': tables.join('\n') });
+    expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
+    expect([r.findings.length < 50, r.next_offset === r.findings.length, r.other_float_columns.length]).toEqual([true, true, 30]);
+    expect(r.summary).toContain(`55 other float columns (other_float_columns, the first ${r.other_float_columns.length} listed)`);
+  });
+});
+
+describe('money_lint_schema: float columns cut to fit', () => {
+  it('says how many are listed when even one finding leaves no room for all 30', async () => {
+    // Control characters show as six-character escapes, so 35 names of 63 bytes fill the result.
+    const c = '\u{1}'.repeat(58);
+    const sql = [`create schema "s${c}";`, ...Array.from({ length: 35 }, (_, i) => `create table "s${c}"."t${String(i).padStart(2, '0')}${c}" ("lat${c}" double precision);`), 'create table p (price double precision);'];
+    const r = await lint({ 'db/migrations/0001.sql': sql.join('\n') });
+    expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
+    expect([r.findings.length, r.other_float_columns.length < 30]).toEqual([1, true]);
+    expect(r.summary).toContain(`35 other float columns (other_float_columns, the first ${r.other_float_columns.length} listed)`);
+  });
+});

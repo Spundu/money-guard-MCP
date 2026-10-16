@@ -86,14 +86,17 @@ describe('money_check_double_entry: reading CSV', () => {
     );
     const one = errorText(() => check('.csv', '"id"", ""amount",x\nA,1\n', { columns: { transaction_id: 'x', amount: 'amount' } }));
     expect(one).toContain('The columns are: "id\\", \\"amount", "x".');
-    // Review round 8: the list cuts a long name at 40 characters, so the suggestion shows it whole (up to
-    // 200), and a model that sent the cut name can map the real one.
+    // Review round 8: a long name is shown cut at 40 characters. Round 22: never whole (a first line may
+    // be data, a secret among it), and the cut name, passed back as shown, maps the one name shown so.
     const long = 'Transaction Identifier For The General Ledger Entry';
     const cutName = `${long.slice(0, 39)}…`;
-    const csv = errorText(() => check('.csv', `${long},amount_pence\nA,1\n`, { columns: { transaction_id: cutName, amount: 'amount_pence' } }));
-    expect(csv).toContain(`Did you mean "${long}"? The columns are: "${cutName}", "amount_pence".`);
-    const json = errorText(() => check('.jsonl', `{"${long}":"A","a":1}\n`, { columns: { transaction_id: cutName, amount: 'a' } }));
-    expect(json).toContain(`Did you mean "${long}"? The first record's fields are: "${cutName}", "a".`);
+    const near = errorText(() => check('.csv', `${long},amount_pence\nA,1\n`, { columns: { transaction_id: `${long.slice(0, 45)}x`, amount: 'amount_pence' } }));
+    expect(near).toContain(`Did you mean "${cutName}"? The columns are: "${cutName}", "amount_pence".`);
+    expect(near).not.toContain(long.slice(39));
+    const mapped = { transaction_id: cutName, amount: 'amount_pence' };
+    expect(check('.csv', `${long},amount_pence\nA,1\nA,-1\n`, { columns: mapped }).rows_read).toBe(2);
+    expect(check('.jsonl', `{"${long}":"A","amount_pence":1}\n{"${long}":"A","amount_pence":-1}\n`, { columns: mapped }).rows_read).toBe(2);
+    expect(check('.json', JSON.stringify([{ [long]: 'A', amount_pence: 1 }, { [long]: 'A', amount_pence: -1 }]), { columns: mapped }).rows_read).toBe(2);
   });
 
   it('suggests the delimiter when the header was read as one column that holds another one', () => {

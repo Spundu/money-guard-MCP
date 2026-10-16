@@ -36,7 +36,8 @@ You need Node.js 22.12 or newer, and git. (On 22.12, `npm ci` warns that ESLint 
 warning is harmless, as ESLint is only used in development. Until sealed-audit-chain is on npm, it
 comes from GitHub at a pinned commit, so `npm ci` also warns that it skips an integrity check for
 that git dependency. The warning and the lockfile name an `ssh://` address, but npm downloads it over
-HTTPS: no GitHub account or SSH key is needed.)
+HTTPS: no GitHub account or SSH key is needed.) On Node.js 24 a rare V8 bug can end the server while a
+lint runs (see "How it works"); Node.js 22 or 26 avoids it.
 
 ```sh
 git clone https://github.com/Spundu/money-guard-mcp.git
@@ -199,12 +200,12 @@ It is `null` where the change needs a decision or the agent's own migration:
   be below a penny; a price per month or per night is converted as usual;
 - the name is money only by a guess: `total_passengers` may be a count (list it in `money_columns` if it
   is money);
-- a default, a CHECK constraint or a unique index condition may hold amounts in pounds, in the table
+- a default, a CHECK constraint, or a unique or exclusion index's condition or expression may hold amounts in pounds, in the table
   or in a partition or child table: Postgres's type change would leave those unconverted (a CHECK
   such as `amount >= 0` is fine);
 - the other cases SPEC.md §3.6 lists, among them: domains, arrays, generated and inherited columns,
   a money-type value (`0::money`) in a default, CHECK or index, and names with hidden characters or
-  a backslash before `u`.
+  a backslash.
 
 A trigger or function that compares the column with an amount in its body is not always seen, so
 check those before running a fix that multiplies by 100. [SPEC.md](SPEC.md) shows
@@ -360,7 +361,9 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 - **Hidden characters are escaped.** In results and errors, characters that can hide text are shown
   as escapes, by Unicode category: control characters, the zero-width and direction characters of
   the "Trojan Source" trick, and the invisible TAG characters that can spell out instructions a person
-  cannot see but a model reads. A few blank-looking characters, such as wide spaces, pass as they are.
+  cannot see but a model reads. A few blank-looking characters, such as wide spaces, pass as they are. The
+  SDK's own errors (an argument that fails validation, an unknown tool) repeat the model's argument as it
+  was sent.
   SPEC.md §2.4 has the exact rules, including how backslashes are shown.
 - **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
   project that does not look like a secret.

@@ -99,9 +99,15 @@ const TOOLS: ReadonlyArray<{ up: RegExp | null; down: RegExp }> = [
 /**
  * The SQL as it runs: the down part of a file that holds both directions, from a down marker to the
  * next up marker (or the end), becomes spaces, and so do lines starting \restrict or \unrestrict (psql
- * directives written by pg_dump 17.6 and later). Every line keeps its length, so the positions
- * Postgres reports still point at the right line and column.
+ * directives written by pg_dump 17.6 and later) and a line that only sets the client encoding, as pg_dump
+ * writes it ("SET client_encoding = 'WIN1252';", or "SET NAMES"): the file was read as UTF-8 already, and
+ * PGlite stops answering under any other encoding but LATIN1 and SQL_ASCII, and under those hangs on a
+ * name that is not ASCII (review round 22: a schema dump of a Windows database could not be linted).
+ * Every line keeps its length, so the positions Postgres reports still point at the right line and column.
  */
+/** A line that only sets the client encoding, as pg_dump writes it. */
+const CLIENT_ENCODING = /^\s*SET\s+(?:SESSION\s+)?(?:client_encoding\s*(?:=|TO)|NAMES)\s*[^;]*;\s*$/i;
+
 export function prepareSql(text: string): string {
   const lines = text.split('\n');
   const tool = TOOLS.find((t) => lines.some((line) => (t.up ?? t.down).test(line)));
@@ -110,7 +116,7 @@ export function prepareSql(text: string): string {
     .map((line) => {
       if (tool?.up?.test(line)) down = false;
       else if (tool?.down.test(line)) down = true;
-      return down || /^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) ? ' '.repeat(line.length) : line;
+      return down || /^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) || CLIENT_ENCODING.test(line) ? ' '.repeat(line.length) : line;
     })
     .join('\n');
 }

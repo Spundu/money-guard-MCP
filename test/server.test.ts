@@ -41,6 +41,21 @@ const textOf = (r: Result) => (r.content as Array<{ type: string; text?: string 
 const JOURNAL_ARGS = { file: 'exports/journal.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'currency' } };
 
 describe.each(ERAS)('the server, %s era', (era) => {
+  it('refuses arguments of more than 2,500 elements, before any tool runs', async () => {
+    // Review round 22 (found by mutation): the limit was never tested.
+    const client = await connect(era);
+    const call = async (n: number) => {
+      try {
+        const r = await client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'db/migrations', files: Array.from({ length: n }, (_, i) => `${i}.sql`) } });
+        return textOf(r);
+      } catch (err) {
+        return String(err);
+      }
+    };
+    expect(await call(2_501)).toContain('arguments contain more than the maximum of 2500 elements');
+    expect(await call(2_000)).not.toContain('maximum of 2500 elements');
+  });
+
   it('negotiates the era it was asked for', async () => {
     const client = await connect(era);
     expect(client.getProtocolEra()).toBe(era);

@@ -136,6 +136,22 @@ describe('resolveConfig root', () => {
       const root = resolveConfig({ MONEY_GUARD_ROOT: value }, dir).root;
       expect(root.ok ? 'ok' : root.error.message).toBe('The project root (from MONEY_GUARD_ROOT) starts or ends with a quote mark: the quotes around the value were kept as part of it; remove them.');
     }
+    // Round 22: but a folder whose name ends in an apostrophe is a folder, from the setting or not.
+    const students = path.join(dir, "Students'");
+    writeTree(students, { 'keep.txt': '' });
+    for (const env of [{ MONEY_GUARD_ROOT: students }, { CLAUDE_PROJECT_DIR: students }, {}]) {
+      expect(resolveConfig(env, students).root.ok, JSON.stringify(env)).toBe(true);
+    }
+  });
+
+  it('says that ~, $VAR, %VAR% and file: are not expanded in the setting', () => {
+    // Review round 22: each was a bare "does not exist".
+    const dir = tempDir();
+    for (const value of ['~/proj', '$HOME/proj', '${HOME}/proj', '%USERPROFILE%\\proj', 'file:///C:/x']) {
+      const root = resolveConfig({ MONEY_GUARD_ROOT: value }, dir).root;
+      expect(root.ok ? 'ok' : root.error.message, value).toBe('The project root (from MONEY_GUARD_ROOT) does not exist: ~, $VAR, %VAR% and file: are not expanded in this setting; give an absolute path.');
+    }
+    expect(resolveConfig({ MONEY_GUARD_ROOT: path.join(dir, 'nope') }, dir).root).toMatchObject({ ok: false, error: { message: 'The project root (from MONEY_GUARD_ROOT) does not exist.' } });
   });
 
   it('refuses a missing folder, a file and a disk root, without showing the path', () => {

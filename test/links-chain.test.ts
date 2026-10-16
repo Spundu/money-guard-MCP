@@ -11,7 +11,7 @@ import { resolveConfig } from '../src/config.js';
 import { createServer } from '../src/server.js';
 import { ToolError } from '../src/errors.js';
 import { collectSources } from '../src/lint/files.js';
-import { newLinkWalk, resolveInRoot } from '../src/paths.js';
+import { leadsTo, newLinkWalk, resolveInRoot } from '../src/paths.js';
 import { rootOf, tempDir, trySymlink, writeTree } from './support/tmp.js';
 
 function codeOf(call: () => unknown): string {
@@ -78,6 +78,17 @@ describe('a chain of links', () => {
     const started = performance.now();
     expect(codeOf(() => collectSources({ ...rootOf(dir), links: newLinkWalk() }, { migrations: 'db/migrations' }))).toBe('no error'); // round 21: the answer too
     expect(performance.now() - started).toBeLessThan(8000);
+  });
+
+  it('follows 64 links one inside another, and not 65', (ctx) => {
+    // Review round 22 (found by mutation): the boundary had no test on any system. leadsTo alone: realpath
+    // follows fewer (Windows 63, Linux 40), and its answer is not what is tested here.
+    const dir = tempDir();
+    writeTree(dir, { 'end/x.sql': 'select 1;', 'chain/keep.txt': '' });
+    for (let i = 65; i >= 1; i -= 1) {
+      if (!trySymlink(i === 65 ? path.join(dir, 'end') : path.join(dir, 'chain', `C${i + 1}`), path.join(dir, 'chain', `C${i}`), 'dir')) return ctx.skip();
+    }
+    expect([leadsTo(path.join(dir, 'chain', 'C2', 'x.sql'), dir), leadsTo(path.join(dir, 'chain', 'C1', 'x.sql'), dir)]).toEqual([path.join(dir, 'end', 'x.sql'), null]);
   });
 
   it('gives a path the same answer whatever paths the call looked at before it', (ctx) => {

@@ -14,11 +14,16 @@ export function failedCode(script: Script): 'SETUP_FAILED' | 'MIGRATION_FAILED' 
   return script.phase === 'setup' ? 'SETUP_FAILED' : 'MIGRATION_FAILED';
 }
 
+/** The name the Supabase preset runs under, as a setup script (lint/run.ts). */
+export const PRESET_NAME = 'the Supabase preset';
+
 /**
  * The fix's way past a script that went wrong. The setup file is not one of the migrations, and files
- * needs a folder: when migrations is one file, only a copy of it can leave a part out.
+ * needs a folder: when migrations is one file, only a copy of it can leave a part out. The preset is
+ * money-guard's own, small and tested: no file to change (review round 22: it was "the setup file").
  */
 export function wayPast(script: Script, single: boolean | undefined, ways: { setup: string; folder: string; single: string }): string {
+  if (script.name === PRESET_NAME) return 'The Supabase preset is money-guard\'s own and small: the machine may be busy; call again, with a larger timeout_seconds.';
   return script.phase === 'setup' ? ways.setup : single === true ? ways.single : ways.folder;
 }
 

@@ -30,10 +30,11 @@ describe('limits at their edge', () => {
     expect(check('.json', records(1_000_000), { columns }).rows_read).toBe(1_000_000);
   }, 60_000);
 
-  it('suggests a records_pointer of exactly 200 characters, and not one of 201', () => {
+  it('suggests a records_pointer of exactly 40 characters, and not one of 41', () => {
+    // Review round 22: up to 200, a key could be a whole secret; past 40 no name is shown whole.
     const hint = (key: string) => errorText(() => check('.json', JSON.stringify({ [key]: [] }), { columns: { transaction_id: 'id', amount: 'a' } }));
-    expect(hint('k'.repeat(199))).toContain(`Pass records_pointer "/${'k'.repeat(199)}", the one field there that holds an array.`);
-    expect(hint('k'.repeat(200))).toMatch(/such as "\/data\/entries"\.$/);
+    expect(hint('k'.repeat(39))).toContain(`Pass records_pointer "/${'k'.repeat(39)}", the one field there that holds an array.`);
+    expect(hint('k'.repeat(40))).toMatch(/such as "\/data\/entries"\.$/);
   });
 
   it('reads a CSV row of exactly 10,000 fields, and refuses one of 10,001', () => {
@@ -83,8 +84,13 @@ describe('the rarer forms of an answer', () => {
   it('says an amount with a comma needs converting, whatever the format', () => {
     // Review round 21: "1,50" was only "not a decimal amount such as 12.34".
     for (const amount_format of ['decimal', 'minor_units'] as const) {
-      const r = check('.csv', 't;a\nT1;1,50\nT1;-1,50\n', { columns: { transaction_id: 't', amount: 'a' }, delimiter: ';', amount_format });
-      expect(r.findings[0]?.message, amount_format).toContain('has a comma, a decimal comma or a thousands separator: convert the file to plain amounts first');
+      for (const amount of ['1,50', '1,500', '1,234.56', '1.234,56']) {
+        const r = check('.csv', `t;a\nT1;${amount}\nT1;-1\n`, { columns: { transaction_id: 't', amount: 'a' }, delimiter: ';', amount_format });
+        expect(r.findings[0]?.message, `${amount_format} ${amount}`).toContain('has a comma: write it as a plain amount');
+      }
+      // Round 22: the longest value shown and this reason stay within a finding's 120 characters.
+      const long = check('.csv', `t;a\nT1;${'1,'.repeat(30)}1\nT1;-1\n`, { columns: { transaction_id: 't', amount: 'a' }, delimiter: ';', amount_format });
+      expect([...(long.findings[0]?.message ?? '')].length, amount_format).toBeLessThanOrEqual(120);
     }
   });
 
@@ -100,8 +106,29 @@ describe('the rarer forms of an answer', () => {
     expect(check('.jsonl', '{"999":"T1","5":5}\n{"999":"T1","5":-5}\n', { columns: { transaction_id: '999', amount: '5' } }).summary).not.toContain('named like a value');
   });
 
+  it('never gives back more than 40 characters of a first-line cell, however it is asked', () => {
+    // Review round 22: shown 40 characters, a model sent them with 13 more guessed and got the whole token
+    // back in "Did you mean". A file the secrets list misses is read as a ledger, its first line as names.
+    const token = 'sk_live_51HxQ2ZKa8Jd93kLmNoPqRsTuVwXyZ01HIDDENPART77';
+    const csv = `stripe,${token}\n`;
+    for (const amount of [token.slice(0, 40), `${token.slice(0, 40)}${'x'.repeat(13)}`, `${token.slice(0, 39)}…`, token.slice(0, 50)]) {
+      // transaction_id maps a column that is there, so the error is about the amount column, the probe.
+      const fromCsv = errorText(() => check('.csv', csv, { columns: { transaction_id: 'stripe', amount } }));
+      if (!amount.endsWith('…')) expect(fromCsv, amount).toContain('(mapped as amount)'); // passed back as shown, it maps
+      expect(fromCsv, amount).not.toContain('HIDDENPART');
+      const fromJson = errorText(() => check('.jsonl', `{"t":"T1","${token}":1}\n`, { columns: { transaction_id: 't', amount } })); // a JSON key too
+      if (!amount.endsWith('…')) expect(fromJson, amount).toContain('(mapped as amount)');
+      expect(fromJson, amount).not.toContain('HIDDENPART');
+    }
+    // A cut name maps only when one name is shown so: two that share their first 39 characters do not.
+    const twins = `${'x'.repeat(39)}aa,${'x'.repeat(39)}bb,amount\nT1,T1,5\nT1,T1,-5\n`;
+    expect(errorText(() => check('.csv', twins, { columns: { transaction_id: `${'x'.repeat(39)}…`, amount: 'amount' } }))).toMatch(/^COLUMN_NOT_FOUND: /);
+  });
+
   it('suggests no name as far from the one asked for as its whole length', () => {
     expect([closest('id', ['1']), closest('id', ['ab']), closest('amount', ['amonut']), closest('id', ['ids'])]).toEqual([undefined, undefined, 'amonut', 'ids']);
+    // Round 22: failing that, a name that holds the whole one asked for, of three letters or more.
+    expect([closest('amount', ['txn_id', 'Amount_Pence']), closest('id', ['txn_identifier']), closest('pence', ['amount', 'amount_pence', 'pence_total'])]).toEqual(['Amount_Pence', undefined, 'amount_pence']);
   });
 
   it('suggests no records_pointer that quotes would show escaped', () => {

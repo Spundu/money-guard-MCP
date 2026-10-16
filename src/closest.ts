@@ -23,8 +23,9 @@ function distance(a: string, b: string): number {
 
 /**
  * The candidate closest to `name`, ignoring letter case, if it is close enough to be a likely typo
- * (within 2 edits, or a third of the name's length, and fewer edits than the name has letters); otherwise
- * undefined. Ties go to the first.
+ * (within 2 edits, or a third of the name's length, and fewer edits than the name has letters); failing
+ * that, the first that holds the whole name, of three letters or more ("amount" in "amount_pence", review
+ * round 22); otherwise undefined. Ties go to the first.
  */
 export function closest(name: string, candidates: Iterable<string>): string | undefined {
   const target = name.slice(0, COMPARE_MAX).toLowerCase();
@@ -32,14 +33,17 @@ export function closest(name: string, candidates: Iterable<string>): string | un
   let best: string | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
   let seen = 0;
+  let holding: string | undefined; // the first candidate that holds the name
   for (const candidate of candidates) {
     if (seen++ >= CANDIDATES_MAX) break;
-    const d = distance(candidate.slice(0, COMPARE_MAX).toLowerCase(), target);
+    const lower = candidate.slice(0, COMPARE_MAX).toLowerCase();
+    if (holding === undefined && target.length >= 3 && lower.includes(target)) holding = candidate;
+    const d = distance(lower, target);
     if (d < bestDistance) {
       best = candidate;
       bestDistance = d;
       if (d === 0) break;
     }
   }
-  return bestDistance <= limit && bestDistance < target.length ? best : undefined; // never one as far as the whole name ("id" and "1", review round 20)
+  return bestDistance <= limit && bestDistance < target.length ? best : holding; // never one as far as the whole name ("id" and "1", review round 20)
 }

@@ -17,7 +17,7 @@ export const MONEY_WORDS: ReadonlySet<string> = new Set([
   'penalties', 'pnl', 'cogs', 'shipping', 'tip', 'tips', 'pay', 'cashback', 'copay', 'copays', 'reimbursement',
   'reimbursements', 'installment', 'installments', 'instalment', 'instalments', 'dividend', 'dividends', 'royalty',
   'royalties', 'arrears', 'overdraft', 'overdrafts', 'payable', 'payables', 'receivable', 'receivables', 'spending',
-  'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi', 'nav',
+  'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi',
   'bal', 'bals', 'deduction', 'deductions', 'markup', 'markups', 'gratuity', 'gratuities', 'duty', 'duties', 'excise', 'tariff',
   'tariffs', 'brokerage', 'freight', 'toll', 'tolls', 'ltv', 'ebitda', 'severance', 'debt', 'debts',
   // minor units of other currencies
@@ -107,6 +107,7 @@ export const RATIO_WORDS: ReadonlySet<string> = new Set(['percent', 'percentage'
 export const PAY_RATE_WORDS: ReadonlySet<string> = new Set([
   'hourly', 'daily', 'nightly', 'night', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour', 'room', 'overtime', 'mileage', 'rental', 'hire', 'diem',
   'hour', 'cost', 'costing', 'valuation', 'incoming', 'unit', // ERPNext, Harvest and energy tariffs (review round 21)
+  'billable', 'peak', 'standard', 'export', 'import', // Harvest's billable_rate, energy tariffs' peak_rate (round 22)
 ]);
 
 /** What "rate_per_..." can be priced by: "rate_per_hour" is a price; "rate_per_second" stays a rate. */
@@ -176,10 +177,10 @@ export const FOLDED_UNIT_ENDINGS = [...MINOR_UNIT_WORDS, ...FINER_UNIT_WORDS].fi
 export const FOLDED_NOT_MONEY_ENDINGS = [...NOT_MONEY_LAST_WORDS].filter((w) => w.length >= 4);
 
 /** What a balance, budget or allowance holds when it is not money: time off, errors, baggage (review round 17). */
-export const HELD_OWN_WORDS: ReadonlySet<string> = new Set(['leave', 'holiday', 'holidays', 'pto', 'vacation', 'sick', 'error', 'baggage', 'luggage', 'mass', 'fluid', 'calorie', 'token', 'point', 'overtime', 'flexi', 'flexitime', 'toil']);
+export const HELD_OWN_WORDS: ReadonlySet<string> = new Set(['leave', 'holiday', 'holidays', 'pto', 'vacation', 'sick', 'error', 'baggage', 'luggage', 'mass', 'fluid', 'calorie', 'token', 'point', 'overtime', 'flexi', 'flexitime', 'toil', 'lieu', 'flextime', 'comptime']);
 
 /** What it may hold either way: an inventory balance is money in accounting, a data allowance is not (review round 18). */
-export const HELD_GUESS_WORDS: ReadonlySet<string> = new Set(['stock', 'inventory', 'data', 'time', 'mileage']); // a mileage allowance is paid in pence per mile (round 19)
+export const HELD_GUESS_WORDS: ReadonlySet<string> = new Set(['stock', 'inventory', 'data', 'time', 'mileage', 'flex']); // a flex balance may be hours or a flexible spending account (round 22) // a mileage allowance is paid in pence per mile (round 19)
 /** The same for a budget. */
 export const BUDGET_GUESS_WORDS: ReadonlySet<string> = new Set(['data', 'mileage']);
 
@@ -208,11 +209,14 @@ export const PER_ORDINARY_WORDS: ReadonlySet<string> = new Set([
 export const PRICED_MEASURE_WORDS: ReadonlySet<string> = new Set(['kg', 'g', 'mg', 'lb', 'km', 'mile', 'kwh', 'ml', 'litre', 'liter', 'gb', 'mb']);
 
 /** A scale other than pounds: "revenue_millions", "amount_k" hold thousands or millions of pounds (review round 20). */
-export const SCALE_WORDS: ReadonlySet<string> = new Set(['k', 'thousand', 'thousands', 'mm', 'million', 'millions', 'bn', 'billion', 'billions', 'lakh', 'lakhs', 'crore', 'crores', 'hundredths']);
+export const SCALE_WORDS: ReadonlySet<string> = new Set(['k', 'thousand', 'thousands', 'm', 'mm', 'mn', 'mio', 'million', 'millions', 'bn', 'billion', 'billions', 'lakh', 'lakhs', 'lac', 'lacs', 'crore', 'crores', 'cr', 'hundredths']);
+
+/** Words that say a balance's state, looked past for what it holds: "pto_remaining_balance" (review round 22). */
+export const HELD_STATE_WORDS: ReadonlySet<string> = new Set(['remaining', 'available', 'accrued', 'opening', 'closing', 'current', 'used', 'unused', 'carried', 'starting', 'ending']);
 
 /**
  * Words only for splitting folded names: what an -ing name may start with ("marketingbudget", review round 18), and
  * "real", "left" and "off" ("realtimebalance", "allowancedaysleft", "timeoffbalance" as their snake_case forms,
  * rounds 20 and 21).
  */
-export const FOLDING_WORDS: ReadonlySet<string> = new Set(['marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding', 'real', 'left', 'off']);
+export const FOLDING_WORDS: ReadonlySet<string> = new Set(['marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding', 'real', 'left', 'off', 'nav']);

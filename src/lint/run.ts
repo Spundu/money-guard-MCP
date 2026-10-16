@@ -6,6 +6,7 @@ import { closest } from '../closest.js';
 import { clip, clipPath, escapeUnsafe, quoted, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { Root } from '../paths.js';
+import { PRESET_NAME } from './advice.js';
 import { ExpressionReader } from './amounts.js';
 import { FIXES, NULL_FIX_NOTE, baseType, displayType, fixSql, isMoneyColumn, judge, type DetailRow, type LintCode, type LintFinding } from './catalog.js';
 import { runScripts, type Script } from './database.js';
@@ -118,7 +119,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const sources = collectSources(root, params);
 
   const scripts: Script[] = [];
-  if (params.preset === 'supabase') scripts.push({ name: 'the Supabase preset', text: SUPABASE_PRESET, phase: 'setup' });
+  if (params.preset === 'supabase') scripts.push({ name: PRESET_NAME, text: SUPABASE_PRESET, phase: 'setup' });
   if (sources.setup) scripts.push({ name: quotedPath(sources.setup.rel), text: sources.setup.text, phase: 'setup' });
   for (const f of sources.files) scripts.push({ name: quotedPath(f.rel), text: f.text, phase: 'migration' });
 
@@ -206,7 +207,7 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
   const offset = params.offset ?? 0;
   const page = findings.slice(offset, offset + MAX_FINDINGS);
   const result: LintResult = {
-    summary: summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, files: applied.length, single: sources.single }),
+    summary: '',
     migrations: clipPath(sources.migrations),
     migrations_sha256: sources.sha256,
     postgres: db.postgres,
@@ -225,24 +226,29 @@ async function lint(root: Root, params: LintParams, signal: AbortSignal | undefi
     other_float_columns_count: otherFloats.length,
     fixes,
   };
-  // The summary ends with what this page is; set again whenever the page is cut below.
-  const base = result.summary;
-  const noteThePage = () => {
-    result.summary = base + pageNote(offset, result.findings.length, findings.length, result.next_offset);
+  // The summary says how many float columns are listed and ends with what this page is: set again whenever
+  // either is cut below (review round 22: it said "the first 30 listed" over 12).
+  const restate = () => {
+    result.summary = summarise({ problems: findings.length, errors, warnings, ignored: ignoredCount, ignoredMoney, money: moneyChecked, moneyTables: moneyTables.size, moneyOther, tables: tables.size, setupTables: db.detail.length > 0, floats: otherFloats.length, floatsListed: result.other_float_columns.length, files: applied.length, single: sources.single })
+      + pageNote(offset, result.findings.length, findings.length, result.next_offset);
   };
-  noteThePage();
+  restate();
   // Over the budget (long names, deep folders): shorten the listing of applied files first, then the
-  // float columns, then the findings, never below one. The counts above still cover everything.
+  // findings, never below one (next_offset pages through the rest), then the float columns, which no
+  // parameter pages through (round 22: they were cut first). The counts above still cover everything.
   while (result.files_applied.length > 0 && overBudget(result)) {
     result.files_applied.pop();
     result.files_applied_truncated = true;
   }
-  while (result.other_float_columns.length > 0 && overBudget(result)) result.other_float_columns.pop();
   while (result.findings.length > 1 && overBudget(result)) {
     result.findings.pop();
     result.findings_truncated = true;
     result.next_offset = offset + result.findings.length; // the next page starts where this one was cut
-    noteThePage();
+    restate();
+  }
+  while (result.other_float_columns.length > 0 && overBudget(result)) {
+    result.other_float_columns.pop();
+    restate();
   }
   return result;
 }
@@ -261,6 +267,8 @@ interface Counts {
   /** Whether tables exist that setup or the preset made (and no migration changed). */
   setupTables: boolean;
   floats: number;
+  /** How many of them the result lists (30 at most, fewer when the result is cut to its size limit). */
+  floatsListed: number;
   files: number;
   /** Whether migrations is one file: files cannot pick from it. */
   single: boolean;
@@ -280,8 +288,9 @@ function summarise(c: Counts): string {
   }
   // Float columns the name rule did not take for money are where money it misses would be: say so
   // wherever the summary would otherwise read as all clear.
-  // Round 21: past 30, say which are listed: no parameter pages through the rest.
-  const floatsNote = c.floats > 0 ? ` ${plural(c.floats, c.money > 0 ? 'other float column' : 'float column')} (other_float_columns${c.floats > MAX_LISTED ? `, the first ${MAX_LISTED} listed` : ''}): check that none holds money.` : '';
+  // Rounds 21 and 22: when not all are listed, say how many are: no parameter pages through the rest.
+  const listed = c.floats > c.floatsListed ? (c.floatsListed === 0 ? ', none listed: the result is full' : `, the first ${c.floatsListed} listed`) : '';
+  const floatsNote = c.floats > 0 ? ` ${plural(c.floats, c.money > 0 ? 'other float column' : 'float column')} (other_float_columns${listed}): check that none holds money.` : '';
   if (c.problems > 0) {
     return `${plural(c.problems, 'problem')} in ${plural(c.problems, 'money column')} (${plural(c.errors, 'error')}, ${plural(c.warnings, 'warning')}). ${applied}${ignoredNote}${otherNote}${floatsNote}`;
   }

@@ -254,7 +254,8 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     // Round 21: a whole entry broken only by the BOM is not called whole beside "not valid JSON"; a BOM alone is no cut-off write.
     expect(one.notes.some((n) => n.includes('the entry on it is whole'))).toBe(false);
     expect(one.notes).toContain('The last line also lacks its line end (LF); it is not a cut-off write, as the line is whole without the byte order mark that breaks it.');
-    expect(run(Buffer.from([0xef, 0xbb, 0xbf])).summary.includes('cut off')).toBe(false);
+    const bomOnly = run(Buffer.from([0xef, 0xbb, 0xbf]));
+    expect([bomOnly.summary.includes('cut off'), bomOnly.notes.includes('The file holds only a byte order mark, no entry.')]).toEqual([false, true]); // round 22
     // Round 21: a whole but tampered entry after a BOM is not called cut off either.
     const line = bytes(VALID).toString('utf8').split('\n')[0] ?? '';
     const tampered = run(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(line.replace(/"seq":0/, '"seq":7'))]));

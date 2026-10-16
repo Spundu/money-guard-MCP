@@ -200,7 +200,7 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   const verdict = completed === null || (!read.ok && (read.brokenAt ?? 0) < tornAt) || lastIsWhole ? read : { ok: false, lastSeq: tornAt - 1, brokenAt: tornAt, reason: TORN_REASON };
   const notes: string[] = [];
   // Round 21: one that the BOM alone breaks is not called whole beside "not valid JSON".
-  if (lastIsWhole) notes.push(wholeButBom ? NO_FINAL_NEWLINE_BOM_NOTE : NO_FINAL_NEWLINE_TOO_NOTE);
+  if (lastIsWhole) notes.push(bytes.length === 3 && bom ? BOM_ONLY_NOTE : wholeButBom ? NO_FINAL_NEWLINE_BOM_NOTE : NO_FINAL_NEWLINE_TOO_NOTE);
   if (!anchor && bytes.length === 0) notes.push(EMPTY_NOTE);
   if (!anchor) notes.push(NO_ANCHOR_NOTE);
   // The fields in SPEC.md §5.5's order.
@@ -254,6 +254,8 @@ const TORN_LIKE: ReadonlySet<ReasonCode> = new Set(['NOT_JSON', 'NOT_UTF8', 'LIN
 
 const NO_FINAL_NEWLINE_TOO_NOTE = 'The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands.';
 const NO_FINAL_NEWLINE_BOM_NOTE = 'The last line also lacks its line end (LF); it is not a cut-off write, as the line is whole without the byte order mark that breaks it.';
+/** Round 22: no line to call whole. */
+const BOM_ONLY_NOTE = 'The file holds only a byte order mark, no entry.';
 
 /** sealed-audit-chain's reason for a last line without LF (its jsonl.js). */
 const TORN_REASON = 'last line is not terminated (torn)';

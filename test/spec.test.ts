@@ -137,8 +137,9 @@ describe('SPEC.md and the code agree', () => {
       payRate: ['"rate" after ', ' is the price'],
       priced: ['"rate per" an ', ' ('],
       value: ['**"value"** after ', ' is what'],
-      held: ['"time off", or one of ', ', right before'], // review rounds 18, 20 and 21
+      held: ['"time off", or one of ', ', right before'], // review rounds 18, 20, 21 and 22
       heldGuess: ['`cash_flow_balance`). With ', ' there'],
+      heldState: ['past any of ', ' that say its state'], // review round 22
       budgetHeld: ['generic money words, or one of ', ', stands there'], // review round 19
       heldAfter: ['`overtime_balance`), or one of ', ' after it'],
       pricedMeasure: ['before a last word of ', ' (`price_kg`'],
