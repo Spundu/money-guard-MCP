@@ -247,6 +247,8 @@ const ANCHOR_WITH_NEWLINE_NOTE = 'The anchor matches the log once the line end a
 
 const FINAL_NEWLINE_NOTE = 'Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one.';
 
+const BOM_NOTE = 'The file starts with a byte order mark (EF BB BF), which a sealed log never has: an editor may have added it when the file was saved. Remove those three bytes from a copy and check the copy.';
+
 const KEY_SETTING_NOTE = 'A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered.';
 
 /**
@@ -259,6 +261,8 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const index = verdict.brokenAt ?? 0;
   const crlf = firstCrlfLine(bytes);
   if (crlf !== null) notes.push(crlfNote(crlf));
+  // An editor can add a byte order mark when it saves the file, as it can CR LF (review round 18).
+  if (index === 0 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) notes.push(BOM_NOTE);
   const anchorChecked = anchor !== undefined && (anchor.count <= index || onlyFinalNewline);
   const raw = verdict.reason ?? 'unknown';
   const code = reasonCode(raw);

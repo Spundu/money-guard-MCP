@@ -137,6 +137,8 @@ describe('SPEC.md and the code agree', () => {
       payRate: ['"rate" after ', ' is the price'],
       priced: ['"rate per" an ', ' ('],
       value: ['**"value"** after ', ' is what'],
+      held: ['measure word, or one of ', ', between'], // review round 18
+      heldGuess: ['are money). With ', ' there'],
     };
     for (const [key, set] of Object.entries(RULE_WORDS)) {
       const [before, after] = around[key] ?? ['', ''];

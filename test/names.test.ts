@@ -85,7 +85,7 @@ const MONEY = [
 ];
 const NOT_MONEY = [
   // review round 17: a balance, budget or allowance of time off, errors, data or stock
-  'hours_balance', 'leave_balance', 'holiday_allowance', 'error_budget', 'data_allowance', 'stock_balance',
+  'hours_balance', 'leave_balance', 'holiday_allowance', 'error_budget', 'leave_balance_remaining', 'leavebalance', // the last two: round 18
   'amount_g', 'amount_mg', // review round 15: grams
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
   'tax_rate', 'vat_rate', 'fee_bps', 'discount_percent', 'total_items', 'payment_method',
@@ -217,6 +217,13 @@ describe('unitOfName', () => {
     // Review round 16 (found by mutation): a folded word is split only as a whole name (SPEC.md §3.5),
     // so after another word it stays unknown; pinned so that a change here is a choice.
     expect(['costbasis', 'new_cost_basis', 'new_costbasis', 'base_pricepoint'].map(looksLikeMoney)).toEqual([true, true, false, false]);
+    // Review round 18: an inventory, stock or data balance may be money either way: a guess, so no x100;
+    // one with money after it is money.
+    expect(['inventory_balance', 'stock_balance', 'data_allowance', 'holiday_allowance_remaining', 'leave_balance_amount'].map((n) => [looksLikeMoney(n), moneyByGuess(n)]))
+      .toEqual([[true, true], [true, true], [true, true], [false, false], [true, false]]);
+    // A budget is money unless it is of computing or time; a folded -ing name splits.
+    expect(['holiday_budget', 'stock_budget', 'inventory_budget', 'growth_budget', 'marketingbudget', 'listingfee', 'latency_budget', 'cpu_budget', 'data_budget'].map((n) => [looksLikeMoney(n), moneyByGuess(n)]))
+      .toEqual([[true, false], [true, false], [true, false], [true, false], [true, false], [true, false], [false, false], [false, false], [true, true]]);
     const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats', 'amount_yen', 'price_yen',
       // Review round 9: folded (an unquoted AmountJPY) they were multiplied by 100.
       'amountjpy', 'feeyen', 'pricekrw', 'totaljpy', 'balancejpy', 'priceyen',

@@ -40,9 +40,10 @@ describe('files', () => {
 });
 
 describe('timeout_seconds', () => {
-  it('defaults to 45 seconds, under the 60 that common MCP clients wait for an answer, and says so', () => {
+  it('defaults to 45 seconds, under the 60 a client built on the MCP TypeScript SDK waits by default, and says so', () => {
     expect(DEFAULT_TIMEOUT_SECONDS).toBe(45);
-    expect(lintInput.shape.timeout_seconds.description).toBe('Stop after this many seconds. Default 45: most clients wait at most 60 for an answer.');
+    // Review round 18: "most clients" had no source; the SDK's default request timeout does.
+    expect(lintInput.shape.timeout_seconds.description).toBe('Stop after this many seconds. Default 45: a client built on the MCP TypeScript SDK stops waiting at 60 by default; raise it for a large project when your client waits longer.');
   });
 });
 

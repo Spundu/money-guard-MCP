@@ -115,6 +115,11 @@ describe('money_lint_schema: failures', () => {
     // Review round 17: not for the root itself ("./0002.sql"), nor for a sibling folder's name.
     const fix = (migrations: string, entry: string) => { try { collectSources(rootOf(dir), { migrations, files: [entry] }); } catch (err) { return (err as { fix: string }).fix; } return ''; };
     expect([fix('.', './0002.sql'), fix('db/migrations', 'db/migrations_old/0001.sql')].map((f) => f.includes('leave out'))).toEqual([false, false]);
+    // Round 18: nor when the shorter path is not a file either; a migration written as code is told what to do.
+    expect(fix('db/migrations', 'db/migrations/0002.sql')).toContain('Check the spelling');
+    writeTree(dir, { 'db/migrations/0003_init.ts': 'export {}' });
+    const ts = (() => { try { collectSources(rootOf(dir), { migrations: 'db/migrations/0003_init.ts' }); } catch (err) { return (err as { fix: string }).fix; } return ''; })();
+    expect(ts).toMatch(/^Pass a folder of \.sql migrations, or one \.sql file, .* Migrations written as code \(Knex, TypeORM\) need SQL first/);
   });
 
   it('runs CREATE INDEX CONCURRENTLY alone in its file, as the 25001 hint says', async () => {
@@ -307,6 +312,16 @@ describe('money_lint_schema: safety', () => {
     expect(e.code).toBe('MIGRATION_FAILED');
     expect(e.message).toMatch(/0002\.sql": after this file the database (no longer answers correctly|stopped answering)/);
     expect(existsSync(marker)).toBe(false);
+  });
+
+  it('refuses huge column keys from a replaced textcat in the database thread, before the server holds them', async () => {
+    // Review round 18: each file's snapshot reached the main thread whole and stayed to the end of the
+    // lint, past every limit, until the process ran out of memory.
+    const e = await failure({
+      'db/migrations/0000.sql': "create or replace function pg_catalog.textcat(text, text) returns text language sql as $$ select pg_catalog.repeat('x', 1000000) $$;",
+      'db/migrations/0001.sql': 'create table t (price double precision);',
+    });
+    expect([e.code, e.message]).toEqual(['MIGRATION_FAILED', `"${lastDir()}/db/migrations/0001.sql": after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`]);
   });
 
   it('stops an endless migration at the time limit', async () => {

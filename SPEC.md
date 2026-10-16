@@ -177,6 +177,9 @@ Every path argument:
      first line, 40 characters each: in a file with no header, they are data. And `file_sha256`, the
      hash of the whole file, lets a model check a guess at a short secret file's content.
    - anything inside `.git/`
+   - ledger-type files inside a folder where command-line tools keep logins: `.aws`, `.azure`,
+     `.gcloud`, `gcloud`, `.kube`, `.ssh`, `configstore`, `legacy_credentials`; and token files by name
+     (`gmail-token.json`, `token_cache.json`, `mycreds.json`)
 
    This is defence in depth. The tools echo only tiny pieces of a file, but a read-only tool must
    never become a way to read secrets.
@@ -386,7 +389,7 @@ never converged: verify by executing, not by parsing.
 | `money_columns` | array of ≤ 200 names (3-200 characters each) | none | Extra columns to treat as money: `"table.column"` (schema `public`) or `"schema.table.column"`, written as the database has them (a result shows a backslash doubled: write it once). A name that holds a dot cannot be listed. |
 | `ignore_columns` | array of ≤ 200 names (3-200 characters each) | none | Columns never to report (false positives), in the same format. The findings they would raise still count in `ignored_count`. |
 | `offset` | integer ≥ 0 | 0 | The first finding to return: the `next_offset` of the previous result. Each page runs the lint again, and the same files give the same findings in the same order. |
-| `timeout_seconds` | integer 5-300 | 45 | Stop after this long. The default stays under the 60 seconds that common MCP clients wait for an answer, so the model gets `TIMEOUT` with the file that was running, not a client error. A larger value only helps with a client that waits longer. |
+| `timeout_seconds` | integer 5-300 | 45 | Stop after this long. The default stays under the 60 seconds a client built on the MCP TypeScript SDK waits by default (its `DEFAULT_REQUEST_TIMEOUT_MSEC`, 2.3.1), so the model gets `TIMEOUT` with the file that was running, not a client error. A larger value only helps with a client that waits longer, as some can be set to (Claude Code's `MCP_TOOL_TIMEOUT`). |
 
 ### 3.3 Which files run, in which order
 - **Default:** every `*.sql` file under `migrations`, at any depth, except files that only undo
@@ -624,10 +627,15 @@ The word lists:
     power, usage, capacity, speed, temperature, precision, scale, growth
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
 - **A balance, budget or allowance of something else** is not money: a count or measure word, or one
-  of leave, holiday(s), pto, vacation, sick, error, data, baggage, luggage, stock, inventory, mass,
-  fluid, calorie, token or point, between it and the money word before it (`hours_balance`,
-  `holiday_allowance`, `error_budget`, `data_allowance`; `account_balance` and `travel_allowance` are
-  money), as for a total.
+  of leave, holiday, holidays, pto, vacation, sick, error, baggage, luggage, mass, fluid, calorie,
+  token or point, between the last balance, budget or allowance in the name and the money word before it,
+  with no money word after it (`hours_balance`, `holiday_allowance`, `error_budget`,
+  `leave_balance_remaining`, the folded `leavebalance`; `account_balance`, `travel_allowance` and
+  `balance_after` are money). With stock, inventory or data there it may be either (an inventory
+  balance is money in accounting), so it is money by a guess: a finding with a null `fix_sql`. A
+  budget is money unless the word before it is of computing or time (latency, cpu, memory, tokens,
+  errors, hours: `latency_budget`); `holiday_budget`, `stock_budget` and `growth_budget` are money,
+  and `data_budget` is a guess.
 - **Minor-unit words** (`fix_sql` only rounds; the word right after "per" does not count, as it says
   what the amount is for, as in `price_per_cent`, but a unit word after that does: `price_per_unit_cents`
   is in cents, and `cost_per_click_micros`, `price_per_unit_kwd` and `price_per_month_minor_units`,
@@ -689,7 +697,9 @@ one that redefined `quote_ident` could otherwise write the SQL the model is told
 conversion follows the name and the declared scale; the test suite runs each kind on stored rows.
 - **`FLOAT_MONEY`:** `ALTER TABLE <t> ALTER COLUMN <c> TYPE bigint USING pg_catalog.round(<c> OPERATOR(pg_catalog.*) 100)::bigint;`,
   taking the column to hold pounds or dollars. When the name says minor units (a minor-unit word of
-  §3.5, read as §3.5 says), it only rounds: `USING pg_catalog.round(<c>)::bigint`.
+  §3.5, read as §3.5 says), it only rounds: `USING pg_catalog.round(<c>)::bigint`. PostgreSQL's
+  `round` of a float rounds a half to the even number (0.125 pounds becomes 12 pence, not 13); a
+  stored float rarely holds an exact half, as most decimal amounts are stored a little off.
 - **`NUMERIC_MONEY`:** the same, by declared scale: 1 or 2 decimal places multiply by 100; scale 0 (or
   less) holds whole numbers, which stay as they are (`... TYPE bigint;`); no declared scale rounds like
   a float. A column finer than a minor unit (more than 2 decimal places, or any decimals on a
@@ -751,8 +761,11 @@ conversion follows the name and the declared scale; the test suite runs each kin
     own (a date or time, `interval`, `boolean`, `uuid`, `inet`, `cidr`, JSON, `bytea`): a domain
     (`price::small_amt`) or an enum, whose own rules may bound the amount;
   - a pattern over the amount's text, `~`, `LIKE` or `SIMILAR TO`, which checks its form in pounds;
+  - the price of one unit (`price_per_kwh`, `cost_per_request`, `unit_price`, `price_unit`) in a float
+    or a `numeric` with no declared scale: it may hold less than a penny, which rounding would lose;
   - a default, CHECK or index expression longer than 2,000 characters, which is not read and counts as
-    holding an amount;
+    holding an amount; and more than 50 defaults, CHECKs or index texts of one column (counting its
+    partitions and children), past which the rest are not read;
   - a money value (`0::money`) in a default, CHECK or index condition of a `money` column: such a
     value cannot work on a `bigint`, so the ALTER would fail.
 
@@ -861,13 +874,17 @@ ROLE ..., CREATE SCHEMA ...).`
   `timeout_seconds` (the `TIMEOUT` advice says so) or lint one schema-only dump.
 - Each file at most 5 MiB; all files together at most 20 MiB.
 - A default, CHECK or index expression is read up to 2,000 characters for `fix_sql` (§3.6), each
-  distinct text once, and at most 1,000,000 characters in one lint; a longer one, or one past that, counts
-  as holding an amount, so the fix is withheld (this runs on the main thread, outside the time limit).
+  distinct text once, at most 50 of each kind for a column, and at most 1,000,000 characters in one
+  lint, bounded in the database thread before the catalog reaches the server; a longer one, or one
+  past those, counts as holding an amount, so the fix is withheld (this runs on the main thread, outside the time limit).
 - Time limit from `timeout_seconds`.
 - Memory: while the files run, the lint may take at most 1 GiB more than it had once the database
   had started. That is the database thread's own memory: its JavaScript heap and what it holds outside
   it (PGlite's WebAssembly memory and in-memory files), as Node.js 22.16 and later report for one
-  thread, so what the main thread holds has no effect on it. (Older Node.js cannot measure one thread:
+  thread, so what the main thread holds has no effect on it. What the database thread sends the main
+  thread is bounded there before it is sent: each file's column keys and types must have their usual
+  form, or the lint stops ("no longer answers correctly"); names over 512 characters make the catalog
+  read fail; types are cut to 512 characters, and expressions as above. (Older Node.js cannot measure one thread:
   there the process's memory, less what the main thread's JavaScript heap and buffers hold, stands in,
   and memory the main thread frees but the system keeps can count against the lint: on Linux, 200 MiB
   of small objects freed during a lint counted up to 164 MiB. Node.js 22.16 or later avoids this.) It
@@ -929,7 +946,7 @@ shortened):
 When a code has a finding whose `fix_sql` is null, its text ends with: "Where fix_sql is null, the
 change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element
 type), a generated column (change its expression), a column a child table inherits (change it on the
-parent), amounts finer than a penny (choose the unit first), a name that may not say its unit
+parent), amounts finer than a penny, or the price of one unit in a float or a numeric with no scale, which may be (choose the unit first), a name that may not say its unit
 (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index
 condition that may hold amounts in the old unit (convert
 those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand)."
@@ -1115,7 +1132,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 | `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match (≤ 200 characters, so a long name can be mapped). When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. |
-| `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. "an object with keys data, meta" (≤ 20 keys, ≤ 40 characters each). |
+| `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. "an object with keys data, meta" (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"). |
 | `TOO_MANY_ROWS` | More than 1,000,000 rows. |
 
 ### 4.8 Limits
@@ -1261,7 +1278,7 @@ mapped.
 | `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). When only the final LF is missing, the anchor is compared with the log with that LF restored: true when it matches, with the note "The anchor matches the log once the line end after its last entry is restored." if it covers the last entry. |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix; one that starts with a byte order mark gets a note that an editor may have added it. When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |

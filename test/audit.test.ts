@@ -241,6 +241,13 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(two.summary).toBe('The log does NOT verify: the log has 2 entries but the anchor says 3: entries were removed from the end, or the log was replaced (ANCHOR_COUNT_MISMATCH).');
   });
 
+  it('says when an editor added a byte order mark, as it does for CR LF', () => {
+    // Review round 18: a log saved with a BOM read only as "entry 0 (line 1) is not valid JSON".
+    const r = run(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes(VALID)]));
+    expect([r.break?.entry_index, r.notes.some((n) => n.startsWith('The file starts with a byte order mark'))]).toEqual([0, true]);
+    expect(run(bytes(VALID)).notes.some((n) => n.includes('byte order mark'))).toBe(false);
+  });
+
   it('asks to check the key setting when a seal fails at the first entry after a change of key', () => {
     // Review round 12: a log that moved from k1 to k2, with k2 set wrong, read as tampered with.
     const keys = { k1: Buffer.from(KEY_HEX, 'hex'), k2: Buffer.from(OTHER_HEX, 'hex') };

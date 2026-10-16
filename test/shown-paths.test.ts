@@ -2,6 +2,7 @@
 // shows one (SPEC.md §2.4): in results and in errors, without relying on the server's final pass. One
 // deep folder whose names hold a right-to-left override and a zero-width space serves every case. (The
 // audit tool's file is checked through the server, in server.test.ts.)
+import { symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { resolveConfig } from '../src/config.js';
@@ -104,5 +105,31 @@ describe('a long path with hidden characters', () => {
       text = err instanceof ToolError ? err.toText() : String(err);
     }
     expect(text).toBe(`PATH_OUTSIDE_ROOT: "../x.csv" is outside the project folder "${folder}". Fix: Pass a path inside the project, relative to its root.`);
+  });
+
+  // Windows allows no quote in a file name.
+  it.skipIf(process.platform === 'win32')('escapes a quote in the folder name, in every message that shows it', () => {
+    // Review round 18: only one of the messages was tested; a quote left as it is ends the name early.
+    const base = tempDir();
+    writeTree(base, { 'a"b/db/0001.sql': 'select 1;\n', 'a"b/notes.txt': 'x', 'a"b/run.ts': 'x', outside: 'x' });
+    symlinkSync(path.join(base, 'outside'), path.join(base, 'a"b', 'db', '0002.sql'));
+    const setting = resolveConfig({ MONEY_GUARD_ROOT: path.join(base, 'a"b') }, base).root;
+    if (!setting.ok) throw new Error('root');
+    const root = setting.value;
+    expect(root.name).toBe('a\\"b');
+    const messages = [
+      () => resolveInRoot(root, 'notes.txt', { kind: 'file', extensions: ['.csv'] }), // FILE_TYPE_NOT_ALLOWED
+      () => resolveInRoot(root, 'run.ts', { kind: 'either', extensions: ['.sql'] }), // the same, for code
+      () => resolveInRoot(root, 'missing.csv', { kind: 'file', extensions: ['.csv'] }), // PATH_NOT_FOUND
+      () => collectSources(root, { migrations: 'db' }), // a link outside, inside the migrations
+    ].map((call) => {
+      try {
+        call();
+        return 'no error';
+      } catch (err) {
+        return err instanceof ToolError ? err.toText() : String(err);
+      }
+    });
+    for (const text of messages) expect(text).toContain('the project folder "a\\"b"');
   });
 });

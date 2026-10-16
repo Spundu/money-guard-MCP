@@ -127,9 +127,15 @@ async function main() {
       return;
     }
     const rows = (await db.query(job.snapshotSql, [mark])).rows.map((r) => {
-      const row = /** @type {{ col: string, ty: string }} */ (r);
+      const row = /** @type {{ col: unknown, ty: unknown }} */ (r);
       return [row.col, row.ty];
     });
+    // A migration can replace the functions these are built with and make them huge, which the main thread
+    // would keep to the end of the lint, past this thread's limits (review round 18): checked here.
+    if (!rows.every(([col, ty]) => typeof col === 'string' && /^\d{1,10}:\d{1,5}$/.test(col) && typeof ty === 'string' && /^(?:float|\d{1,10})$/.test(ty))) {
+      send({ type: 'unusable', step });
+      return;
+    }
     send({ type: 'snapshot', step, rows });
   }
   // Said first, so a time limit or a failure while the catalog is read says so, rather than seeming to
@@ -168,9 +174,20 @@ function bounded(rows) {
     if (lost) out.push(stand);
     return out;
   };
+  // Names and the column key are short in a database whose functions are PostgreSQL's own (a name is at most
+  // 63 bytes); one that is not sends a row the main thread refuses as a value of the wrong kind, not the text.
+  // A type's text is cut instead, as a result shows it cut (review round 18: a replaced textcat or format_type
+  // made them huge, past this thread's limits once the main thread held them).
+  const EXPRESSIONS = ['defaults', 'checks', 'index_exprs'];
+  const TYPES = ['declared', 'domain_name'];
+  const sane = (/** @type {Record<string, unknown>} */ row) =>
+    typeof row.col === 'string' && /^\d{1,10}:\d{1,5}$/.test(row.col) && Object.entries(row).every(([k, v]) => EXPRESSIONS.includes(k) || TYPES.includes(k) || typeof v !== 'string' || v.length <= 512);
+  if (!rows.every((r) => sane(/** @type {Record<string, unknown>} */ (r)))) return [null];
+  /** @param {unknown} v */
+  const short = (v) => (typeof v === 'string' && v.length > 512 ? v.slice(0, 512) : v);
   return rows.map((r) => {
     const row = /** @type {Record<string, unknown>} */ (r);
-    return { ...row, defaults: bound(row.defaults, 'x'.repeat(2001)), checks: bound(row.checks, null), index_exprs: bound(row.index_exprs, null) };
+    return { ...row, declared: short(row.declared), domain_name: short(row.domain_name), defaults: bound(row.defaults, 'x'.repeat(2001)), checks: bound(row.checks, null), index_exprs: bound(row.index_exprs, null) };
   });
 }
 

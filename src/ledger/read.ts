@@ -8,7 +8,7 @@ import { clip, NAME_MAX, quoted } from '../echo.js';
 import { MAX_FIELDS, MAX_ROW_CHARS, rowWithTooManyFields, startLines } from './csv-lines.js';
 import { ToolError } from '../errors.js';
 import { JsonLimitError, JsonNumber, JsonSyntaxError, MAX_FIELD_NAMES, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
-import { isRecord, resolvePointer } from './pointer.js';
+import { encodeToken, isRecord, resolvePointer } from './pointer.js';
 
 export type LedgerFormat = 'csv' | 'json' | 'jsonl';
 
@@ -232,7 +232,7 @@ function namesOf(records: readonly Record<string, unknown>[], columns: ColumnMap
       if (!name.startsWith('/') || name.lastIndexOf('/') === 0) continue;
       const parent = name.slice(0, name.lastIndexOf('/'));
       const node = resolvePointer(record, parent);
-      if (isRecord(node)) for (const key of Object.keys(node)) names.add(`${parent}/${key.replaceAll('~', '~0').replaceAll('/', '~1')}`);
+      if (isRecord(node)) for (const key of Object.keys(node)) names.add(`${parent}/${encodeToken(key)}`);
     }
   }
   return [...names];
@@ -264,7 +264,7 @@ function describe(value: unknown): string {
 function nestedPointer(name: string, record: Record<string, unknown>): string | undefined {
   const last = name.split(/[/.]/).at(-1) ?? '';
   const parent = Object.keys(record).find((k) => { const v = record[k]; return isRecord(v) && Object.hasOwn(v, last); });
-  return parent === undefined ? undefined : `/${[parent, last].map((p) => p.replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`;
+  return parent === undefined ? undefined : `/${[parent, last].map(encodeToken).join('/')}`;
 }
 
 /**
@@ -301,7 +301,7 @@ function dottedPointer(name: string, record: Record<string, unknown>): string | 
     if (!isRecord(value) || !Object.hasOwn(value, part)) return undefined; // its own fields, not "constructor" (round 13)
     value = value[part];
   }
-  return `/${parts.map((p) => p.replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`;
+  return `/${parts.map(encodeToken).join('/')}`;
 }
 
 function parseOrThrow(text: string): unknown {
@@ -320,7 +320,10 @@ function readJson(text: string, columns: ColumnMap, recordsPointer: string): Led
   const records = resolvePointer(parseOrThrow(text), recordsPointer);
   if (!Array.isArray(records)) {
     const where = recordsPointer === '' ? 'The top of the file' : `The value at ${quoted(recordsPointer, 80)}`;
-    throw new ToolError('RECORDS_NOT_ARRAY', `${where} is ${describe(records)}, not an array of records.`, 'Pass records_pointer: the JSON Pointer of the array of ledger rows, such as "/data/entries".');
+    // One field that holds an array is very likely the rows: name its pointer (review round 18).
+    const arrays = isRecord(records) ? Object.keys(records).filter((k) => Array.isArray(records[k])) : [];
+    const only = arrays.length === 1 ? `${recordsPointer}/${encodeToken(arrays[0] ?? '')}` : undefined;
+    throw new ToolError('RECORDS_NOT_ARRAY', `${where} is ${describe(records)}, not an array of records.`, only === undefined ? 'Pass records_pointer: the JSON Pointer of the array of ledger rows, such as "/data/entries".' : `Pass records_pointer ${quoted(only, NAME_MAX)}, the one field there that holds an array.`);
   }
   if (records.length > MAX_ROWS) throw tooManyRows();
   const rows = records.map((record: unknown, seq): LedgerRow => {

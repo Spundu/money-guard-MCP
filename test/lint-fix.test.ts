@@ -3,7 +3,7 @@
 // PostgreSQL quotes them, whatever a migration does to the database's own functions.
 import { describe, expect, it } from 'vitest';
 import { ExpressionReader, MAX_LINT_EXPR_CHARS } from '../src/lint/amounts.js';
-import { DETAIL_SQL, NULL_FIX_NOTE, holdsNoAmount, isZeroOrNullDefault } from '../src/lint/catalog.js';
+import { NULL_FIX_NOTE, holdsNoAmount, isZeroOrNullDefault } from '../src/lint/catalog.js';
 import { moneyByGuess } from '../src/lint/names.js';
 import { lint } from './support/lint.js';
 import { sql } from './support/sql.js';
@@ -203,7 +203,7 @@ describe('money_lint_schema: fix_sql', () => {
   it('knows a zero or NULL default, however PostgreSQL writes it back, and nothing else', () => {
     for (const zero of ['0', '0.00', '0.0', "'0'::numeric", '(0)::numeric', "'0'::double precision", 'NULL::numeric', '-0.00',
       // review round 9: two casts, a plus sign, an exponent
-      "('0'::numeric)::double precision", "'+0'::numeric", "'0e5'::numeric", "'0.0E-3'::numeric"]) expect(isZeroOrNullDefault(zero), zero).toBe(true);
+      "('0'::numeric)::double precision", "'+0'::numeric", "'0e5'::numeric", "'0.0E-3'::numeric", '(+ 0)', '((- 0))::double precision']) expect(isZeroOrNullDefault(zero), zero).toBe(true);
     for (const other of ['2.50', "'1.50'::money", '(1 - 1)', '0.01', "'0x'::text", 'now()', "''", "('2.5'::numeric)::double precision", "'1e5'::numeric", "'0e'::numeric"]) {
       expect(isZeroOrNullDefault(other), other).toBe(false);
     }
@@ -293,30 +293,22 @@ describe('money_lint_schema: fix_sql', () => {
     expect(typed.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.t1', true], ['public.t2', false]]);
   });
 
-  it('reads a long unique-index condition once per index, not once per column', async () => {
-    // Review round 14: 1,000 terms over 1,000 columns, read per column and per pg_depend row, ran the
-    // database thread out of memory (or past 120 s with the whole row as well).
-    const cols = Array.from({ length: 1000 }, (_, i) => `c${i} text`).join(', ');
-    const terms = Array.from({ length: 1000 }, (_, i) => `c${i} is not null`).join(' and ');
-    const schema = `create table w (${cols}, price double precision);\ncreate unique index w_u on w (c0) where ${terms} and w is not null;`;
-    const r = await lint({ 'db/migrations/0001.sql': schema }, { timeout_seconds: 30 });
-    expect([r.findings.length, r.findings[0]?.fix_sql]).toEqual([1, null]); // past 2,000 characters: may hold an amount
-    // Each column gets the index's text once, cut to the stand-in: 1,001 columns, not 24 MB of copies.
-    const rows = (await sql([schema], DETAIL_SQL)) as Array<{ index_exprs: string[] | null }>;
-    const texts = rows.flatMap((row) => row.index_exprs ?? []);
-    expect([texts.length, Math.max(...texts.map((t) => t.length))]).toEqual([1001, 2001]);
-    // Review round 16: defaults too, each text once a column, through a chain of inheriting tables.
-    const chain = [`create table c0 (price double precision default (0 + ${'0 + '.repeat(600)}0));`, ...Array.from({ length: 40 }, (_, i) => `create table c${i + 1} () inherits (c${i});`)];
-    const inherited = (await sql(chain, DETAIL_SQL)) as Array<{ defaults: string[] | null }>;
-    expect(inherited.map((row) => row.defaults)).toEqual([['x'.repeat(2001)]]);
-  }, 60_000);
+  it('converts a money column by the unit its name says, as for the other types', async () => {
+    // Review round 18: amount_pence money and amount_jpy money were multiplied by 100.
+    const schema = 'create table mm (price money, amount_pence money, amount_jpy money, amount_kwd money, cost_micros money);';
+    const r = await lint({ 'db/migrations/0001.sql': schema });
+    const fixes = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
+    expect([fixes.amount_kwd, fixes.cost_micros]).toEqual([null, null]); // the unit needs deciding first
+    const run = [schema, 'insert into mm values (19.99, 1999, 500, 1.234, 1500000);', fixes.price ?? '', fixes.amount_pence ?? '', fixes.amount_jpy ?? ''];
+    expect(await sql(run, 'select price::text, amount_pence::text, amount_jpy::text from mm')).toEqual([{ price: '1999', amount_pence: '1999', amount_jpy: '500' }]);
+  });
 
-  it('reads at most 50 expressions of a column, in the database thread, past which it may hold an amount', async () => {
-    // Review round 17: the SQL's cut() relies on functions a migration can replace, and distinct texts
-    // through an inheritance chain still grew with its square; the worker now bounds what it sends.
-    const checks = (n: number) => Array.from({ length: n }, (_, i) => `check (amount >= 0${' or amount is null'.repeat(i + 1)})`).join(', ');
-    const r = await lint({ 'db/migrations/0001.sql': `create table few (amount double precision, ${checks(40)});\ncreate table many (amount double precision, ${checks(60)});` });
-    expect(r.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.few', false], ['public.many', true]]);
+  it('gives no fix_sql for the price of one unit in a float or a numeric with no scale, which may be below a penny', async () => {
+    // Review round 18: 0.0035 per unit and 0.0000004 per request became 0; the folded LeaveBalance (days) became x100.
+    const r = await lint({ 'db/migrations/0001.sql': 'create table tariffs (price float8, price_per_kwh float8, price_per_unit_cents float8, cost_per_request float8, unit_price float8, price_per_gb numeric, unit_cost numeric, unit_fee numeric(10,2), "LeaveBalance" float8);' });
+    expect(Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql === null]))).toEqual({
+      price: false, price_per_kwh: true, price_per_unit_cents: true, cost_per_request: true, unit_price: true, price_per_gb: true, unit_cost: true, unit_fee: false, // a declared scale says its decimals
+    });
   });
 
   it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {

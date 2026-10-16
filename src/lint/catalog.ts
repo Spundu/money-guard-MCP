@@ -6,7 +6,7 @@
 
 import { hasUnsafe } from '../echo.js';
 import { ExpressionReader, holdsNoAmount, isZeroOrNullDefault } from './amounts.js';
-import { looksLikeMoney, moneyByGuess, unitOfName } from './names.js';
+import { looksLikeMoney, moneyByGuess, pricesAUnit, unitOfName } from './names.js';
 
 export { holdsNoAmount, isZeroOrNullDefault };
 
@@ -254,7 +254,7 @@ export const FIXES: Readonly<Record<LintCode, string>> = {
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny, or the price of one unit in a float or a numeric with no scale, which may be (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -349,12 +349,14 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
       // holds a money value (0::money) cannot work on a bigint, so the ALTER would fail: that one needs
       // writing by hand.
       if ([...(row.defaults ?? []), ...(row.checks ?? []), ...(row.index_exprs ?? [])].some((expr) => expr !== null && /::money\b/.test(expr))) return null;
-      return times100(`(${c}::numeric OPERATOR(pg_catalog.*) 100)::bigint`);
+      // The name says the unit, as for the other types (review round 18: amount_pence money became x100).
+      if (unit === 'unsure' || guessed) return null;
+      return minor ? `${head} USING (${c}::numeric)::bigint;` : times100(`(${c}::numeric OPERATOR(pg_catalog.*) 100)::bigint`);
     case 'FLOAT_MONEY':
-      return convert;
+      return pricesAUnit(row.column_name) ? null : convert; // a unit price may hold any decimals (round 18)
     case 'NUMERIC_MONEY': {
       const scale = numericScale(row.declared);
-      if (scale === null) return convert; // no declared scale: like a float, it may hold any decimals
+      if (scale === null) return pricesAUnit(row.column_name) ? null : convert; // no declared scale: like a float, it may hold any decimals
       if (scale <= 0) return `${head};`; // whole numbers already: keep them as they are
       return scale > (minor ? 0 : 2) ? null : convert; // finer than a minor unit: choose the unit first
     }

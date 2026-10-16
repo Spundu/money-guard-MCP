@@ -28,6 +28,11 @@ export function resolvePointer(doc: unknown, pointer: string): unknown {
   return node;
 }
 
+/** A key as one token of a pointer: "~" and "/" escaped, as RFC 6901 says. */
+export function encodeToken(key: string): string {
+  return key.replaceAll('~', '~0').replaceAll('/', '~1');
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof JsonNumber);
 }

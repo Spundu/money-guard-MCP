@@ -8,7 +8,7 @@ import { overBudget } from '../budget.js';
 import { clipPath, quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
-import { readChecked, resolveInRoot, type Root } from '../paths.js';
+import { readChecked, resolveInRoot, splitCamel, type Root } from '../paths.js';
 import { MAX_LISTED_FINDINGS, checkLedger, mappingMode, type Finding, type FindingCode } from './check.js';
 import { readLedger, type ColumnMap, type LedgerFormat } from './read.js';
 
@@ -169,8 +169,7 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   const AMOUNT_WORDS = ['amount', 'amounts', 'balance', 'balances', 'debit', 'credit', 'total', 'price', 'fee', 'value', 'values', 'period', 'rate', 'rates', 'factor', 'ratio', 'in'];
   // For a JSON Pointer, the field's own name: "/amount/currency" is a currency beside an amount.
   const wordsOf = (name: string) =>
-    (name.startsWith('/') ? name.slice(name.lastIndexOf('/') + 1) : name)
-      .replace(/([a-z0-9])([A-Z])|([A-Z])(?=[A-Z][a-z])/g, (_m, a: string | undefined, b: string | undefined, c: string | undefined) => (c === undefined ? `${a} ${b}` : `${c} `)) // "ISOCurrencyCode" too (round 16)
+    splitCamel(name.startsWith('/') ? name.slice(name.lastIndexOf('/') + 1) : name, ' ') // "ISOCurrencyCode" too (round 16)
       .toLowerCase()
       .replace(/(\p{L})(?=\p{N})/gu, '$1 ') // "ISO4217" too (round 17)
       .split(/[^\p{L}\p{N}]+/u)

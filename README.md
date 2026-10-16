@@ -346,11 +346,12 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id)
   is cut to 40 characters. A few longer texts, such as a Postgres error, have their own limits. Table
   and column names stay whole, so the agent can act on them; a path over 400 characters is cut in the
-  middle. A result is at most 20,000 characters.
+  middle. A result is at most 20,000 characters (the SDK's own input-validation errors excepted: they
+  repeat a misspelt parameter name whole).
 - **A secrets file the name list misses is not safe from the ledger tool.** The agent chooses which
   columns to map, so with one mapping, paging through the findings can show any three columns of
-  every row, and with a few mappings every column. A column name that matches none also lists up to 30 cells of the
-  first line, which in a file with no header is data.
+  every row, and with a few mappings every column. A column name that matches none also lists up
+  to 30 cells of the first line, which in a file with no header is data.
 - **Hidden characters are escaped.** In results and errors, characters that can hide text are shown
   as escapes, by Unicode category: control characters, the zero-width and direction characters of
   the "Trojan Source" trick, and the invisible TAG characters that can spell out instructions a person
@@ -388,7 +389,7 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 ## How it is tested
 
 - `npm test` runs about 1,000 tests, about 500 of them rows of the column-name table. They pass on
-  Windows (Node 24) and on Linux (Node 22, in WSL), where the file-link and permission tests that
+  Windows (Node 24) and on Linux (Node 22, in WSL; last run on 2026-10-16), where the file-link and permission tests that
   Windows skips run too. The CI workflow is set up to run them on Linux and Windows with Node 22,
   24 and 26, and on Node 22.12, the oldest the package supports; it has not run yet, and the badge
   at the top will show its latest run.

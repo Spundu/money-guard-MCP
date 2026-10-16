@@ -20,7 +20,8 @@ export function isZeroOrNullDefault(expr: string): boolean {
     value = value
       .replace(/::[a-z][a-z ]*(?:\(\d+(?:,\d+)?\))?$/, '')
       .replace(/^\((.*)\)$/, '$1')
-      .replace(/^'(.*)'$/, '$1');
+      .replace(/^'(.*)'$/, '$1')
+      .replace(/^([+-]) /, '$1'); // "+0" is written back "(+ 0)" (review round 18)
   }
   return value === 'NULL' || /^[+-]?(?:0+(?:\.0*)?|\.0+)(?:e[+-]?\d+)?$/i.test(value);
 }

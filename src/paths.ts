@@ -105,10 +105,20 @@ export function leadsTo(p: string): string | null {
  * (SPEC.md §2.3). Compared in lower case. The credential words only count in ledger-type names (.csv,
  * .tsv, .json, .jsonl, .ndjson): a migration such as 0002_create_access_keys.sql, or a folder add_service_accounts, is not a secret.
  */
+/** `text` with `sep` between camelCase words, also after an acronym: "AWSCredentials" is "AWS_Credentials". */
+export function splitCamel(text: string, sep: string): string {
+  return text.replace(/([a-z0-9])([A-Z])|([A-Z])(?=[A-Z][a-z])/g, (_m, a: string | undefined, b: string | undefined, c: string | undefined) => (c === undefined ? `${a}${sep}${b}` : `${c}${sep}`));
+}
+
+const CREDENTIAL_FOLDERS: ReadonlySet<string> = new Set(['.aws', '.azure', '.gcloud', 'gcloud', '.kube', '.ssh', 'configstore', 'legacy_credentials']);
+
 export function isSensitive(rel: string): boolean {
   const raw = rel.split(/[\\/]/);
   const segments = raw.map((s) => s.toLowerCase());
   if (segments.includes('.git')) return true;
+  // The folders where command-line tools keep their logins (review round 18: gcloud's adc.json, the Azure
+  // CLI's token cache): any ledger-type file in them.
+  if (segments.slice(0, -1).some((s) => CREDENTIAL_FOLDERS.has(s)) && /\.(?:csv|tsv|json|jsonl|ndjson)$/.test(segments.at(-1) ?? '')) return true;
   // Azure Functions' local secrets, and Docker's registry logins (review round 12).
   if (segments.at(-1) === 'local.settings.json' || (segments.at(-1) === 'config.json' && segments.at(-2) === '.docker')) return true;
   // A copy is the same file: " (1)", Windows' " - Copy (2)", macOS's " copy 2" and "Copy of " are left
@@ -120,7 +130,7 @@ export function isSensitive(rel: string): boolean {
     before = last;
     last = last.replace(/^copy of /i, '').replace(/(?: - copy(?: \(\d+\))?| copy(?: \d+)?| ?\(\d+\))(?=\.[^.]+$)/i, '');
   }
-  return [last.toLowerCase(), last.replace(/([a-z0-9])([A-Z])|([A-Z])(?=[A-Z][a-z])/g, (_m, a: string | undefined, b: string | undefined, c: string | undefined) => (c === undefined ? `${a}_${b}` : `${c}_`)).toLowerCase()].some(sensitiveName);
+  return [last.toLowerCase(), splitCamel(last, '_').toLowerCase()].some(sensitiveName);
 }
 
 /** Whether a file name, in lower case, is one isSensitive refuses. */
@@ -137,7 +147,7 @@ function sensitiveName(base: string): boolean {
     // or a copy adds (review round 14: logins (1).csv, logins-2026-10-16.csv). Words are bounded by anything
     // but a letter or digit, and a space joins two-word names (review round 15: "Bitwarden Export.json").
     (/\.(?:csv|tsv|json|jsonl|ndjson)$/.test(base) &&
-      (/^(?:logins|keystore)(?:[ _-]+(?:\d+|backup|export|copy)|[ _-]*\(\d+\))*\.(?:csv|json)$|(?:^|[^a-z])(?:passwords?|credentials?)(?:[^a-z]|$)|(?:^|[^a-z0-9])(?:secrets?|creds|bitwarden|lastpass|1password|keepass|dashlane|private[-_ ]?keys?|secret[-_ ]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_ ]?tokens?)(?:[^a-z0-9]|$)|^\.?secrets[._-]|api[-_ ]?keys?|access[-_ ]?keys?|keyfile|oauth[-_ ]?tokens?|accesstokens|rootkey|client_secret|service[-_ ]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
+      (/^(?:logins|keystore)(?:[ _-]+(?:\d+|backup|export|copy)|[ _-]*\(\d+\))*\.(?:csv|json)$|(?:^|[^a-z])(?:passwords?|credentials?)(?:[^a-z]|$)|(?:^|[^a-z0-9])(?:secrets?|creds|bitwarden|lastpass|1password|keepass|dashlane|private[-_ ]?keys?|secret[-_ ]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_ ]?tokens?)(?:[^a-z0-9]|$)|^\.?secrets[._-]|api[-_ ]?keys?|access[-_ ]?keys?|keyfile|oauth[-_ ]?tokens?|accesstokens|rootkey|client_secret|service[-_ ]?account|adminsdk|^tokens?\.json$|(?:^|[-_.])tokens?(?:[-_]cache)?\.json$|token[-_]?cache|creds?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
         // a Google Cloud key as downloaded: the project's name, then 12 hex digits with at least one letter
         /-(?=[0-9a-f]*[a-f])[0-9a-f]{12}\.json$/.test(base)))
   );
@@ -172,11 +182,16 @@ function checkSensitive(input: string, rel: string): void {
 }
 
 function checkExtension(root: Root, input: string, rel: string, extensions: readonly string[]): void {
-  if (!extensions.includes(path.extname(rel).toLowerCase())) {
+  const ext = path.extname(rel).toLowerCase();
+  if (!extensions.includes(ext)) {
+    // A migration written as code needs SQL first, as NO_SQL_FILES says for a folder (review round 18).
+    const code = extensions.includes('.sql') && /^\.(?:[cm]?[jt]s|py|rb|go|java|kt|php|cs|ex|exs)$/.test(ext);
     throw new ToolError(
       'FILE_TYPE_NOT_ALLOWED',
       `${shown(input)} is not one of the file types this tool reads.`,
-      `Pass a file ending in ${extensions.join(', ')} inside the project folder "${root.name}".`,
+      code
+        ? `Pass a folder of .sql migrations, or one .sql file, inside the project folder "${root.name}". Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.`
+        : `Pass a file ending in ${extensions.join(', ')} inside the project folder "${root.name}".`,
     );
   }
 }

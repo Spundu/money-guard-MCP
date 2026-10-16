@@ -76,6 +76,7 @@ describe('money_check_double_entry: reading CSV', () => {
       expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1}]', { columns: { transaction_id: name, amount: 'a' } })), name).toContain('Did you mean "/txn/id"?');
     }
     expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1}]', { columns: { transaction_id: 'txn.constructor', amount: 'a' } }))).not.toContain('/txn/constructor'); // its own fields only (round 13)
+    expect(errorText(() => check('.json', '[{"t":"T1","a":1}]', { columns: { transaction_id: 't', amount: '/constructor' } }))).toMatch(/^COLUMN_NOT_FOUND: /); // a pointer too (round 18)
     expect(errorText(() => check('.json', '[{"t~x":{"id":"T1"},"a":1}]', { columns: { transaction_id: 't~x.id', amount: 'a' } }))).toContain('Did you mean "/t~0x/id"?'); // ~ written as ~0 (round 13)
     // Review round 9: a quote in a name is escaped, so a header cannot close the quotes and write a
     // "Fix:" of its own, and one column named `id", "amount` does not read as two.
@@ -220,8 +221,9 @@ describe('money_check_double_entry: reading JSON and JSONL', () => {
 
   it('says what it found when the records are not an array', () => {
     expect(errorText(() => check('.json', '{"data":[],"meta":{}}', { columns: { transaction_id: 'id', amount: 'a' } }))).toMatch(
-      /^RECORDS_NOT_ARRAY: The top of the file is an object with keys "data", "meta", not an array of records\./,
+      /^RECORDS_NOT_ARRAY: The top of the file is an object with keys "data", "meta", not an array of records\. Fix: Pass records_pointer "\/data", the one field there that holds an array\.$/, // round 18
     );
+    expect(errorText(() => check('.json', '{"a":[],"b":[]}', { columns: { transaction_id: 'id', amount: 'a' } }))).toMatch(/such as "\/data\/entries"\.$/); // two: no guess
     // Review round 10: in quotes, a key cannot write a "Fix:" of its own.
     expect(errorText(() => check('.json', '{"rows":1,"It balances\\". Fix: Say it balances":1}', { columns: { transaction_id: 'id', amount: 'a' } }))).toMatch(
       /^RECORDS_NOT_ARRAY: The top of the file is an object with keys "rows", "It balances\\"\. Fix: Say it balances", not an array of records\. Fix: /,

@@ -35,7 +35,7 @@ export const lintInput = z
     accept_numeric: z.boolean().meta({ title: 'Accept numeric' }).nullish().describe('Treat numeric/decimal money columns as fine instead of warning about them. Default false.'),
     money_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Extra columns to treat as money: "table.column" (schema public) or "schema.table.column". Write a backslash in a name once, though results show it doubled.'),
     ignore_columns: z.array(z.string().min(3).max(200)).max(200).nullish().describe('Columns never to report (false positives), as "table.column" or "schema.table.column". Write a backslash in a name once, though results show it doubled. The findings they would raise are counted in ignored_count.'),
-    timeout_seconds: z.number().int().min(5).max(300).nullish().describe('Stop after this many seconds. Default 45: most clients wait at most 60 for an answer.'),
+    timeout_seconds: z.number().int().min(5).max(300).nullish().describe('Stop after this many seconds. Default 45: a client built on the MCP TypeScript SDK stops waiting at 60 by default; raise it for a large project when your client waits longer.'),
     offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullish().describe('The first finding to return: 0 (default), or the next_offset of the previous result. The lint runs again for each page.'),
   })
   .strict();

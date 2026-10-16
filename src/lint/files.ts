@@ -4,6 +4,15 @@
 
 import { createHash } from 'node:crypto';
 import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
+
+/** Whether `p` is a file now; any failure (missing, unreadable) is no. */
+function isFile(p: string): boolean {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
 import path from 'node:path';
 import { quoted, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
@@ -298,7 +307,9 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
   } else if (args.files !== undefined) {
     chosen = args.files.flatMap((entry) => {
       // An entry written from the project root, as a model may write it (review round 16).
-      const fromRoot = target.rel !== '.' && toPosix(entry).startsWith(`${target.rel}/`); // not "./" of the root itself (round 17)
+      // Not "./" of the root itself (round 17), and only when the shorter path is a file (round 18).
+      const shorter = toPosix(entry).slice(target.rel.length + 1);
+      const fromRoot = target.rel !== '.' && toPosix(entry).startsWith(`${target.rel}/`) && isFile(path.resolve(target.real, shorter));
       const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `${quotedPath(entry)} is not a file in ${folder}.`, fromRoot ? `Every entry of files is a path relative to ${folder}: leave out the leading ${quotedPath(`${target.rel}/`)}.` : `Every entry of files is a path relative to ${folder}. Check the spelling.`);
       const lexical = path.resolve(target.real, entry);
       if (!isInside(target.real, lexical)) throw notInFolder;
