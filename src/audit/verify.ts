@@ -169,6 +169,11 @@ function headMismatch(bytes: Uint8Array, anchor: Anchor, result: MakeResult): Au
   return result(`The log does NOT verify: ${what} (ANCHOR_HEAD_MISMATCH).`, brk, null, true);
 }
 
+/** Whether the log starts with UTF-8's byte order mark, EF BB BF. */
+function startsWithBom(bytes: Uint8Array): boolean {
+  return bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+}
+
 export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: AuditKeys; anchor?: Anchor | undefined }): AuditResult {
   const { file, bytes, keys, anchor } = input;
   // The chain on its own: every seal and every link. The anchor is checked after, here: the library's
@@ -184,8 +189,13 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   const tornAt = completed === null ? -1 : jsonlLineCount(bytes);
   const brokenAtLast = completed !== null && !read.ok && (read.brokenAt ?? 0) >= tornAt;
   // A BOM breaks the first line whatever follows it (review round 19: Notepad's BOM and no final LF read as cut off).
-  const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-  const lastIsWhole = brokenAtLast && (!TORN_LIKE.has(reasonCode(read.reason ?? '')) || (bom && tornAt === 0));
+  const bom = startsWithBom(bytes);
+  // Whole if it reads as an entry without the BOM (review round 20: a BOM before a cut-off line was called whole).
+  const wholeWithoutBom = () => {
+    const again = verifyJsonl(Buffer.concat([bytes.subarray(3), Buffer.from('\n')]), keys.provider);
+    return again.ok || !TORN_LIKE.has(reasonCode(again.reason ?? ''));
+  };
+  const lastIsWhole = brokenAtLast && (!TORN_LIKE.has(reasonCode(read.reason ?? '')) || (bom && wholeWithoutBom()));
   const verdict = completed === null || (!read.ok && (read.brokenAt ?? 0) < tornAt) || lastIsWhole ? read : { ok: false, lastSeq: tornAt - 1, brokenAt: tornAt, reason: TORN_REASON };
   const notes: string[] = [];
   if (lastIsWhole) notes.push(NO_FINAL_NEWLINE_TOO_NOTE);
@@ -264,7 +274,7 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const crlf = firstCrlfLine(bytes);
   if (crlf !== null) notes.push(crlfNote(crlf));
   // An editor can add a byte order mark when it saves the file, as it can CR LF (review round 18).
-  if (index === 0 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) notes.push(BOM_NOTE);
+  if (index === 0 && startsWithBom(bytes)) notes.push(BOM_NOTE);
   const anchorChecked = anchor !== undefined && (anchor.count <= index || onlyFinalNewline);
   const raw = verdict.reason ?? 'unknown';
   const code = reasonCode(raw);

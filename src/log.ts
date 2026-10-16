@@ -17,6 +17,14 @@ function next(): void {
   if (line !== undefined) write(2, line, () => next());
 }
 
+/**
+ * Whether a line is being written. On Windows such a write may wait for good on a host that never reads
+ * stderr, and process.exit waits for it (review round 20): the caller then ends the process another way.
+ */
+export function logWriting(): boolean {
+  return writing;
+}
+
 /** Write one line to stderr without ever blocking. */
 export function logLine(line: string): void {
   if (waiting.length >= MAX_WAITING) return;

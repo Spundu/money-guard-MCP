@@ -10,7 +10,7 @@ import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
 import { readChecked, resolveInRoot, splitCamel, type Root } from '../paths.js';
 import { MAX_LISTED_FINDINGS, checkLedger, mappingMode, type Finding, type FindingCode } from './check.js';
-import { readLedger, type ColumnMap, type LedgerFormat } from './read.js';
+import { looksLikeValue, readLedger, type ColumnMap, type LedgerFormat } from './read.js';
 
 export const LEDGER_EXTENSIONS: readonly string[] = ['.csv', '.tsv', '.json', '.jsonl', '.ndjson'];
 export const LEDGER_MAX_BYTES = 25 * 1024 * 1024;
@@ -95,7 +95,7 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
   const result: LedgerResult = {
-    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names) + (total > MAX_LISTED_FINDINGS ? ` Only the first ${num(MAX_LISTED_FINDINGS)} findings can be paged; the counts cover all ${num(total)}.` : '')
+    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names) + headerHint(format, params.columns) + (total > MAX_LISTED_FINDINGS ? ` Only the first ${num(MAX_LISTED_FINDINGS)} findings can be paged; the counts cover all ${num(total)}.` : '')
       + (offset > 0 && page.length === 0 && total > 0 ? ` No findings from offset ${num(offset)}: there ${total === 1 ? 'is' : 'are'} ${num(Math.min(total, MAX_LISTED_FINDINGS))} to page.` : ''), // as the lint says (round 15)
     file: clipPath(target.rel),
     format,
@@ -157,6 +157,13 @@ function poundsHint(format: AmountFormat, amounts: { decimalPoint: number; plain
 }
 
 /** A column that looks like a currency but is not mapped: every row then counts as one currency. */
+/** A mapped CSV column named like a value: the file may have no header line, so its first row was read as one (review round 20). */
+function headerHint(format: string, columns: ColumnMap): string {
+  if (format !== 'csv') return '';
+  const value = Object.values(columns).find((n) => typeof n === 'string' && looksLikeValue(n));
+  return value === undefined ? '' : ` The mapped column ${quoted(value)} is named like a value: if the file has no header line, its first row was read as the column names, and was not checked.`;
+}
+
 function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   if (columns.currency !== undefined) return '';
   // "Currency", "Gross Currency", "Currency ISO Code", "Currency (ISO)", "iso_currency_code",
@@ -184,7 +191,8 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
     const ws = wordsOf(name);
     // A flag (is_foreign_currency) or a pair (ccy_pair, GBPUSD) is not the currency of a row (review round 12).
     if (['is', 'has'].includes(ws[0] ?? '') || ws.includes('pair') || ws.includes('pairs')) return false;
-    const currency = ws.some((w, i) => CURRENCY.includes(w) && !(w === 'curr' && PERIOD_WORDS.includes(ws[i + 1] ?? '')) && !(w === 'valuta' && ws.some((x) => DATE_WORDS.includes(x)))) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
+    const dated = ws.some((x) => DATE_WORDS.includes(x)); // once per name: per word it was quadratic (review round 20)
+    const currency = ws.some((w, i) => CURRENCY.includes(w) && !(w === 'curr' && PERIOD_WORDS.includes(ws[i + 1] ?? '')) && !(w === 'valuta' && dated)) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
     return currency && !ws.some((w) => AMOUNT_WORDS.includes(w));
   };
   const endsLikeOne = (name: string) => [...CURRENCY, 'cur', 'code'].includes(wordsOf(name).at(-1) ?? '');
@@ -193,9 +201,11 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
     return CURRENCY.includes(ws[0] ?? '') && (ws.length === 1 || (ws.length === 2 && ws[1] === 'code'));
   };
   // "Valuta" alone may still be the value date: a name with another currency word comes first (ING: "Valuta", "Währung").
+  // Each group is ranked on its own (review round 20: a plain "Valuta" was named before "Transaction Currency").
   const found = names.filter(looksLikeCurrency);
-  const candidates = [...found.filter((n) => !wordsOf(n).includes('valuta')), ...found.filter((n) => wordsOf(n).includes('valuta'))];
-  const name = candidates.find(plain) ?? candidates.find(endsLikeOne) ?? candidates[0];
+  const valuta = (n: string) => wordsOf(n).includes('valuta');
+  const best = (group: readonly string[]) => group.find(plain) ?? group.find(endsLikeOne) ?? group[0];
+  const name = best(found.filter((n) => !valuta(n))) ?? best(found.filter(valuta));
   return name === undefined ? '' : ` ${quoted(name)} looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }
 

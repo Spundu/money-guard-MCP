@@ -246,9 +246,14 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     const r = run(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes(VALID)]));
     expect([r.break?.entry_index, r.notes.some((n) => n.startsWith('The file starts with a byte order mark'))]).toEqual([0, true]);
     expect(run(bytes(VALID)).notes.some((n) => n.includes('byte order mark'))).toBe(false);
+    // Round 20: all three bytes: U+F000 also starts with EF (EF 80 80), and is no byte order mark.
+    expect(run(Buffer.concat([Buffer.from('\u{F000}', 'utf8'), bytes(VALID)])).notes.some((n) => n.includes('byte order mark'))).toBe(false);
     // Review round 19: one entry saved as old Notepad saves it, BOM and no final LF, is not "cut off".
     const one = run(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(bytes(VALID).toString('utf8').split('\n')[0] ?? '')]));
     expect([one.break?.entry_index, one.summary.includes('cut off'), one.notes.some((n) => n.startsWith('The file starts with a byte order mark'))]).toEqual([0, false, true]);
+    // Review round 20: but a cut-off entry after a BOM is not called whole.
+    const torn = run(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from((bytes(VALID).toString('utf8').split('\n')[0] ?? '').slice(0, 30))]));
+    expect([torn.break?.entry_index, torn.notes.some((n) => n.includes('the entry on it is whole')), torn.notes.some((n) => n.startsWith('The file starts with a byte order mark'))]).toEqual([0, false, true]);
   });
 
   it('asks to check the key setting when a seal fails at the first entry after a change of key', () => {

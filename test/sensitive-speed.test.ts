@@ -13,7 +13,9 @@ describe('isSensitive on the files command-line tools keep logins in', () => {
     for (const p of ['.config/gcloud/legacy_credentials/me/adc.json', '.azure/msal_token_cache.json', '.azure/service_principal_entries.json', '.config/configstore/firebase-tools.json',
       '.aws/cli/cache/x.json', 'gmail-token.json', 'token_cache.json', 'vault-token.json', 'mycreds.json',
       // Review round 19 (found by mutation): the other forms of each rule.
-      'tokencache.json', 'token-cache-backup.json', 'mycred.json', 'gmail.token.json']) {
+      'tokencache.json', 'token-cache-backup.json', 'mycred.json', 'gmail.token.json',
+      // Round 20: in any letter case.
+      '.AWS/cli/cache/X.JSON', 'GCloud/Billing.CSV']) {
       expect(isSensitive(p), p).toBe(true);
     }
     for (const p of ['exports/ledger.json', 'azure_costs.csv', 'tokens_used.csv', 'kube_billing.csv', '.aws/notes.txt']) expect(isSensitive(p), p).toBe(false);

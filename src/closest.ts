@@ -23,7 +23,8 @@ function distance(a: string, b: string): number {
 
 /**
  * The candidate closest to `name`, ignoring letter case, if it is close enough to be a likely typo
- * (within 2 edits, or a third of the name's length); otherwise undefined. Ties go to the first.
+ * (within 2 edits, or a third of the name's length, and fewer edits than the name has letters); otherwise
+ * undefined. Ties go to the first.
  */
 export function closest(name: string, candidates: Iterable<string>): string | undefined {
   const target = name.slice(0, COMPARE_MAX).toLowerCase();
@@ -40,5 +41,5 @@ export function closest(name: string, candidates: Iterable<string>): string | un
       if (d === 0) break;
     }
   }
-  return bestDistance <= limit ? best : undefined;
+  return bestDistance <= limit && bestDistance < target.length ? best : undefined; // never one as far as the whole name ("id" and "1", review round 20)
 }

@@ -180,6 +180,7 @@ describe('money_lint_schema: judging columns', () => {
   it('refuses a badly written column list', async () => {
     expect(await codeOf(SPEC_FILES, { money_columns: ['orders'] })).toBe('BAD_COLUMN_NAME');
     expect(await codeOf(SPEC_FILES, { ignore_columns: ['a.b.c.d'] })).toBe('BAD_COLUMN_NAME');
+    await expect(lint(SPEC_FILES, { ignore_columns: ['a.b.c.d'] })).rejects.toMatchObject({ message: 'ignore_columns entry "a.b.c.d" is not "table.column" or "schema.table.column".' }); // round 20: the text, not only the code
   });
 
   it('checks and counts a column of the money type whatever its name', async () => {

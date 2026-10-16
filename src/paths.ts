@@ -5,11 +5,14 @@
 // is touched, so the answer never reveals whether something outside the project exists; through a link
 // that leads outside, a path that exists and one that does not get the same answer.
 
-import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync, type Stats } from 'node:fs';
+import { readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { clip, NAME_MAX, quoted, quotedPath } from './echo.js';
 import { ToolError } from './errors.js';
+import { isInside, leadsTo, MAX_LINK_HOPS, MAX_LINK_PARTS, type LinkWalk } from './links.js';
+
+export { isInside, leadsTo, newLinkWalk, type LinkWalk } from './links.js';
 
 /** The project folder, already resolved to its real path (config.ts). */
 export interface Root {
@@ -17,6 +20,8 @@ export interface Root {
   real: string;
   /** Its folder name, the only part of it that messages show: escaped and cut (`clip`), a double quote in it escaped, so that messages put it in quotes (review round 17: unquoted, a name could add a "Fix:" of its own). */
   name: string;
+  /** What this call has learned of the links on its paths (one per tool call; without it, each path is followed on its own). */
+  links?: LinkWalk;
 }
 
 export interface PathRule {
@@ -46,68 +51,6 @@ export function toPosix(rel: string): string {
   return rel === '' ? '.' : rel.split(path.sep).join('/');
 }
 
-/** Whether `candidate` (absolute) is `root` or inside it. Works across drives and letter case on Windows. */
-export function isInside(root: string, candidate: string): boolean {
-  const rel = path.relative(root, candidate);
-  return rel === '' || (!path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`));
-}
-
-/** Most links followed by `leadsTo`, as the systems' own limits on a chain of links. */
-const MAX_LINK_HOPS = 64; // above Windows' 63 and Linux's 40: a chain realpath follows, this follows too
-
-/**
- * Where `p` leads: its links followed one part at a time by what they say, as realpath does, but
- * without needing the end to exist (the parts from the first missing one stay as written). Null when
- * the links go round more than MAX_LINK_HOPS times (a loop says nothing about what is outside). When realpath fails, this tells a link that leads
- * outside the project from a path that is missing inside it, so that through a link that leads outside,
- * a target that exists and one that does not get the same answer (review round 9). With `within`, it
- * stops where the path leaves that folder (neither inside it nor above it), before touching anything
- * there: a link to a share (\\host\share) or an automount (/net/host) is never opened (review round 19).
- */
-export function leadsTo(p: string, within?: string): string | null {
-  // A link's text is taken part by part, never tidied first: ".." goes up from where the links before
-  // it led, as Linux and macOS take it ("d/../x" through a link d to a folder outside is outside;
-  // path.resolve would have dropped "d/..", review round 10). Windows applies ".." in a symbolic link's
-  // text before following it; read this way, such a path only ends outside more often, never less.
-  const split = (text: string) => text.split(process.platform === 'win32' ? /[\\/]/ : '/').filter((part) => part !== '' && part !== '.');
-  const start = path.resolve(p);
-  let resolved = path.parse(start).root;
-  const parts = split(start.slice(resolved.length));
-  for (let hops = 0; parts.length > 0; ) {
-    const part = parts.shift() ?? '';
-    if (part === '..') {
-      resolved = path.dirname(resolved);
-      continue;
-    }
-    const next = path.join(resolved, part);
-    if (within !== undefined && !isInside(within, next) && !isInside(next, within)) return path.join(next, ...parts);
-    let link: string;
-    try {
-      if (!lstatSync(next).isSymbolicLink()) {
-        resolved = next;
-        continue;
-      }
-      link = readlinkSync(next).replace(/^\\\\\?\\/, ''); // a Windows junction's target may start with \\?\
-    } catch {
-      return path.join(next, ...parts); // missing: the rest is as written
-    }
-    hops += 1;
-    if (hops > MAX_LINK_HOPS) return null;
-    // An absolute target starts again from its root; a relative one from the folder that holds the link.
-    if (path.isAbsolute(link)) resolved = path.parse(link).root;
-    parts.unshift(...split(path.isAbsolute(link) ? link.slice(path.parse(link).root.length) : link));
-  }
-  return resolved;
-}
-
-/**
- * Names the tools refuse at any depth: environment files, private keys and certificates, package-manager
- * and git credentials, cloud credential downloads (ledger-type files: AWS access-key CSVs, Google
- * client secrets and service-account keys, key.json and *-key.json, auth.json, access tokens, credentials
- * and secrets files), and anything inside .git
- * (SPEC.md §2.3). Compared in lower case. The credential words only count in ledger-type names (.csv,
- * .tsv, .json, .jsonl, .ndjson): a migration such as 0002_create_access_keys.sql, or a folder add_service_accounts, is not a secret.
- */
 /** `text` with `sep` between camelCase words, also after an acronym: "AWSCredentials" is "AWS_Credentials". */
 export function splitCamel(text: string, sep: string): string {
   return text.replace(/([a-z0-9])([A-Z])|([A-Z])(?=[A-Z][a-z])/g, (_m, a: string | undefined, b: string | undefined, c: string | undefined) => (c === undefined ? `${a}${sep}${b}` : `${c}${sep}`));
@@ -122,6 +65,14 @@ export function credentialFolder(rel: string): string | undefined {
   return raw.slice(0, -1).find((s) => CREDENTIAL_FOLDERS.has(s.toLowerCase()));
 }
 
+/**
+ * Names the tools refuse at any depth: environment files, private keys and certificates, package-manager
+ * and git credentials, cloud credential downloads (ledger-type files: AWS access-key CSVs, Google
+ * client secrets and service-account keys, key.json and *-key.json, auth.json, access tokens, credentials
+ * and secrets files), and anything inside .git
+ * (SPEC.md §2.3). Compared in lower case. The credential words only count in ledger-type names (.csv,
+ * .tsv, .json, .jsonl, .ndjson): a migration such as 0002_create_access_keys.sql, or a folder add_service_accounts, is not a secret.
+ */
 export function isSensitive(rel: string): boolean {
   const raw = rel.split(/[\\/]/);
   const segments = raw.map((s) => s.toLowerCase());
@@ -238,7 +189,7 @@ function nearestExisting(root: Root, lexical: string): { shown: string; real: st
 
 /** For a path whose links go round, or chain past MAX_LINK_HOPS: nothing about where they lead. */
 export function tooManyLinks(input: string): ToolError {
-  return new ToolError('PATH_NOT_FOUND', `${shown(input)} goes through more links than can be followed (a loop, or a chain of more than ${MAX_LINK_HOPS}).`, 'Remove the loop, or shorten the chain of links.');
+  return new ToolError('PATH_NOT_FOUND', `${shown(input)} goes through more links than can be followed (a loop, a chain of more than ${MAX_LINK_HOPS}, or more parts of link texts than one call reads, ${MAX_LINK_PARTS.toLocaleString('en-GB')}).`, 'Remove the loop, or shorten the chain of links.');
 }
 
 function linkOutside(root: Root, input: string): ToolError {
@@ -271,7 +222,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   if (rule.kind === 'file' && rule.extensions && path.extname(lexRel) !== '') checkExtension(root, input, lexRel, rule);
 
   // Where the links lead, read before any is followed: realpath would open a share a link points at.
-  const leads = leadsTo(lexical, root.real);
+  const leads = leadsTo(lexical, root.real, root.links);
   if (leads === null) throw tooManyLinks(input);
   if (!isInside(root.real, leads)) throw linkOutside(root, input);
 
@@ -282,7 +233,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     // Through a link that leads out of the project, whether the rest of the path exists would say what
     // is there: the answer is the same either way.
     const near = nearestExisting(root, lexical);
-    const target = leadsTo(lexical, root.real);
+    const target = leadsTo(lexical, root.real, root.links);
     if (target === null) throw tooManyLinks(input); // the same answer, wherever the chain ends (review round 10)
     if (!isInside(root.real, near.real) || !isInside(root.real, target)) throw linkOutside(root, input);
     if (deniedOrLocked(err)) throw unreadable(toPosix(lexRel), err);

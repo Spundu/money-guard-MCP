@@ -72,7 +72,9 @@ internet and never touches a real database.
 - The log is a convenience and never holds up an answer. Lines are written one at a time in the
   background (on Windows, Node would otherwise wait until the host reads the pipe); while one waits, at
   most 100 more queue up and later ones are dropped. When the host closes the server's stderr, never
-  reads it, or dies, the server keeps serving without it, and still exits when stdin closes.
+  reads it, or dies, the server keeps serving without it, and still exits when stdin closes: at once when
+  nothing is left to do, or after 2 seconds. On Windows a log line still waiting for such a host would hold
+  `process.exit` for good, so the process then ends itself at once, with exit code 1 (review round 20).
 - One bad call never kills the server. Every handler catches everything. An unexpected exception
   becomes `INTERNAL_ERROR` with no internal detail; the detail goes to stderr only. A lint database
   that cannot start (a broken install) is such an exception.
@@ -129,9 +131,15 @@ Every path argument:
 2. is resolved with `realpath`, so symlinks are followed first and checked after. Before that, each
    link's text is read (`readlink`) part by part, and a path whose links lead out of the project is
    refused without opening anything there: a link to a share (`\\host\share`) or an automount
-   (`/net/host`) makes no network request (review round 19). The real target must
-   be inside the real root. The check is `path.relative(realRoot, realTarget)`: the result must not
-   start with `..` and must not be absolute (on Windows a different drive comes back absolute).
+   (`/net/host`) makes no network request (review round 19). A link Node cannot read, such as a Windows
+   junction to a volume GUID path (`\\?\Volume{…}`, always a local disk), is followed by `realpath` and
+   refused after it (review round 20). A link loop, links nested more than 64
+   deep, or more than 2,000,000 parts of link texts in one call (counted as the system reads them, again
+   for each path; each link is read once per call) is `PATH_NOT_FOUND`, "goes through more links than can be
+   followed" (review round 20: a chain of links shared by many paths held the server for minutes). The real target must
+   be inside the real root. The check is `path.relative(realRoot, realTarget)`: the result must not be
+   `..` or start with `../` and must not be absolute (on Windows a different drive comes back absolute; a
+   folder named `..foo` is inside).
 3. must not contain NUL. Windows device and UNC forms are refused (`\\?\`, `\\.\`, `\\server\share`).
 4. must be a regular file, or a directory where the tool says so.
 5. must have one of the tool's allowed extensions (case-insensitive):
@@ -281,7 +289,7 @@ Shared error codes:
 | `ROOT_INVALID` | The root is missing, cannot be listed or entered (permission denied), is not a folder, or is a filesystem root. | Set `MONEY_GUARD_ROOT` to the project folder. |
 | `PATH_INVALID` | Empty, too long, NUL, a device/UNC path, or (on Windows) a colon anywhere but after a drive letter, which names an alternate data stream. | Pass a path relative to the project root. |
 | `PATH_OUTSIDE_ROOT` | Resolves outside the root (including through a symlink). | Use a path inside the project. On Windows, for a path that starts with one `/`, it adds that such a path begins at the root of the drive: Git Bash paths (`/c/Users/...`) are not understood. |
-| `PATH_NOT_FOUND` | Nothing at that path. | Names the nearest existing parent folder. |
+| `PATH_NOT_FOUND` | Nothing at that path, or its links cannot be followed (a loop, or past the limits of §2.3 rule 2). | Names the nearest existing parent folder; for links, says to remove the loop or shorten the chain. |
 | `NOT_A_FILE` | A folder where a file is needed, or something that is neither a file nor a folder. | Says which one the tool expects. |
 | `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. For `migrations` given a migration written as code (.ts, .js, .py and the like), says to generate SQL first, as `NO_SQL_FILES` does. A `files` entry is named as written and told to leave the file out of `files`. |
 | `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. A ledger-type file in a folder where command-line tools keep their logins (§2.3) is named as inside that folder, and the fix says to copy the export to another folder of the project. |
@@ -508,6 +516,13 @@ extensions that PGlite does not have (`pg_graphql`, `pg_net`, `pgsodium`, `pg_cr
 so and suggests linting `supabase/migrations` instead.
 
 ### 3.5 Which columns count as money
+Why a name rule: PostgreSQL does not record which columns hold money, so a column's name is the only
+sign the schema gives. The rule below is a heuristic, grown from real schemas and twenty review rounds,
+so its word lists are long. It leans toward a finding, and where it cannot tell it gives a guess, whose
+finding has no `fix_sql`. A wrong answer costs little: `ignore_columns` silences a false finding,
+`money_columns` adds a column it missed, and `other_float_columns` lists every float column it did not
+take for money, so that none is passed over silently.
+
 A column is checked as money when any of these is true:
 - its **name** looks like money (rule below);
 - its **type** is `money` (whatever its name);
@@ -525,12 +540,17 @@ word**, with these refinements:
 - **"per":** only the words before "per" count, because the rest says what the amount is for:
   `price_per_month` and `cost_per_hour` are money; `tax_rate_per_year` is not. A name that still
   ends in a ratio word (percent, percentage, pct, rate, ratio, bps, factor, multiplier, score, share,
-  split) is not money: `fee_per_txn_bps`, `commission_per_sale_pct`.
+  split) is not money: `fee_per_txn_bps`, `commission_per_sale_pct`. A price per anything but a stay, a period or
+  a person is the price of one unit, which may be below a penny (§3.6); a price per night, nights, week, weeks,
+  month, months, year, years, annum, quarter, person, guest, stay, visit, seat, seats, user, users, ticket, license,
+  licence, order, employee, member, room, adult, child or student is an ordinary price (`price_per_seat`); one per
+  hour or day is not, as cloud prices per hour are fractions of a penny.
 - **Rates that are prices:** "rate" after hourly, daily, nightly, night, weekly, pay, day, bill, billing,
-  labor, labour, room, overtime, mileage, rental or hire is the price of an hour, a stay or a mile, so
+  labor, labour, room, overtime, mileage, rental, hire or diem is the price of an hour, a stay or a mile, so
   money: `hourly_rate`, `room_rate`; so is "rate per" an hour, day, night, week, month, mile, km,
   unit, item, kg, lb, person, guest, visit or session (`rate_per_hour`). Other rates (`tax_rate`,
-  `exchange_rate`, `rate_per_second`) are not.
+  `exchange_rate`, `rate_per_second`) are not. "per diem" is a daily allowance, read as diem: `per_diem_rate` and
+  `per_diem_amount` are money, not prices per something.
 - **"value"** after order, orders, cart, basket, invoice, contract, deal, transaction, purchase, sale,
   sales, voucher, coupon, gift, card, item, lifetime, portfolio, inventory, stock, trade, loan, asset,
   assets, claim, policy, market, book, fair, face, par, line, net, gross or total is what that is
@@ -551,7 +571,7 @@ word**, with these refinements:
   measure taken for money gets a finding someone can dismiss. But such a name is money only by a
   guess when a word after the generic word, or before it, is not a money, beside, unit or currency
   word (`total_passengers`, `net_ytd` and `water_total`), and so is a folded name
-  that cannot be split into known words and has total at one end (`totalco2`): its finding has `fix_sql` `null` unless the
+  that cannot be split into known words and has total at one end (`totalkills`): its finding has `fix_sql` `null` unless the
   column is listed in `money_columns` (§3.6), so a measure is never multiplied by 100. Before total or totals, a count or a
   measure says what is totalled, so the name is not money: `weight_total`, `hours_total` and
   `credit_score_total` are read as `total_weight`. These words are the counts and the rates and
@@ -570,7 +590,7 @@ word**, with these refinements:
   name gets the answer its snake_case form gets, for the minor-unit words too (`amountminorunits`,
   `pricecentsusd`: `fix_sql` only rounds). A number at the end is dropped (`price2`,
   `credit_card_last4`). A one-word name that cannot be split into known words still counts when it
-  ends in a long money word (amount, balance, cost, payment, payout, price, refund, revenue, salary,
+  ends in a long money word (amount, allowance, balance, cost, payment, payout, price, refund, revenue, salary,
   subtotal, surcharge, total), maybe followed by a minor-unit word (below, except the short cent, sat
   and wei), or starts with one and does not end in a non-money word of four letters or more. Words
   that would also split ordinary words into money words ("work": network) are not in the lists, so
@@ -593,7 +613,7 @@ The word lists:
     penalties, pnl, cogs, shipping, tip, tips, pay, cashback, copay, copays, reimbursement,
     reimbursements, installment, installments, instalment, instalments, dividend, dividends, royalty,
     royalties, arrears, overdraft, overdrafts, payable, payables, receivable, receivables, spending,
-    contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, bal,
+    contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, bal, bals,
     deduction, deductions, markup, markups, gratuity, gratuities, duty, duties, excise, tariff, tariffs,
     brokerage, freight, toll, tolls, ltv, ebitda, severance, debt, debts
   - minor units of other currencies: paisa, kobo, sats, satoshi, satoshis, centavo, centavos, kopek,
@@ -633,21 +653,23 @@ The word lists:
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
 - **A balance, budget or allowance of something else** is not money: a count or measure word, or one
   of leave, holiday, holidays, pto, vacation, sick, error, baggage, luggage, mass, fluid, calorie,
-  token, point, overtime, flexi, flexitime or toil, between the last balance, budget or allowance in
-  the name and the money word before it, with no money word after it (`hours_balance`,
+  token, point, overtime, flexi, flexitime or toil, right before the last balance, budget or allowance in
+  the name, with no money word after it (`hours_balance`,
   `holiday_allowance`, `error_budget`, `leave_balance_remaining`, the folded `leavebalance`,
   `overtime_balance`), or one of hours, hrs, days, nights, weeks, months, years, minutes, mins,
   seconds, secs, tokens, points, leave, holiday, holidays, pto, vacation or sick after it
   (`balance_hours_remaining`, `allowance_days_left`, `budget_tokens_remaining`); bal counts as balance
-  (`pto_bal`). `account_balance`, `travel_allowance`, `balance_after` and `balance_change` are money. With
+  (`pto_bal`). `account_balance`, `travel_allowance`, `leave_travel_allowance` (India's LTA, paid in money),
+  `balance_after` and `balance_change` are money, and so is cash flow (`cash_flow_total`, `cash_flow_balance`). With
   stock, inventory, data, time or mileage there it may be either (an inventory balance is money in accounting,
   and so is `real_time_balance`), so it is money by a guess: a finding with a null `fix_sql`. A
   budget is money unless a measure after generic money words, or one of error, token, calorie, calories,
   time, hour, hours, hrs, minute, minutes, mins, second, seconds, secs, ms, days, nights or weeks, stands there instead (`latency_budget`, `carbon_budget`,
-  `time_budget`); `holiday_budget`, `stock_budget` and `growth_budget` are money,
-  and `data_budget` and `mileage_budget` are guesses (a mileage allowance is paid in pence per mile).
+  `time_budget`); `holiday_budget`, `stock_budget` and `growth_budget` are money; a budget of data or mileage
+  is a guess (`data_budget`, `mileage_budget`: a mileage allowance is paid in pence per mile).
 - **A price of a measure unit** is money: price, cost or fee as the word before a last word of kg, g,
-  mg, lb, km, mile, kwh, ml, litre, liter, gb or mb (`price_kg`, `cost_kwh`), the price of one unit (§3.6).
+  mg, lb, km, mile, kwh, ml, litre, liter, gb or mb (`price_kg`, `cost_kwh`), with any unit or currency
+  words left out (`price_kwh_pence`, `cost_kwh_gbp`, `price_pence_kwh`), the price of one unit (§3.6).
 - **Minor-unit words** (`fix_sql` only rounds; the word right after "per" does not count, as it says
   what the amount is for, as in `price_per_cent`, but a unit word after that does: `price_per_unit_cents`
   is in cents, and `cost_per_click_micros`, `price_per_unit_kwd` and `price_per_month_minor_units`,
@@ -668,6 +690,9 @@ The word lists:
   prize; `total_ore` öre or iron ore).
 - **Finer units** (`fix_sql` is `null`: `cost_micros` holds millionths, and a fix must choose the
   unit): micros, micro, millicents, millicent, mills, millis, gwei
+- **Scales** (`fix_sql` is `null`: `revenue_millions` holds millions of pounds, and ×100 would not give pence):
+  k, thousand, thousands, mm, million, millions, bn, billion, billions, lakh, lakhs, crore, crores or
+  hundredths, and x100 (`amount_x100`).
 - **Currencies with more than two decimals** (`fix_sql` is `null`: a dinar has 1,000 fils, so
   `amount_kwd` may hold dinars or fils, and neither takes ×100; crypto coins have 8 or 18): bhd, iqd,
   jod, kwd, lyd, omr, tnd, clf, uyw, btc, xbt, eth, sol, usdc, usdt, dai, ltc, xrp, ada, doge, bnb
@@ -778,8 +803,8 @@ conversion follows the name and the declared scale; the test suite runs each kin
   - a pattern over the amount's text, `~`, `LIKE` or `SIMILAR TO`, which checks its form in pounds;
   - the price of one unit (`price_per_kwh`, `cost_per_request`, `unit_price`, `price_unit`, `price_kg`) in a float
     or a `numeric` with no declared scale: it may hold less than a penny, which rounding would lose
-    (a price per hour, day, night, week, month, year, annum, quarter, person, guest, stay or visit is an
-    ordinary price, and is converted: `price_per_month`);
+    (a price per a stay, a period or a person, as §3.5 lists them, is an ordinary price, and is converted:
+    `price_per_month`, `price_per_seat`; one per hour or day is not, as cloud prices per hour are fractions of a penny);
   - a default, CHECK or index expression longer than 2,000 characters, which is not read and counts as
     holding an amount; and more than 50 defaults, CHECKs or index texts of one column (counting its
     partitions and children), past which the rest are not read;
@@ -798,7 +823,7 @@ shows it: the tool runs the new migration too.
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
 | `files_applied_count` | integer | |
-| `files_applied` | string[] | The first 30 (fewer if the result would pass its budget, §2.4), in run order, relative to the root. |
+| `files_applied` | string[] | The first 30 (fewer if the result would pass its budget, §2.4), in run order, relative to the root, each by its real path: through a link, where the link leads (`migrations` may show `j1/db` and these `real/db/0001.sql`). |
 | `files_applied_truncated` | boolean | |
 | `tables_checked` | integer | |
 | `money_columns_checked` | integer | Money columns whose type was judged: a number type or `money`. Money-named columns of text, JSON or other types are not counted (§3.6). |
@@ -818,7 +843,7 @@ shows it: the tool runs the new migration too.
 | `table` | string | `schema.table` |
 | `column` | string | |
 | `type` | string | `"double precision"`, `"numeric(10,2)"`, `"public.pence (bigint)"` for a domain (named with its schema, as the catalog is read with `search_path` set to `pg_catalog`) |
-| `introduced_in` | string | The migration file, relative to the root. |
+| `introduced_in` | string | The migration file, relative to the root, by its real path as in `files_applied`. |
 | `fix_sql` | string or null | |
 
 ### 3.8 Errors (besides §2.5)
@@ -895,7 +920,7 @@ ROLE ..., CREATE SCHEMA ...).`
   lint, bounded in the database thread before the catalog reaches the server; a longer one, or one
   past those, counts as holding an amount, so the fix is withheld (this runs on the main thread, outside the time limit).
 - Time limit from `timeout_seconds`.
-- Memory: while the files run, the lint may take at most 1 GiB more than it had once the database
+- Memory: while the files run and the catalog is read, the lint may take at most 1 GiB more than it had once the database
   had started. That is the database thread's own memory: its JavaScript heap and what it holds outside
   it (PGlite's WebAssembly memory and in-memory files), as Node.js 22.16 and later report for one
   thread, so what the main thread holds has no effect on it. What the database thread sends the main
@@ -997,7 +1022,7 @@ Those functions throw at the first problem. This tool returns **every** problem.
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
 | `file` (required) | string, a path | | `.csv`, `.tsv`, `.json`, `.jsonl` or `.ndjson`. |
-| `columns` (required) | object (strict) | | Which column (CSV) or field (JSON) holds what (below). |
+| `columns` (required) | object (strict) | | Which column (CSV) or field (JSON) holds what (below); each name 1-200 characters. |
 | `amount_format` | `"minor_units"` or `"decimal"` | `"minor_units"` | `minor_units`: integers (`1234` = £12.34). `decimal`: `12.34`. |
 | `decimal_places` | integer 0-4 | 2 | Decimal places allowed in `decimal` format (0 for JPY, 3 for BHD). |
 | `format` | `"csv"`, `"json"` or `"jsonl"` | from the extension (`.csv`/`.tsv` csv, `.json` json, `.jsonl`/`.ndjson` jsonl) | Overrides the extension, e.g. for a `.json` file that holds one object per line. |
@@ -1131,7 +1156,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung, Devise, Moneda, Divisa, Valuta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`, nor Valuta beside a date word, which is the value date: `Data valuta`), or cur alone or before code, unless it also holds an amount, balance, bal, credit, total, price, fee, value, period, rate, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name with Valuta comes after the others (ING Germany's "Valuta" is a date, beside "Währung"); a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung, Devise, Moneda, Divisa, Valuta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`, nor Valuta beside a date word, which is the value date: `Data valuta`), or cur alone or before code, unless it also holds amount, amounts, balance, balances, bal, bals, debit, credit, total, price, fee, value, values, period, rate, rates, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name with Valuta is named only when no other name looks like one (ING Germany's "Valuta" is a date, beside "Währung"), and the order below applies within each group; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -1148,8 +1173,8 @@ The fields come in the order of this table. Findings are sorted by their first l
 | `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields, a row of more than 1 MiB of values or more than 10,000 fields) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). When the CSV header holds none of the delimiter but another one, the fix names it: "The header looks separated by ";", not ",": pass delimiter ";"." |
 | `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match (≤ 200 characters, so a long name can be mapped). When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
-| `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. |
-| `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. "an object with keys data, meta" (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"), if it can be passed back as shown: at most 200 characters, with no character `records_pointer` refuses. |
+| `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. Says which fields clash ("amount cannot be mapped with debit.", "debit needs credit too."). |
+| `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. `an object with keys "data", "meta"` (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"), if it can be passed back as shown: at most 200 characters, with no character `records_pointer` refuses, and no backslash or double quote (which quotes show escaped). |
 | `TOO_MANY_ROWS` | More than 1,000,000 rows. |
 
 ### 4.8 Limits
@@ -1295,7 +1320,7 @@ mapped.
 | `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). When only the final LF is missing, the anchor is compared with the log with that LF restored: true when it matches, with the note "The anchor matches the log once the line end after its last entry is restored." if it covers the last entry. |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix; one that starts with a byte order mark gets a note that an editor may have added it (and its first line is not read as cut off when it also lacks its final LF, as old Notepad saves a one-entry log). When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix; one that starts with a byte order mark gets a note that an editor may have added it (and its first line is not read as cut off when it also lacks its final LF, as old Notepad saves a one-entry log, if the line reads as a whole entry without the mark). When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |

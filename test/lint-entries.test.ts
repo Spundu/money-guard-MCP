@@ -18,6 +18,8 @@ describe('money_lint_schema: entries of files and file types', () => {
     expect([fix('.', './0002.sql'), fix('db/migrations', 'db/migrations_old/0001.sql')].map((f) => f.includes('leave out'))).toEqual([false, false]);
     // Round 18: nor when the shorter path is not a file either; a migration written as code is told what to do.
     expect(fix('db/migrations', 'db/migrations/0002.sql')).toContain('Check the spelling');
+    // Round 20: nor when the entry only starts with the folder's name ("db_0001.sql" is not "db/0001.sql").
+    expect(fix('db/migrations', 'db/migrations_0001.sql')).toContain('Check the spelling');
     // Round 19: the shorter path is looked up only inside the folder: a file outside, reached by ".." or an
     // absolute path, never changes the answer (it told whether any file, pipe or share existed).
     writeTree(dir, { 'outside.sql': 'select 1;', 'p/db/migrations/0001.sql': 'select 1;' });

@@ -164,6 +164,33 @@ describe('the stdio process', () => {
     }
   }, 300_000);
 
+  it('exits when stdin closes after calls made one at a time with a log nobody reads', async () => {
+    // Review round 20: awaited one by one, as an agent calls tools, 1,500 calls left a log write waiting
+    // on Windows when stdin closed, and the server never exited. (In batches the log drained between them.)
+    const child = spawn(process.execPath, [ENTRY], { env: { ...getDefaultEnvironment(), MONEY_GUARD_ROOT: SHOP }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const exited = new Promise<number | null>((resolve) => child.on('exit', resolve));
+    let stdout = '';
+    child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
+    const answered = async (id: number) => {
+      while (!stdout.includes(`"id":${id},`) && !stdout.includes(`"id":${id}}`)) await new Promise((r) => setTimeout(r, 1));
+    };
+    try {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '1' } } })}\n`);
+      await answered(1);
+      child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+      for (let id = 2; id <= 1501; id += 1) {
+        child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'audit_verify_chain', arguments: { file: 'nope.jsonl' } } })}\n`);
+        await answered(id);
+        if (id % 100 === 0) stdout = ''; // keep the search short
+      }
+      child.stdin.end();
+      // 0, or 1 where a log line still waited and the process was ended at once (src/index.ts).
+      expect([0, 1]).toContain(await Promise.race([exited, new Promise((r) => setTimeout(() => r('still running'), 15_000))]));
+    } finally {
+      child.kill();
+    }
+  }, 300_000);
+
   it('does not run a call the client cancelled before it ran, logs it CANCELLED, and sends no answer for it', async () => {
     // A million rows take seconds to check; cancelled before it ran, the call is not run at all.
     const project = tempDir();

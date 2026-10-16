@@ -209,7 +209,7 @@ describe('resolveInRoot', () => {
       expect(new Set(answers.slice(2)).size, `${length}`).toBe(1);
     }
     // Review round 11: what the answer is, for a chain too long and for a loop, in both checks.
-    const tooMany = /^PATH_NOT_FOUND: "[^"]+" goes through more links than can be followed \(a loop, or a chain of more than 64\)\./;
+    const tooMany = /^PATH_NOT_FOUND: "[^"]+" goes through more links than can be followed \(a loop, a chain of more than 64, or more parts of link texts than one call reads, 2,000,000\)\./;
     expect(messageOf(() => resolveInRoot(r, 'e70_1', ANY))).toMatch(tooMany);
     expect(trySymlink(path.join(project, 'loop_b'), path.join(project, 'loop_a'), 'dir')).toBe(true);
     expect(trySymlink(path.join(project, 'loop_a'), path.join(project, 'loop_b'), 'dir')).toBe(true);

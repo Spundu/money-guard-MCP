@@ -1,9 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { bounded, saneSnapshot } from '../src/lint/worker-rows.js';
-
 // Review round 19: the checks the database thread makes on the rows a replaced function can make huge
 // (round 18) were tested only with a megabyte of "x", which every check refuses. Each limit here is
 // tested at its edge, with the numbers written out, so that changing one fails a test.
+import { describe, expect, it } from 'vitest';
+import { bounded, saneSnapshot } from '../src/lint/worker-rows.js';
 
 describe('saneSnapshot', () => {
   it('passes the rows PostgreSQL gives: a column key and a type oid or "float"', () => {

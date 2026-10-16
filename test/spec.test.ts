@@ -137,11 +137,14 @@ describe('SPEC.md and the code agree', () => {
       payRate: ['"rate" after ', ' is the price'],
       priced: ['"rate per" an ', ' ('],
       value: ['**"value"** after ', ' is what'],
-      held: ['measure word, or one of ', ', between'], // review round 18
-      heldGuess: ['are money. With ', ' there'],
+      held: ['measure word, or one of ', ', right before'], // review rounds 18 and 20
+      heldGuess: ['`cash_flow_balance`). With ', ' there'],
       budgetHeld: ['generic money words, or one of ', ', stands there'], // review round 19
       heldAfter: ['`overtime_balance`), or one of ', ' after it'],
       pricedMeasure: ['before a last word of ', ' (`price_kg`'],
+      perOrdinary: ['below a penny (§3.6); a price per ', ' is an ordinary'], // review round 20
+      budgetGuess: ['are money; a budget of ', ' is a guess'],
+      scale: ['×100 would not give pence): ', ', and x100'],
     };
     for (const [key, set] of Object.entries(RULE_WORDS)) {
       const [before, after] = around[key] ?? ['', ''];

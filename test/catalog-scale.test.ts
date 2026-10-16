@@ -22,6 +22,7 @@ describe('DETAIL_SQL', () => {
     const db = await PGlite.create();
     try {
       await db.exec(schema(400));
+      await db.exec('SET search_path = pg_catalog'); // as the database thread reads the catalog (round 19)
       const started = performance.now();
       const rows = (await db.query(DETAIL_SQL)).rows;
       const ms = performance.now() - started;

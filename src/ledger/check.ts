@@ -135,9 +135,18 @@ export function mappingMode(columns: ColumnMap): Mode {
   const has = (f: MappedField) => columns[f] !== undefined;
   if (has('amount') && !has('debit') && !has('credit')) return has('side') ? 'side' : 'signed';
   if (has('debit') && has('credit') && !has('amount') && !has('side')) return 'debit_credit';
+  // Which fields clash (review round 20: amount with debit got only the general rule).
+  const sides = (['debit', 'credit'] as const).filter(has);
+  const why = has('amount')
+    ? `amount cannot be mapped with ${sides.join(' and ')}.`
+    : sides.length === 1
+      ? `${sides[0] ?? ''} needs ${sides[0] === 'debit' ? 'credit' : 'debit'} too.`
+      : has('side')
+        ? 'side goes with amount, which is not mapped.'
+        : 'none of amount, debit and credit is mapped.';
   throw new ToolError(
     'MAPPING_INVALID',
-    'columns must map transaction_id plus one of: amount (signed); amount and side; or debit and credit.',
+    `columns must map transaction_id plus one of: amount (signed); amount and side; or debit and credit. Here ${why}`,
     'Map a signed amount column, an amount column with a debit/credit side column, or separate debit and credit columns.',
   );
 }

@@ -50,6 +50,9 @@ describe('parseAuditKeys', () => {
     }
     // Review round 19: a placeholder whose name is a key is not named.
     expect(errorText(parseAuditKeys(`\${${'ab'.repeat(32)}}`))).not.toContain('abababab');
+    // Round 20: nor one of 32 hex digits, the shortest key; 31 are not a key, and are named.
+    expect(errorText(parseAuditKeys(`\${${'ab'.repeat(16)}}`))).not.toContain('abababab');
+    expect(errorText(parseAuditKeys(`\${${'ab'.repeat(15)}a}`))).toContain(`the placeholder for ${'ab'.repeat(15)}a`);
   });
 
   it('reads id=hex pairs, with spaces around them, in either letter case', () => {

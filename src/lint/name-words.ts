@@ -18,7 +18,7 @@ export const MONEY_WORDS: ReadonlySet<string> = new Set([
   'reimbursements', 'installment', 'installments', 'instalment', 'instalments', 'dividend', 'dividends', 'royalty',
   'royalties', 'arrears', 'overdraft', 'overdrafts', 'payable', 'payables', 'receivable', 'receivables', 'spending',
   'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi',
-  'bal', 'deduction', 'deductions', 'markup', 'markups', 'gratuity', 'gratuities', 'duty', 'duties', 'excise', 'tariff',
+  'bal', 'bals', 'deduction', 'deductions', 'markup', 'markups', 'gratuity', 'gratuities', 'duty', 'duties', 'excise', 'tariff',
   'tariffs', 'brokerage', 'freight', 'toll', 'tolls', 'ltv', 'ebitda', 'severance', 'debt', 'debts',
   // minor units of other currencies
   'paisa', 'kobo', 'sats', 'satoshi', 'satoshis', 'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck',
@@ -105,7 +105,7 @@ export const RATIO_WORDS: ReadonlySet<string> = new Set(['percent', 'percentage'
 
 /** Words before "rate" that make it the price of a stay, an hour or a mile, which is money: "hourly_rate", "room_rate". */
 export const PAY_RATE_WORDS: ReadonlySet<string> = new Set([
-  'hourly', 'daily', 'nightly', 'night', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour', 'room', 'overtime', 'mileage', 'rental', 'hire',
+  'hourly', 'daily', 'nightly', 'night', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour', 'room', 'overtime', 'mileage', 'rental', 'hire', 'diem',
 ]);
 
 /** What "rate_per_..." can be priced by: "rate_per_hour" is a price; "rate_per_second" stays a rate. */
@@ -163,7 +163,7 @@ export const TOTALLED_WORDS: ReadonlySet<string> = new Set(
  * Money words long enough to find at the end of a folded one-word name. The short ones (fee, tax, vat,
  * cent, charge) are left out: they also end coffee, syntax, percent and discharge.
  */
-export const FOLDED_MONEY_ENDINGS = ['amount', 'balance', 'cost', 'payment', 'payout', 'price', 'refund', 'revenue', 'salary', 'subtotal', 'surcharge', 'total'];
+export const FOLDED_MONEY_ENDINGS = ['amount', 'allowance', 'balance', 'cost', 'payment', 'payout', 'price', 'refund', 'revenue', 'salary', 'subtotal', 'surcharge', 'total'];
 
 /**
  * Unit words that can follow the money word in a folded name ("amountminor", "totalpennies"), longest
@@ -173,3 +173,44 @@ export const FOLDED_UNIT_ENDINGS = [...MINOR_UNIT_WORDS, ...FINER_UNIT_WORDS].fi
 
 /** Non-money last words long enough to find at the end of a folded name ("totalcount", "pricelist"). */
 export const FOLDED_NOT_MONEY_ENDINGS = [...NOT_MONEY_LAST_WORDS].filter((w) => w.length >= 4);
+
+/** What a balance, budget or allowance holds when it is not money: time off, errors, baggage (review round 17). */
+export const HELD_OWN_WORDS: ReadonlySet<string> = new Set(['leave', 'holiday', 'holidays', 'pto', 'vacation', 'sick', 'error', 'baggage', 'luggage', 'mass', 'fluid', 'calorie', 'token', 'point', 'overtime', 'flexi', 'flexitime', 'toil']);
+
+/** What it may hold either way: an inventory balance is money in accounting, a data allowance is not (review round 18). */
+export const HELD_GUESS_WORDS: ReadonlySet<string> = new Set(['stock', 'inventory', 'data', 'time', 'mileage']); // a mileage allowance is paid in pence per mile (round 19)
+/** The same for a budget. */
+export const BUDGET_GUESS_WORDS: ReadonlySet<string> = new Set(['data', 'mileage']);
+
+/**
+ * What a balance, budget or allowance holds when one of these follows it: "balance_hours_remaining",
+ * "allowance_days_left", "budget_tokens_remaining" (review round 19). Not every measure: "balance_change" is money.
+ */
+export const HELD_AFTER_WORDS: ReadonlySet<string> = new Set(['hours', 'hrs', 'days', 'nights', 'weeks', 'months', 'years', 'minutes', 'mins', 'seconds', 'secs', 'tokens', 'points', 'leave', 'holiday', 'holidays', 'pto', 'vacation', 'sick']);
+
+/**
+ * A budget is money unless it is of computing or time (review round 18: holiday and stock budgets are money).
+ * Round 19: the time words of a budget in days or hours ("pto_days_budget"), not "day" or "month" ("month_budget" is money).
+ */
+export const BUDGET_OWN_WORDS: ReadonlySet<string> = new Set(['error', 'token', 'calorie', 'calories', 'time', 'hour', 'hours', 'hrs', 'minute', 'minutes', 'mins', 'second', 'seconds', 'secs', 'ms', 'days', 'nights', 'weeks']);
+
+/**
+ * What a price "per" a stay, a period or a person is for: an ordinary price, not below a penny (review round 19).
+ * Not an hour or a day (round 20: cloud prices per hour are fractions of a penny), nor a request or a unit.
+ */
+export const PER_ORDINARY_WORDS: ReadonlySet<string> = new Set([
+  'night', 'nights', 'week', 'weeks', 'month', 'months', 'year', 'years', 'annum', 'quarter', 'person', 'guest', 'stay', 'visit',
+  'seat', 'seats', 'user', 'users', 'ticket', 'license', 'licence', 'order', 'employee', 'member', 'room', 'adult', 'child', 'student',
+]);
+
+/** The measure units a price can be given per without "per": "price_kg", "cost_kwh", "fuel_price_litre" (review round 19). */
+export const PRICED_MEASURE_WORDS: ReadonlySet<string> = new Set(['kg', 'g', 'mg', 'lb', 'km', 'mile', 'kwh', 'ml', 'litre', 'liter', 'gb', 'mb']);
+
+/** A scale other than pounds: "revenue_millions", "amount_k" hold thousands or millions of pounds (review round 20). */
+export const SCALE_WORDS: ReadonlySet<string> = new Set(['k', 'thousand', 'thousands', 'mm', 'million', 'millions', 'bn', 'billion', 'billions', 'lakh', 'lakhs', 'crore', 'crores', 'hundredths']);
+
+/**
+ * Words only for splitting folded names: what an -ing name may start with ("marketingbudget", review round 18), and
+ * "real" and "left" ("realtimebalance", "allowancedaysleft" as their snake_case forms, round 20).
+ */
+export const FOLDING_WORDS: ReadonlySet<string> = new Set(['marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding', 'real', 'left']);

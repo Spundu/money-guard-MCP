@@ -35,7 +35,8 @@ cautious patterns that withhold the fix when in doubt.
 You need Node.js 22.12 or newer, and git. (On 22.12, `npm ci` warns that ESLint wants 22.13; the
 warning is harmless, as ESLint is only used in development. Until sealed-audit-chain is on npm, it
 comes from GitHub at a pinned commit, so `npm ci` also warns that it skips an integrity check for
-that git dependency; no GitHub account or SSH key is needed.)
+that git dependency. The warning and the lockfile name an `ssh://` address, but npm downloads it over
+HTTPS: no GitHub account or SSH key is needed.)
 
 ```sh
 git clone https://github.com/Spundu/money-guard-mcp.git
@@ -251,8 +252,10 @@ Set the variable where Claude Code starts, then start Claude Code again:
 - Windows: run `[Environment]::SetEnvironmentVariable('MONEY_GUARD_AUDIT_KEYS', 'k1=<64 hex digits>',
   'User')` in PowerShell and open a new terminal.
 
-A shell profile or a user variable gives the key to every program started from then on. To keep it
-narrower, set it only in the terminal that starts Claude Code, or load it there from a secret store.
+Better still, load it from a secret store in the terminal that starts Claude Code, and only there. A shell
+profile keeps the key in plain text in a file in your home folder, which any agent that can read files can
+read, no shell needed; a Windows user variable is kept in the registry. Either gives the key to every
+program started from then on.
 
 Claude Code asks you to approve a server from a project file the first time; `/mcp` then shows it
 connected. Never paste a key into the chat: money-guard never asks for one, never returns one and
@@ -378,7 +381,9 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 - Connect to a real database. It checks migration files, in a database that lives in memory and is
   thrown away.
 - Read migrations written as code (Knex, TypeORM, Sequelize, Django, Rails, Alembic). Generate SQL
-  first (`prisma migrate diff --script`, `drizzle-kit generate`, `pg_dump --schema-only`).
+  first: `python manage.py sqlmigrate` (Django), `alembic upgrade head --sql` (Alembic), `db/structure.sql`
+  (Rails with `schema_format = :sql`), `prisma migrate diff --script`, `drizzle-kit generate`; for any tool,
+  `pg_dump --schema-only` of a database its migrations built.
 - MySQL, SQLite or SQL Server: PostgreSQL only. Extensions that PGlite does not have (PostGIS,
   pg_graphql, pg_net, pg_cron, pgsodium) make a migration fail with a clear error.
 - Money kept in text or JSON columns, per-currency decimal places, FX, or chart-of-accounts rules.

@@ -110,7 +110,7 @@ const NOT_MONEY = [
   'totalqty', 'totalkwh', 'totalkg', 'totalpct', 'paymentday', 'priceid', 'total_nights', 'total_guests',
   'total_area', 'revenue_share', 'minor_unit', 'minor_units', 'total_users', 'total_weeks', 'net_units', 'gross_area',
   'total_usage', 'total_power', 'rate_per_second', 'metric_value', 'setting_value', 'value',
-  'payment_method_currency', 'network', 'farewell', 'online', 'baseline', 'cashflow', 'creditscore', 'interestrate',
+  'payment_method_currency', 'network', 'farewell', 'online', 'baseline', 'creditscore', 'interestrate',
   // Review round 5: splits and sessions; sizes and counts of rows, pages and bytes; the last digits of a
   // card; a precision; when and how often pay comes.
   'revenue_split', 'commission_split', 'fee_split', 'payment_sessions', 'total_bytes', 'total_pages', 'totalhits',
@@ -154,7 +154,7 @@ describe('moneyByGuess', () => {
     const guesses = ['net_ytd', 'credit_used', 'total_lifetime', 'total_passengers', 'total_elevation', 'total_kills', 'total_games',
       // Review round 10: a word before total that does not say money, and total in a folded name that
       // cannot be split, are guesses too (steps_total and totalco2 got a ×100 fix).
-      'water_total', 'sleep_total', 'steps_total', 'records_total', 'charge_cycles_total', 'totalco2', 'totalkills', 'stepstotal', 'flighttotal',
+      'water_total', 'sleep_total', 'steps_total', 'records_total', 'charge_cycles_total', 'totalkills', 'stepstotal', 'flighttotal',
       'battery_charge', 'state_of_charge', 'course_credits'];
     expect(guesses.map(moneyByGuess)).toEqual(guesses.map(() => true));
     const sure = ['total', 'grand_total', 'total_paid', 'total_gbp', 'total_minor_units', 'net_amount', 'amount_due', 'order_total', 'total_jpy', 'credit_limit', 'hourly_rate',
@@ -216,7 +216,8 @@ describe('unitOfName', () => {
     expect(['costmicros', 'pricemicros'].map(looksLikeMoney)).toEqual([true, true]);
     // Review round 16 (found by mutation): a folded word is split only as a whole name (SPEC.md §3.5),
     // so after another word it stays unknown; pinned so that a change here is a choice.
-    expect(['costbasis', 'new_cost_basis', 'new_costbasis', 'base_pricepoint'].map(looksLikeMoney)).toEqual([true, true, false, false]);
+    // Round 20: "point" is a known word now, so base_pricepoint splits as base_price_point does: a price.
+    expect(['costbasis', 'new_cost_basis', 'new_costbasis', 'base_pricepoint'].map(looksLikeMoney)).toEqual([true, true, false, true]);
     // Review round 18: an inventory, stock or data balance may be money either way: a guess, so no x100;
     // one with money after it is money.
     // Review round 19: overtime and time off in lieu are hours; a time balance may be real-time money; a

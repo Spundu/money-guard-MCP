@@ -191,14 +191,14 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       const shown = quotedPath(toPosix(path.relative(root.real, full)));
       const outside = () => new ToolError('PATH_OUTSIDE_ROOT', `${shown} is a link to a place outside the project folder "${root.name}".`, 'Remove the link, or pass files with the migrations to run.');
       // Where it leads, read before it is followed: realpath would open a share it points at (review round 19).
-      const leads = leadsTo(full, root.real);
+      const leads = leadsTo(full, root.real, root.links);
       if (leads === null) throw tooManyLinks(toPosix(path.relative(root.real, full)));
       if (!isInside(root.real, leads)) throw outside();
       try {
         real = realpathSync.native(full);
       } catch (err) {
         // A broken link that leads outside gets the answer one to a place that exists there would.
-        const target = leadsTo(full, root.real);
+        const target = leadsTo(full, root.real, root.links);
         if (target === null) throw tooManyLinks(toPosix(path.relative(root.real, full)));
         if (isInside(root.real, target)) {
           if (deniedOrLocked(err)) throw unreadable(toPosix(path.relative(root.real, full)), err);

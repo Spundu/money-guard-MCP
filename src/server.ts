@@ -11,7 +11,7 @@ import { ToolError } from './errors.js';
 import { checkLedgerFile } from './ledger/run.js';
 import { lintSchema, refuseWhileLinting } from './lint/run.js';
 import { logLine } from './log.js';
-import { readChecked, resolveInRoot, type Root } from './paths.js';
+import { newLinkWalk, readChecked, resolveInRoot, type Root } from './paths.js';
 import { auditInput, auditOutput, ledgerInput, ledgerOutput, lintInput, lintOutput } from './schemas.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from './text.js';
 
@@ -106,9 +106,10 @@ export function createServer(config: Config, log: Log = stderrLog): McpServer {
     // and let a 2026-era client keep it a day (review round 17: it was sent as ttlMs 0, private).
     { capabilities: { tools: { listChanged: false } }, instructions: INSTRUCTIONS, maxToolInputElements: 2500, cacheHints: { 'tools/list': { ttlMs: 86_400_000, cacheScope: 'public' } } },
   );
+  // Each call learns the links on its paths afresh: a link may change between calls (review round 20).
   const root = (): Root => {
     if (!config.root.ok) throw config.root.error;
-    return config.root.value;
+    return { ...config.root.value, links: newLinkWalk() };
   };
 
   server.registerTool(

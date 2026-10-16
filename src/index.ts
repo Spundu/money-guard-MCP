@@ -6,7 +6,7 @@
 import process from 'node:process';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { resolveConfig } from './config.js';
-import { logLine } from './log.js';
+import { logLine, logWriting } from './log.js';
 import { NAME, VERSION, createServer, trace } from './server.js';
 
 // The log is a convenience and never holds the server up (src/log.ts). process.stderr exists from the
@@ -38,8 +38,27 @@ logLine(`${NAME} ${VERSION} (Node.js ${process.version}) on stdio: ${root}; ${ke
 process.on('uncaughtException', (err) => logLine(`${NAME}: uncaught ${trace(err)}`));
 process.on('unhandledRejection', (reason) => logLine(`${NAME}: unhandled rejection ${trace(reason)}`));
 
+// On Windows a log line waiting for a host that never reads stderr holds a thread of libuv's pool, and
+// process.exit waits for that thread (review round 20: the server never exited). Then the process is
+// ended at once instead (TerminateProcess, exit code 1): the line was lost anyway.
+const exit = () => {
+  if (process.platform === 'win32' && logWriting()) process.kill(process.pid, 'SIGKILL');
+  process.exit(0);
+};
 const stop = () => {
-  void handle.close().finally(() => process.exit(0));
+  void handle.close().finally(exit);
 };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
+// When the host closes stdin, the SDK closes the connection, and a server with nothing left to do exits by
+// itself. One that is still alive after a short grace for its last answers and log lines exits anyway.
+// 'end' as the SDK's transport listens for it (it then pauses stdin, which may never emit 'close'), or 'close'.
+const EXIT_GRACE_MS = 2000;
+let exiting = false;
+const exitSoon = () => {
+  if (exiting) return;
+  exiting = true;
+  setTimeout(exit, EXIT_GRACE_MS).unref();
+};
+process.stdin.once('end', exitSoon);
+process.stdin.once('close', exitSoon);

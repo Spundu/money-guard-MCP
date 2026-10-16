@@ -312,8 +312,10 @@ describe('money_lint_schema: fix_sql', () => {
     });
     expect(r.fixes.FLOAT_MONEY).toContain('which may be below a penny (choose the unit first)'); // review round 19: the words were missing
     // Review round 19: a price per a time or a person is an ordinary price.
-    const p = await lint({ 'db/migrations/0001.sql': 'create table rates (price_per_month float8, salary_per_annum float8, rate_per_hour float8, price_per_night numeric, cost_per_click float8, price_unit float8, cost_unit float8, unit_fee float8);' });
-    expect(Object.fromEntries(p.findings.map((f) => [f.column, f.fix_sql === null]))).toEqual({ price_per_month: false, salary_per_annum: false, rate_per_hour: false, price_per_night: false, cost_per_click: true, price_unit: true, cost_unit: true, unit_fee: true }); // review round 19: the unit word after, as Odoo's price_unit
+    const p = await lint({ 'db/migrations/0001.sql': 'create table rates (price_per_month float8, salary_per_annum float8, rate_per_hour float8, price_per_night numeric, cost_per_click float8, price_unit float8, cost_unit float8, unit_fee float8, price_per_hour float8, price_per_seat float8, price_kwh_pence float8, cost_kwh_gbp float8, price_per_person float8, price_per_guest float8, price_per_month_usd float8);' });
+    expect(Object.fromEntries(p.findings.map((f) => [f.column, f.fix_sql === null]))).toEqual({ price_per_month: false, salary_per_annum: false, rate_per_hour: true, price_per_night: false, cost_per_click: true, price_unit: true, cost_unit: true, unit_fee: true, // review round 19: the unit word after, as Odoo's price_unit
+      price_per_hour: true, price_per_seat: false, price_kwh_pence: true, cost_kwh_gbp: true, // round 20: cloud prices per hour; a unit or currency after the measure
+      price_per_person: false, price_per_guest: false, price_per_month_usd: false }); // the word right after per, not the last
   });
 
   it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {

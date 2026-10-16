@@ -105,6 +105,11 @@ function showDelimiter(d: string): string {
   return d === '\t' ? '"\\t" (tabs)' : JSON.stringify(d);
 }
 
+/** Whether a header cell or a mapped name is written like a value ("999", "-12.50"), as a first row of data is (review round 20). */
+export function looksLikeValue(name: string): boolean {
+  return /^[-+]?\d[\d.,]*$/.test(name.trim());
+}
+
 /** `fromSepLine`: the delimiter came from the file's own "sep=" line, which the delimiter parameter cannot change. */
 function findColumn(header: string[], field: MappedField, name: string, delimiter: string, fromSepLine = false): number {
   const exact = header.flatMap((h, i) => (h === name ? [i] : []));
@@ -123,11 +128,15 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   const other = header.length === 1 ? DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0] : undefined;
   // A sep= first line in a form money-guard does not read (review round 14: the delimiter hint led to a second error).
   const sepFirst = /^sep\s*=/i.test(header[0] ?? ''); // "sep = ;" too (round 15)
+  // A file with no header line: its first row is read as the names (review round 20: its cells were suggested as names).
+  const data = header.find(looksLikeValue);
   throw new ToolError(
     'COLUMN_NOT_FOUND',
-    `The CSV header has no column ${quoted(name)} (mapped as ${field}).${sepFirst ? '' : hint} The columns are: ${shown.join(', ')}${more}.`,
+    `The CSV header has no column ${quoted(name)} (mapped as ${field}).${sepFirst || data !== undefined ? '' : hint} The columns are: ${shown.join(', ')}${more}.${data === undefined ? '' : ` The first line looks like data (${quoted(data)}), not a header: the first line is always read as the column names.`}`,
     sepFirst
       ? SEP_FIX
+      : data !== undefined && other === undefined
+      ? 'Add a first line that names the columns, then map each field to one of those names.'
       : other === undefined
       ? 'Map each field to one of the column names in the header.'
       : fromSepLine
@@ -322,9 +331,10 @@ function readJson(text: string, columns: ColumnMap, recordsPointer: string): Led
     const where = recordsPointer === '' ? 'The top of the file' : `The value at ${quoted(recordsPointer, 80)}`;
     // One field that holds an array is very likely the rows: name its pointer (review round 18).
     const arrays = isRecord(records) ? Object.keys(records).filter((k) => Array.isArray(records[k])) : [];
-    // Only one that can be passed back as it is shown: whole, and with no character records_pointer refuses (round 19).
+    // Only one that can be passed back as it is shown: whole, with no character records_pointer refuses (round 19),
+    // and none that quotes show escaped, a backslash or a double quote (round 20).
     const one = arrays.length === 1 ? `${recordsPointer}/${encodeToken(arrays[0] ?? '')}` : undefined;
-    const only = one !== undefined && one.length <= NAME_MAX && !hasUnsafe(one) ? one : undefined;
+    const only = one !== undefined && one.length <= NAME_MAX && !hasUnsafe(one) && !/["\\]/.test(one) ? one : undefined;
     throw new ToolError('RECORDS_NOT_ARRAY', `${where} is ${describe(records)}, not an array of records.`, only === undefined ? 'Pass records_pointer: the JSON Pointer of the array of ledger rows, such as "/data/entries".' : `Pass records_pointer ${quoted(only, NAME_MAX)}, the one field there that holds an array.`);
   }
   if (records.length > MAX_ROWS) throw tooManyRows();
