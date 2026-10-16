@@ -82,8 +82,10 @@ describe('parseAuditKeys', () => {
       [`${KEY_B}=${KEY_A}`, /pair 1 has an id that looks like a key \(32 or more hex digits\)/],
       [`${KEY_A}=${KEY_B}`, /pair 1 has an id that looks like a key \(32 or more hex digits\)/], // the shortest key
       [`k1\u{200b}=${KEY_A}`, /pair 1 has an id with a control or invisible character/],
-      [`k1=${KEY_A}0`, /not an even number of hex digits/],
-      [`k1=${KEY_A.slice(0, -2)}zz`, /not an even number of hex digits/],
+      [`k1=${KEY_A}0`, /has a key with an odd number of hex digits/],
+      [`k1=${KEY_A.slice(0, -2)}zz`, /not hex digits only \(0-9, a-f; no 0x; pairs separated by commas\)/], // round 21: said apart
+      [`k1=${KEY_A};k2=${KEY_B}`, /pair 1 has a key that is not hex digits only/],
+      [`k1=0x${KEY_A}`, /pair 1 has a key that is not hex digits only/],
       [`k1=${KEY_A.slice(0, -2)}`, /shorter than 16 bytes/],
     ];
     for (const [raw, expected] of cases) {
@@ -125,6 +127,15 @@ describe('resolveConfig root', () => {
     });
     expect(resolveConfig({ CLAUDE_PROJECT_DIR: b }, c).root).toMatchObject({ ok: true, value: { real: b } });
     expect(resolveConfig({ MONEY_GUARD_ROOT: '  ' }, c).root).toMatchObject({ ok: true, value: { real: c } });
+  });
+
+  it('says when the quotes around the folder were kept, not that it does not exist', () => {
+    // Review round 21: "C:\...\shop" with its quotes was "does not exist".
+    const dir = tempDir();
+    for (const value of [`"${dir}"`, `'${dir}'`]) {
+      const root = resolveConfig({ MONEY_GUARD_ROOT: value }, dir).root;
+      expect(root.ok ? 'ok' : root.error.message).toBe('The project root (from MONEY_GUARD_ROOT) starts or ends with a quote mark: the quotes around the value were kept as part of it; remove them.');
+    }
   });
 
   it('refuses a missing folder, a file and a disk root, without showing the path', () => {

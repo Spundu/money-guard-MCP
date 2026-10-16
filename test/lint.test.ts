@@ -180,6 +180,8 @@ describe('money_lint_schema: judging columns', () => {
   it('refuses a badly written column list', async () => {
     expect(await codeOf(SPEC_FILES, { money_columns: ['orders'] })).toBe('BAD_COLUMN_NAME');
     expect(await codeOf(SPEC_FILES, { ignore_columns: ['a.b.c.d'] })).toBe('BAD_COLUMN_NAME');
+    // Review round 21: a name that starts with a digit is quoted in fix_sql, or the ALTER would not parse.
+    expect((await lint({ 'db/migrations/0001.sql': 'create table t ("1st_payment" float8);' })).findings[0]?.fix_sql).toContain('ALTER COLUMN "1st_payment" TYPE bigint');
     await expect(lint(SPEC_FILES, { ignore_columns: ['a.b.c.d'] })).rejects.toMatchObject({ message: 'ignore_columns entry "a.b.c.d" is not "table.column" or "schema.table.column".' }); // round 20: the text, not only the code
   });
 
@@ -295,6 +297,7 @@ describe('money_lint_schema: judging columns', () => {
     const thirty = await lint(Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`db/migrations/${String(i).padStart(4, '0')}.sql`, 'select 1;'])));
     expect([thirty.files_applied.length, thirty.files_applied_truncated, thirty.files_applied_count]).toEqual([30, false, 30]);
     expect([r.other_float_columns.length, r.other_float_columns_count]).toEqual([30, 32]);
+    expect(r.summary).toContain('(other_float_columns, the first 30 listed): check that none holds money.'); // round 21
     expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
     // Exactly 50 findings are all there: nothing is cut.
     const fifty = Array.from({ length: 50 }, (_, i) => `price_${i} double precision`).join(', ');

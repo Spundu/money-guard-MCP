@@ -279,7 +279,7 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
       const slow =
         script === undefined || reading // every file had run: data loading is not what took the time
           ? ''
-          : `${wayPast(script, options.single, { setup: 'Take slow data loading out of the setup file.', folder, single: 'If the file loads data, lint a schema-only copy (pg_dump --schema-only).' })} `;
+          : `${wayPast(script, options.single, { setup: 'Take slow data loading out of the setup file.', folder, single: 'If the file loads data, lint a schema-only copy (pg_dump --schema-only); a large schema dump can take tens of seconds, so pass a larger timeout_seconds.' })} `; // round 21: a dump of 5,000 tables took 38 s
       finish({ error: new ToolError('TIMEOUT', `The lint ran out of time (${options.timeoutMs / 1000} s) while ${doing}.`, `${slow}timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.`) });
     }, Math.max(0, options.timeoutMs - (Date.now() - calledAt)));
     const onAbort = () => finish({ error: options.signal?.reason ?? new Error('cancelled') });

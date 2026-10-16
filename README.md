@@ -381,7 +381,7 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 - Connect to a real database. It checks migration files, in a database that lives in memory and is
   thrown away.
 - Read migrations written as code (Knex, TypeORM, Sequelize, Django, Rails, Alembic). Generate SQL
-  first: `python manage.py sqlmigrate` (Django), `alembic upgrade head --sql` (Alembic), `db/structure.sql`
+  first: `python manage.py sqlmigrate <app> <migration>` for each migration (Django), `alembic upgrade head --sql` (Alembic), `db/structure.sql`
   (Rails with `schema_format = :sql`), `prisma migrate diff --script`, `drizzle-kit generate`; for any tool,
   `pg_dump --schema-only` of a database its migrations built.
 - MySQL, SQLite or SQL Server: PostgreSQL only. Extensions that PGlite does not have (PostGIS,

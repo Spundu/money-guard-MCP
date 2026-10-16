@@ -156,7 +156,6 @@ function poundsHint(format: AmountFormat, amounts: { decimalPoint: number; plain
     : '';
 }
 
-/** A column that looks like a currency but is not mapped: every row then counts as one currency. */
 /** A mapped CSV column named like a value: the file may have no header line, so its first row was read as one (review round 20). */
 function headerHint(format: string, columns: ColumnMap): string {
   if (format !== 'csv') return '';
@@ -164,6 +163,7 @@ function headerHint(format: string, columns: ColumnMap): string {
   return value === undefined ? '' : ` The mapped column ${quoted(value)} is named like a value: if the file has no header line, its first row was read as the column names, and was not checked.`;
 }
 
+/** A column that looks like a currency but is not mapped: every row then counts as one currency. */
 function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   if (columns.currency !== undefined) return '';
   // "Currency", "Gross Currency", "Currency ISO Code", "Currency (ISO)", "iso_currency_code",
@@ -182,17 +182,21 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
       .split(/[^\p{L}\p{N}]+/u)
       .filter((w) => w !== '');
   // hledger, beancount: commodity; German, French, Spanish (two words), Italian and Dutch; ISO 4217 (review rounds 15, 17)
-  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities', 'währung', 'devise', 'moneda', 'divisa', 'valuta', '4217'];
+  // Round 21: "Waehrung" written in ASCII.
+  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities', 'währung', 'waehrung', 'wahrung', 'devise', 'moneda', 'divisa', 'valuta', '4217'];
+  // A crypto exchange's asset or coin (Kraken), alone or with code or symbol, not "asset_id"; "ISO Code" (round 21).
+  const coin = (ws: readonly string[]) => ['asset', 'coin'].includes(ws[0] ?? '') && (ws.length === 1 || (ws.length === 2 && ['code', 'symbol'].includes(ws[1] ?? '')));
+  const isoCode = (ws: readonly string[]) => ws.length === 2 && ws[0] === 'iso' && ws[1] === 'code';
   // "curr" before a date or a period is "current" (review round 17: curr_month, Curr Date).
   const PERIOD_WORDS = ['date', 'day', 'week', 'month', 'quarter', 'year', 'period', 'time'];
   // "Valuta" is also the value date (German banks; Italian "Data valuta"): beside a date word it is that (round 19).
-  const DATE_WORDS = ['date', 'data', 'datum', 'dt', 'tag', 'giorno'];
+  const DATE_WORDS = ['date', 'data', 'datum', 'dt', 'tag', 'giorno', 'wertstellung']; // Comdirect: "Wertstellung (Valuta)" (round 21)
   const looksLikeCurrency = (name: string) => {
     const ws = wordsOf(name);
     // A flag (is_foreign_currency) or a pair (ccy_pair, GBPUSD) is not the currency of a row (review round 12).
     if (['is', 'has'].includes(ws[0] ?? '') || ws.includes('pair') || ws.includes('pairs')) return false;
     const dated = ws.some((x) => DATE_WORDS.includes(x)); // once per name: per word it was quadratic (review round 20)
-    const currency = ws.some((w, i) => CURRENCY.includes(w) && !(w === 'curr' && PERIOD_WORDS.includes(ws[i + 1] ?? '')) && !(w === 'valuta' && dated)) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
+    const currency = ws.some((w, i) => CURRENCY.includes(w) && !(w === 'curr' && PERIOD_WORDS.includes(ws[i + 1] ?? '')) && !(w === 'valuta' && dated)) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code')) || coin(ws) || isoCode(ws);
     return currency && !ws.some((w) => AMOUNT_WORDS.includes(w));
   };
   const endsLikeOne = (name: string) => [...CURRENCY, 'cur', 'code'].includes(wordsOf(name).at(-1) ?? '');

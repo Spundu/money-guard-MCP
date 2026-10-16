@@ -193,12 +193,14 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   // Whole if it reads as an entry without the BOM (review round 20: a BOM before a cut-off line was called whole).
   const wholeWithoutBom = () => {
     const again = verifyJsonl(Buffer.concat([bytes.subarray(3), Buffer.from('\n')]), keys.provider);
-    return again.ok || !TORN_LIKE.has(reasonCode(again.reason ?? ''));
+    return bytes.length === 3 || again.ok || !TORN_LIKE.has(reasonCode(again.reason ?? '')); // a BOM alone is no cut-off write (round 21)
   };
-  const lastIsWhole = brokenAtLast && (!TORN_LIKE.has(reasonCode(read.reason ?? '')) || (bom && wholeWithoutBom()));
+  const wholeButBom = brokenAtLast && TORN_LIKE.has(reasonCode(read.reason ?? '')) && bom && wholeWithoutBom();
+  const lastIsWhole = brokenAtLast && (!TORN_LIKE.has(reasonCode(read.reason ?? '')) || wholeButBom);
   const verdict = completed === null || (!read.ok && (read.brokenAt ?? 0) < tornAt) || lastIsWhole ? read : { ok: false, lastSeq: tornAt - 1, brokenAt: tornAt, reason: TORN_REASON };
   const notes: string[] = [];
-  if (lastIsWhole) notes.push(NO_FINAL_NEWLINE_TOO_NOTE);
+  // Round 21: one that the BOM alone breaks is not called whole beside "not valid JSON".
+  if (lastIsWhole) notes.push(wholeButBom ? NO_FINAL_NEWLINE_BOM_NOTE : NO_FINAL_NEWLINE_TOO_NOTE);
   if (!anchor && bytes.length === 0) notes.push(EMPTY_NOTE);
   if (!anchor) notes.push(NO_ANCHOR_NOTE);
   // The fields in SPEC.md §5.5's order.
@@ -251,6 +253,7 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
 const TORN_LIKE: ReadonlySet<ReasonCode> = new Set(['NOT_JSON', 'NOT_UTF8', 'LINE_TOO_LARGE']);
 
 const NO_FINAL_NEWLINE_TOO_NOTE = 'The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands.';
+const NO_FINAL_NEWLINE_BOM_NOTE = 'The last line also lacks its line end (LF); it is not a cut-off write, as the line is whole without the byte order mark that breaks it.';
 
 /** sealed-audit-chain's reason for a last line without LF (its jsonl.js). */
 const TORN_REASON = 'last line is not terminated (torn)';

@@ -17,7 +17,7 @@ export const MONEY_WORDS: ReadonlySet<string> = new Set([
   'penalties', 'pnl', 'cogs', 'shipping', 'tip', 'tips', 'pay', 'cashback', 'copay', 'copays', 'reimbursement',
   'reimbursements', 'installment', 'installments', 'instalment', 'instalments', 'dividend', 'dividends', 'royalty',
   'royalties', 'arrears', 'overdraft', 'overdrafts', 'payable', 'payables', 'receivable', 'receivables', 'spending',
-  'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi',
+  'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi', 'nav',
   'bal', 'bals', 'deduction', 'deductions', 'markup', 'markups', 'gratuity', 'gratuities', 'duty', 'duties', 'excise', 'tariff',
   'tariffs', 'brokerage', 'freight', 'toll', 'tolls', 'ltv', 'ebitda', 'severance', 'debt', 'debts',
   // minor units of other currencies
@@ -106,10 +106,11 @@ export const RATIO_WORDS: ReadonlySet<string> = new Set(['percent', 'percentage'
 /** Words before "rate" that make it the price of a stay, an hour or a mile, which is money: "hourly_rate", "room_rate". */
 export const PAY_RATE_WORDS: ReadonlySet<string> = new Set([
   'hourly', 'daily', 'nightly', 'night', 'weekly', 'pay', 'day', 'bill', 'billing', 'labor', 'labour', 'room', 'overtime', 'mileage', 'rental', 'hire', 'diem',
+  'hour', 'cost', 'costing', 'valuation', 'incoming', 'unit', // ERPNext, Harvest and energy tariffs (review round 21)
 ]);
 
 /** What "rate_per_..." can be priced by: "rate_per_hour" is a price; "rate_per_second" stays a rate. */
-export const PRICED_UNITS: ReadonlySet<string> = new Set(['hour', 'day', 'night', 'week', 'month', 'mile', 'km', 'unit', 'item', 'kg', 'lb', 'person', 'guest', 'visit', 'session']);
+export const PRICED_UNITS: ReadonlySet<string> = new Set(['hour', 'day', 'night', 'week', 'month', 'mile', 'km', 'unit', 'item', 'kg', 'lb', 'person', 'guest', 'visit', 'session', 'kwh', 'gb', 'litre', 'liter']);
 
 /** Words before "value" that make it what something is worth: "order_value", "cart_value". */
 export const VALUE_WORDS: ReadonlySet<string> = new Set([
@@ -134,8 +135,8 @@ export const OTHER_WORDS: ReadonlySet<string> = new Set([
 
 /**
  * Measures that a generic money word can start, beside the non-money last words: "total_co2" (co, 2),
- * "net_change", "credit_utilization", "principal_component_1". Whole words only: they are not used to
- * split folded names.
+ * "net_change", "credit_utilization", "principal_component_1". Since review round 20 they also split folded
+ * names ("totalflow" is total + flow).
  */
 export const GENERIC_MEASURE_WORDS: ReadonlySet<string> = new Set([
   'co', 'ghg', 'carbon', 'emissions', 'reps', 'carbs', 'protein', 'fat', 'sugar', 'latency', 'memory', 'cpu', 'ram', 'disk',
@@ -211,6 +212,7 @@ export const SCALE_WORDS: ReadonlySet<string> = new Set(['k', 'thousand', 'thous
 
 /**
  * Words only for splitting folded names: what an -ing name may start with ("marketingbudget", review round 18), and
- * "real" and "left" ("realtimebalance", "allowancedaysleft" as their snake_case forms, round 20).
+ * "real", "left" and "off" ("realtimebalance", "allowancedaysleft", "timeoffbalance" as their snake_case forms,
+ * rounds 20 and 21).
  */
-export const FOLDING_WORDS: ReadonlySet<string> = new Set(['marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding', 'real', 'left']);
+export const FOLDING_WORDS: ReadonlySet<string> = new Set(['marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding', 'real', 'left', 'off']);

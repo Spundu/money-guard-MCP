@@ -251,6 +251,15 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     // Review round 19: one entry saved as old Notepad saves it, BOM and no final LF, is not "cut off".
     const one = run(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(bytes(VALID).toString('utf8').split('\n')[0] ?? '')]));
     expect([one.break?.entry_index, one.summary.includes('cut off'), one.notes.some((n) => n.startsWith('The file starts with a byte order mark'))]).toEqual([0, false, true]);
+    // Round 21: a whole entry broken only by the BOM is not called whole beside "not valid JSON"; a BOM alone is no cut-off write.
+    expect(one.notes.some((n) => n.includes('the entry on it is whole'))).toBe(false);
+    expect(one.notes).toContain('The last line also lacks its line end (LF); it is not a cut-off write, as the line is whole without the byte order mark that breaks it.');
+    expect(run(Buffer.from([0xef, 0xbb, 0xbf])).summary.includes('cut off')).toBe(false);
+    // Round 21: a whole but tampered entry after a BOM is not called cut off either.
+    const line = bytes(VALID).toString('utf8').split('\n')[0] ?? '';
+    const tampered = run(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(line.replace(/"seq":0/, '"seq":7'))]));
+    expect(line).toContain('"seq":0');
+    expect(tampered.summary.includes('cut off')).toBe(false);
     // Review round 20: but a cut-off entry after a BOM is not called whole.
     const torn = run(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from((bytes(VALID).toString('utf8').split('\n')[0] ?? '').slice(0, 30))]));
     expect([torn.break?.entry_index, torn.notes.some((n) => n.includes('the entry on it is whole')), torn.notes.some((n) => n.startsWith('The file starts with a byte order mark'))]).toEqual([0, false, true]);

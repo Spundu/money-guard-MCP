@@ -31,6 +31,8 @@ function inRange(sign: '' | '-', digits: string): AmountResult {
 
 function fromText(text: string, format: AmountFormat, places: number): AmountResult {
   const sign = text.startsWith('-') ? '-' : '';
+  // "1,50" or "1,500": a decimal comma or a thousands separator, either way not what the tool reads (review round 21).
+  if (/^-?\d+(?:,\d+)+$/.test(text)) return { ok: false, problem: 'BAD_AMOUNT', why: 'has a comma, a decimal comma or a thousands separator: convert the file to plain amounts first' };
   if (format === 'minor_units') {
     if (INTEGER.test(text)) return inRange(sign, text.slice(sign.length));
     if (DECIMAL.test(text)) {

@@ -210,9 +210,13 @@ describe('money_check_double_entry: the rules', () => {
     // Round 19: "Valuta" beside a date is the value date, "Curr Bal" a balance; a plain currency word first.
     const ing = check('.csv', 'Buchung,Valuta,t,a,Währung\n2026-01-01,2026-01-02,T1,5,GBP\n2026-01-01,2026-01-03,T1,-5,EUR\n', { columns: { transaction_id: 't', amount: 'a' } });
     expect(ing.summary).toContain('"Währung" looks like a currency');
+    // Round 21: Waehrung in ASCII; a crypto exchange's asset or coin; ISO Code.
+    for (const name of ['Waehrung', 'asset', 'Coin', 'coin_symbol', 'ISO Code']) {
+      expect(check('.csv', `t,a,${name}\nT1,5,BTC\nT1,-5,USD\n`, { columns: { transaction_id: 't', amount: 'a' } }).summary, name).toContain(`"${name}" looks like a currency`);
+    }
     // Round 20: a plain "Valuta" comes after a currency name that is not plain.
     expect(check('.csv', 'id,amount,Valuta,Transaction Currency\nT1,5,x,GBP\nT1,-5,y,EUR\n', { columns: { transaction_id: 'id', amount: 'amount' } }).summary).toContain('"Transaction Currency" looks like a currency');
-    for (const name of ['curr_month', 'Curr Date', 'Data valuta', 'Curr Bal', 'Valuta Datum', 'Giorno valuta', 'Valuta Dt', 'Valuta Tag']) { // the last four: round 20
+    for (const name of ['curr_month', 'Curr Date', 'Data valuta', 'Curr Bal', 'Valuta Datum', 'Giorno valuta', 'Valuta Dt', 'Valuta Tag', 'Wertstellung (Valuta)', 'asset_id', 'coin_value']) { // round 20; the last three, round 21
       expect(check('.csv', `t,a,${name}\nT1,5,GBP\nT1,-5,EUR\n`, { columns: { transaction_id: 't', amount: 'a' } }).summary, name).not.toContain('looks like a currency');
     }
     const laterJson = check('.json', '[{"t":"T0","a":5},{"t":"T0","a":-5},{"t":"T1","a":10000,"ccy":"GBP"},{"t":"T1","a":-10000,"ccy":"EUR"}]', { columns });

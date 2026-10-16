@@ -74,7 +74,7 @@ internet and never touches a real database.
   most 100 more queue up and later ones are dropped. When the host closes the server's stderr, never
   reads it, or dies, the server keeps serving without it, and still exits when stdin closes: at once when
   nothing is left to do, or after 2 seconds. On Windows a log line still waiting for such a host would hold
-  `process.exit` for good, so the process then ends itself at once, with exit code 1 (review round 20).
+  `process.exit` for good, so after the 2 seconds the process ends itself, with exit code 1 (review round 20).
 - One bad call never kills the server. Every handler catches everything. An unexpected exception
   becomes `INTERNAL_ERROR` with no internal detail; the detail goes to stderr only. A lint database
   that cannot start (a broken install) is such an exception.
@@ -286,7 +286,7 @@ Shared error codes:
 
 | Code | When | Fix the message suggests |
 |---|---|---|
-| `ROOT_INVALID` | The root is missing, cannot be listed or entered (permission denied), is not a folder, or is a filesystem root. | Set `MONEY_GUARD_ROOT` to the project folder. |
+| `ROOT_INVALID` | The root is missing, cannot be listed or entered (permission denied), is not a folder, or is a filesystem root; or the setting is an unfilled placeholder, a drive letter alone (`C:`), or keeps the quotes around it. | Set `MONEY_GUARD_ROOT` to the project folder. |
 | `PATH_INVALID` | Empty, too long, NUL, a device/UNC path, or (on Windows) a colon anywhere but after a drive letter, which names an alternate data stream. | Pass a path relative to the project root. |
 | `PATH_OUTSIDE_ROOT` | Resolves outside the root (including through a symlink). | Use a path inside the project. On Windows, for a path that starts with one `/`, it adds that such a path begins at the root of the drive: Git Bash paths (`/c/Users/...`) are not understood. |
 | `PATH_NOT_FOUND` | Nothing at that path, or its links cannot be followed (a loop, or past the limits of §2.3 rule 2). | Names the nearest existing parent folder; for links, says to remove the loop or shorten the chain. |
@@ -540,15 +540,18 @@ word**, with these refinements:
 - **"per":** only the words before "per" count, because the rest says what the amount is for:
   `price_per_month` and `cost_per_hour` are money; `tax_rate_per_year` is not. A name that still
   ends in a ratio word (percent, percentage, pct, rate, ratio, bps, factor, multiplier, score, share,
-  split) is not money: `fee_per_txn_bps`, `commission_per_sale_pct`. A price per anything but a stay, a period or
+  split) is not money: `fee_per_txn_bps`, `commission_per_sale_pct`; but share right after per is what the price
+  is for (`price_per_share`, `dividend_per_share` are money). A price per anything but a stay, a period or
   a person is the price of one unit, which may be below a penny (§3.6); a price per night, nights, week, weeks,
   month, months, year, years, annum, quarter, person, guest, stay, visit, seat, seats, user, users, ticket, license,
   licence, order, employee, member, room, adult, child or student is an ordinary price (`price_per_seat`); one per
   hour or day is not, as cloud prices per hour are fractions of a penny.
 - **Rates that are prices:** "rate" after hourly, daily, nightly, night, weekly, pay, day, bill, billing,
-  labor, labour, room, overtime, mileage, rental, hire or diem is the price of an hour, a stay or a mile, so
+  labor, labour, room, overtime, mileage, rental, hire, diem, hour, cost, costing, valuation, incoming or unit is
+  the price of an hour, a stay, a mile or a unit (ERPNext's `valuation_rate`, an energy `unit_rate`), so
   money: `hourly_rate`, `room_rate`; so is "rate per" an hour, day, night, week, month, mile, km,
-  unit, item, kg, lb, person, guest, visit or session (`rate_per_hour`). Other rates (`tax_rate`,
+  unit, item, kg, lb, person, guest, visit, session, kwh, gb, litre or liter (`rate_per_hour`, `rate_per_kwh`).
+  Other rates (`tax_rate`,
   `exchange_rate`, `rate_per_second`) are not. "per diem" is a daily allowance, read as diem: `per_diem_rate` and
   `per_diem_amount` are money, not prices per something.
 - **"value"** after order, orders, cart, basket, invoice, contract, deal, transaction, purchase, sale,
@@ -583,8 +586,9 @@ word**, with these refinements:
   fees), but not one before it (`energy_cost_total` is a total of costs). Other
   generic words keep theirs: `usage_charge` is money.
 - **Folded names:** PostgreSQL folds unquoted names to lowercase, so `TotalAmount` arrives as
-  `totalamount`. Every word the rule does not know is first split into the words it knows (the money,
-  non-money, unit, currency, ratio, rate, value and beside lists, all in this section), in as few words as
+  `totalamount`. Every word the rule does not know is first split into the words it knows (every list in
+  this section, and marketing, listing, advertising, parking, packaging, training, funding, real, left or off,
+  words only for splitting), in as few words as
   it can be: `totaldiscount` is total + discount, `platformfee` platform + fee, `totalqty` total +
   qty, and a folded word inside a longer name too: `totalamount_old` is total + amount + old. The split
   name gets the answer its snake_case form gets, for the minor-unit words too (`amountminorunits`,
@@ -613,7 +617,7 @@ The word lists:
     penalties, pnl, cogs, shipping, tip, tips, pay, cashback, copay, copays, reimbursement,
     reimbursements, installment, installments, instalment, instalments, dividend, dividends, royalty,
     royalties, arrears, overdraft, overdrafts, payable, payables, receivable, receivables, spending,
-    contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, bal, bals,
+    contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, nav, bal, bals,
     deduction, deductions, markup, markups, gratuity, gratuities, duty, duties, excise, tariff, tariffs,
     brokerage, freight, toll, tolls, ltv, ebitda, severance, debt, debts
   - minor units of other currencies: paisa, kobo, sats, satoshi, satoshis, centavo, centavos, kopek,
@@ -651,10 +655,11 @@ The word lists:
     calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
     power, usage, capacity, speed, temperature, precision, scale, growth
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
-- **A balance, budget or allowance of something else** is not money: a count or measure word, or one
+- **A balance, budget or allowance of something else** is not money: a count or measure word (not unit,
+  units, margin or current, as for totals), "time off", or one
   of leave, holiday, holidays, pto, vacation, sick, error, baggage, luggage, mass, fluid, calorie,
   token, point, overtime, flexi, flexitime or toil, right before the last balance, budget or allowance in
-  the name, with no money word after it (`hours_balance`,
+  the name, with no money word after it (`hours_balance`, `time_off_balance`,
   `holiday_allowance`, `error_budget`, `leave_balance_remaining`, the folded `leavebalance`,
   `overtime_balance`), or one of hours, hrs, days, nights, weeks, months, years, minutes, mins,
   seconds, secs, tokens, points, leave, holiday, holidays, pto, vacation or sick after it
@@ -669,7 +674,8 @@ The word lists:
   is a guess (`data_budget`, `mileage_budget`: a mileage allowance is paid in pence per mile).
 - **A price of a measure unit** is money: price, cost or fee as the word before a last word of kg, g,
   mg, lb, km, mile, kwh, ml, litre, liter, gb or mb (`price_kg`, `cost_kwh`), with any unit or currency
-  words left out (`price_kwh_pence`, `cost_kwh_gbp`, `price_pence_kwh`), the price of one unit (§3.6).
+  words left out (`price_kwh_pence`, `cost_kwh_gbp`, `price_pence_kwh`), a number before the unit
+  (`price_100g`) and any three-letter word after it, a currency code (`price_kwh_aud`): the price of one unit (§3.6).
 - **Minor-unit words** (`fix_sql` only rounds; the word right after "per" does not count, as it says
   what the amount is for, as in `price_per_cent`, but a unit word after that does: `price_per_unit_cents`
   is in cents, and `cost_per_click_micros`, `price_per_unit_kwd` and `price_per_month_minor_units`,
@@ -692,7 +698,7 @@ The word lists:
   unit): micros, micro, millicents, millicent, mills, millis, gwei
 - **Scales** (`fix_sql` is `null`: `revenue_millions` holds millions of pounds, and ×100 would not give pence):
   k, thousand, thousands, mm, million, millions, bn, billion, billions, lakh, lakhs, crore, crores or
-  hundredths, and x100 (`amount_x100`).
+  hundredths, and x100 (`amount_x100`); folded too (`amountx100`, `salaryk`).
 - **Currencies with more than two decimals** (`fix_sql` is `null`: a dinar has 1,000 fils, so
   `amount_kwd` may hold dinars or fils, and neither takes ×100; crypto coins have 8 or 18): bhd, iqd,
   jod, kwd, lyd, omr, tnd, clf, uyw, btc, xbt, eth, sol, usdc, usdt, dai, ltc, xrp, ada, doge, bnb
@@ -818,7 +824,7 @@ shows it: the tool runs the new migration too.
 ### 3.7 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found). "N money columns in M tables" counts only the tables that hold a money column. When not every finding is listed (more than 50, or cut to fit 20,000 characters), it ends: "Not every finding is listed (findings_truncated): pass next_offset as offset for the next ones." On a later page with none after it: "These are findings 51-55 of 55, the last." ("This is finding 55 of 55, the last." for one; "No findings from offset 100: there are 55." past the end; nothing when there are no findings). |
+| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found; past 30, "(other_float_columns, the first 30 listed)", as no parameter pages through the rest). "N money columns in M tables" counts only the tables that hold a money column. When not every finding is listed (more than 50, or cut to fit 20,000 characters), it ends: "Not every finding is listed (findings_truncated): pass next_offset as offset for the next ones." On a later page with none after it: "These are findings 51-55 of 55, the last." ("This is finding 55 of 55, the last." for one; "No findings from offset 100: there are 55." past the end; nothing when there are no findings). |
 | `migrations` | string | The path as given, normalised. |
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
@@ -851,11 +857,11 @@ shows it: the tool runs the new migration too.
 |---|---|---|
 | `MIGRATION_FAILED` | A migration file fails, is not UTF-8, leaves the database unusable or silent, or ends inside a transaction it opened (BEGIN with no COMMIT: the files after it would run inside it); or the catalog cannot be read after the last file (§3.4). | The file; the line and column where Postgres gives a `position` (a syntax error does, and often an unknown name or schema; a missing role, a duplicate table and most other errors do not), counted in characters; the SQLSTATE and the Postgres message, in quotes, a quote inside it escaped (≤ 300 characters; it can quote the migration's own text, as RAISE EXCEPTION writes any, so it can never add a "Fix:" of its own). It adds a targeted hint by SQLSTATE. |
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
-| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Check that migrations points at the folder of migrations. Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
+| `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Check that migrations points at the folder of migrations. Migrations written as code (Knex, TypeORM, Django, Alembic) need SQL first: their tool's SQL output (prisma migrate diff --script, drizzle-kit generate, alembic upgrade head --sql, python manage.py sqlmigrate <app> <migration> for each one), or pg_dump --schema-only of a database they built."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, more than 10,000 files and folders to look through for them (listing them blocks the server), or folders (or links to folders) nested more than 100 deep. | Points at the folder of migrations, or `files`; for more than 2,000 files, which `files` cannot hold either, at one schema-only dump (`pg_dump --schema-only`). |
 | `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, names a file another entry names too, or `files` is given with a single `.sql` file. | For an entry that starts with the migrations folder (written from the project root), the fix says to leave out that leading folder, when the rest of the entry is a migration in the folder (looked up as any path argument is, so a path outside the project is never touched); otherwise it says to check the spelling. |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
-| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: pass a larger `timeout_seconds`, or lint one schema-only dump of the database they build; linting the files in groups would fail, as each group needs the ones before it; while the catalog was read, after every file had run: none of these), and that a limit over 60 seconds helps only with a client that waits longer than that. |
+| `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy, or pass a larger `timeout_seconds`, as a large schema dump can take tens of seconds (5,000 tables: about 38 s); a folder of 300 files or more: pass a larger `timeout_seconds`, or lint one schema-only dump of the database they build; linting the files in groups would fail, as each group needs the ones before it; while the catalog was read, after every file had run: none of these), and that a limit over 60 seconds helps only with a client that waits longer than that. |
 
 The `MIGRATION_FAILED` hints by SQLSTATE:
 - **42704** (an object does not exist), **3F000** (no such schema), **42P01** (no such table) and
@@ -912,8 +918,10 @@ ROLE ..., CREATE SCHEMA ...).`
 ### 3.9 Limits
 - At most 2,000 files, found among at most 10,000 files and folders, at most 100 folders deep. Each file costs a little more as
   the schema grows: on the author's laptop, 1,000 files of one table each took about 10 s, and 2,000
-  took 26-38 s, close to the default time limit; for a folder that large, pass a larger
-  `timeout_seconds` (the `TIMEOUT` advice says so) or lint one schema-only dump.
+  took 26-38 s, close to the default time limit; files shaped like pg_dump output (a table, a sequence, a key, an
+  index and a comment each) reached the 45 s limit at about 1,600 files (review round 21). For a folder that large, pass
+  a larger `timeout_seconds` (the `TIMEOUT` advice says so) or lint one schema-only dump; one dump of 5,000 tables
+  took about 38 s, so a large one may need a larger `timeout_seconds` too.
 - Each file at most 5 MiB; all files together at most 20 MiB.
 - A default, CHECK or index expression is read up to 2,000 characters for `fix_sql` (§3.6), each
   distinct text once, at most 50 of each kind for a column, and at most 1,000,000 characters in one
@@ -1107,7 +1115,8 @@ Those functions throw at the first problem. This tool returns **every** problem.
   - A JSON number is read from its exact text, at any length and with any exponent: `1.234e1` is
     `1234`, and `12.340000000000000001` has more than 2 decimal places.
 - **Refused as `BAD_AMOUNT` in text values:** thousands separators, currency symbols, `+`, brackets
-  and exponents (the value is shown, ≤ 40 characters). Empty text and `null` are `MISSING_VALUE`.
+  and exponents (the value is shown, ≤ 40 characters). Digits with commas (`1,50`, `1,500`) are said to hold
+  a decimal comma or a thousands separator, to be converted to plain amounts first. Empty text and `null` are `MISSING_VALUE`.
 - A JSON number is judged by its exact value: `1000`, `1000.0` and `1e3` are the same amount, and
   `4503599627370496.5` is not whole.
 - **Range:** every amount must fit ±(2^53 − 1) minor units (`AMOUNT_TOO_LARGE`). More than 20 whole
@@ -1156,7 +1165,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung, Devise, Moneda, Divisa, Valuta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`, nor Valuta beside a date word, which is the value date: `Data valuta`), or cur alone or before code, unless it also holds amount, amounts, balance, balances, bal, bals, debit, credit, total, price, fee, value, values, period, rate, rates, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name with Valuta is named only when no other name looks like one (ING Germany's "Valuta" is a date, beside "Währung"), and the order below applies within each group; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung (or Waehrung), Devise, Moneda, Divisa, Valuta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`, nor Valuta beside a date word, date, data, datum, dt, tag, giorno or Wertstellung, which is the value date: `Data valuta`, `Wertstellung (Valuta)`), or cur alone or before code, or asset or coin alone or before code or symbol (a crypto exchange's, not `asset_id`), or "ISO Code", unless it also holds amount, amounts, balance, balances, bal, bals, debit, credit, total, price, fee, value, values, period, rate, rates, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name with Valuta is named only when no other name looks like one (ING Germany's "Valuta" is a date, beside "Währung"), and the order below applies within each group; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` In a CSV, when a mapped column is named like a value (`999`, `-12.50`), it adds: `The mapped column "999" is named like a value: if the file has no header line, its first row was read as the column names, and was not checked.` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -1171,7 +1180,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 | Code | When |
 |---|---|
 | `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields, a row of more than 1 MiB of values or more than 10,000 fields) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). When the CSV header holds none of the delimiter but another one, the fix names it: "The header looks separated by ";", not ",": pass delimiter ";"." |
-| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match (≤ 200 characters, so a long name can be mapped). When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). |
+| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match (≤ 200 characters, so a long name can be mapped). When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). When a header cell is written like a value (`999`, `-12.50`), the file may have no header line: the message adds `The first line holds "999", written like a value: the first line is always read as the column names, so a file without a header line loses its first row.`, and the fix says to add a header line if there is none (a real header may name a column "2023", so the closest match is kept). |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. Says which fields clash ("amount cannot be mapped with debit.", "debit needs credit too."). |
 | `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. `an object with keys "data", "meta"` (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"), if it can be passed back as shown: at most 200 characters, with no character `records_pointer` refuses, and no backslash or double quote (which quotes show escaped). |
@@ -1320,7 +1329,7 @@ mapped.
 | `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). When only the final LF is missing, the anchor is compared with the log with that LF restored: true when it matches, with the note "The anchor matches the log once the line end after its last entry is restored." if it covers the last entry. |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix; one that starts with a byte order mark gets a note that an editor may have added it (and its first line is not read as cut off when it also lacks its final LF, as old Notepad saves a one-entry log, if the line reads as a whole entry without the mark). When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix; one that starts with a byte order mark gets a note that an editor may have added it (and its first line is not read as cut off when it also lacks its final LF, as old Notepad saves a one-entry log, if the line reads as a whole entry without the mark, or the file holds only the mark; the note then says the mark breaks the line rather than calling the entry whole). When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |

@@ -14,6 +14,9 @@ import { isInside, leadsTo, MAX_LINK_HOPS, MAX_LINK_PARTS, type LinkWalk } from 
 
 export { isInside, leadsTo, newLinkWalk, type LinkWalk } from './links.js';
 
+/** What to do with migrations written as code, in the fixes that meet them (the README gives the same routes; review round 21). */
+export const SQL_FIRST = "Migrations written as code (Knex, TypeORM, Django, Alembic) need SQL first: their tool's SQL output (prisma migrate diff --script, drizzle-kit generate, alembic upgrade head --sql, python manage.py sqlmigrate <app> <migration> for each one), or pg_dump --schema-only of a database they built.";
+
 /** The project folder, already resolved to its real path (config.ts). */
 export interface Root {
   /** Absolute real path. Never shown in a result or an error. */
@@ -162,7 +165,7 @@ function checkExtension(root: Root, input: string, rel: string, rule: PathRule):
       'FILE_TYPE_NOT_ALLOWED',
       `${shown(input)} is not one of the file types this tool reads.`,
       code
-        ? `Pass a folder of .sql migrations, or one .sql file, inside the project folder "${root.name}". Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.`
+        ? `Pass a folder of .sql migrations, or one .sql file, inside the project folder "${root.name}". ${SQL_FIRST}`
         : `Pass a file ending in ${extensions.join(', ')} inside the project folder "${root.name}".`,
     );
   }

@@ -2,6 +2,7 @@
 // and a call that would read too many parts of links gets an answer instead of holding the server. Review
 // round 20: a chain of 60 junctions held the server 63 s for 2,000 entries of files, and 5 s for a walk
 // of 200 links into it, outside every time limit (the paths are checked before the database starts).
+// Limits: with each link remembered these take about 1-2 s; without, 17-37 s (review round 21: 3 s failed under load).
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { createMcpHandler } from '@modelcontextprotocol/server';
@@ -51,7 +52,7 @@ describe('a chain of links', () => {
       text = err instanceof ToolError ? err.toText() : String(err);
     }
     expect(text).toMatch(/ is named twice in files: /); // every entry is followed to the same file first
-    expect(performance.now() - started).toBeLessThan(3000);
+    expect(performance.now() - started).toBeLessThan(15_000);
   });
 
   it('is followed once a call through the server too, which gives each call its own memory of links', async (ctx) => {
@@ -64,19 +65,36 @@ describe('a chain of links', () => {
       const started = performance.now();
       const r = await client.callTool({ name: 'money_lint_schema', arguments: { migrations: 'db/migrations', files: Array.from({ length: 2000 }, () => 'c/x.sql') } });
       expect((r.content as Array<{ text?: string }>).map((c) => c.text ?? '').join('')).toMatch(/ is named twice in files: /);
-      expect(performance.now() - started).toBeLessThan(3000);
+      expect(performance.now() - started).toBeLessThan(15_000);
     } finally {
       await client.close();
       await handler.close();
     }
   });
 
-  it('is followed once for a walk of 200 links into it', (ctx) => {
-    const dir = chained(200);
+  it('is followed once for a walk of 1,000 links into it', (ctx) => {
+    const dir = chained(1000);
     if (dir === undefined) return ctx.skip();
     const started = performance.now();
-    codeOf(() => collectSources({ ...rootOf(dir), links: newLinkWalk() }, { migrations: 'db/migrations' }));
-    expect(performance.now() - started).toBeLessThan(3000);
+    expect(codeOf(() => collectSources({ ...rootOf(dir), links: newLinkWalk() }, { migrations: 'db/migrations' }))).toBe('no error'); // round 21: the answer too
+    expect(performance.now() - started).toBeLessThan(8000);
+  });
+
+  it('gives a path the same answer whatever paths the call looked at before it', (ctx) => {
+    // Review round 21: met first through other links, past the limit, the chain was remembered as "too many
+    // links", and a path that met it directly got that answer too. A1 … A(PREFIX) lead to the chain's start.
+    const PREFIX = process.platform === 'win32' ? 10 : 40;
+    const dir = chained(0);
+    if (dir === undefined) return ctx.skip();
+    for (let i = PREFIX; i >= 1; i -= 1) {
+      const to = i === PREFIX ? path.join(dir, 'db', 'chain', 'J1') : path.join(dir, 'db', 'chain', `A${i + 1}`);
+      if (!trySymlink(to, path.join(dir, 'db', 'chain', `A${i}`), 'dir')) return ctx.skip();
+    }
+    const rule = { kind: 'file', extensions: ['.sql'] } as const;
+    const root = { ...rootOf(dir), links: newLinkWalk() };
+    expect(codeOf(() => resolveInRoot(root, 'db/chain/A1/x.sql', rule))).toBe('PATH_NOT_FOUND'); // CHAIN + PREFIX links one inside another
+    expect(codeOf(() => resolveInRoot(root, 'db/chain/J1/x.sql', rule))).toBe('no error');
+    expect(codeOf(() => resolveInRoot({ ...rootOf(dir), links: newLinkWalk() }, 'db/chain/J1/x.sql', rule))).toBe('no error'); // as alone
   });
 
   // Relative link texts: Windows junctions hold only absolute ones.

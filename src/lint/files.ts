@@ -7,7 +7,7 @@ import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { quoted, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
-import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, leadsTo, readChecked, resolveInRoot, tooManyLinks, toPosix, unreadable, type Root } from '../paths.js';
+import { deniedOrLocked, formatMib, formatSize, isInside, isSensitive, leadsTo, readChecked, resolveInRoot, SQL_FIRST, tooManyLinks, toPosix, unreadable, type Root } from '../paths.js';
 
 export const MAX_FILES = 2000;
 
@@ -346,7 +346,7 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
       throw new ToolError('NO_SQL_FILES', `${folder} holds no migrations to run: ${left.join('; ')}.`, seen.down > 0 ? 'Point migrations at the folder of up migrations, or pass files with the ones to run.' : SETUP_ONLY_FIX);
     }
     if (found.length === 0) {
-      throw new ToolError('NO_SQL_FILES', `${folder} holds no .sql files. ${describeOtherFiles(seen)}`, 'Check that migrations points at the folder of migrations. Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only.');
+      throw new ToolError('NO_SQL_FILES', `${folder} holds no .sql files. ${describeOtherFiles(seen)}`, `Check that migrations points at the folder of migrations. ${SQL_FIRST}`);
     }
     found.sort(naturalCompare);
     chosen = found.map((rel) => {

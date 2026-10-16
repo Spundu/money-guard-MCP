@@ -280,7 +280,8 @@ function summarise(c: Counts): string {
   }
   // Float columns the name rule did not take for money are where money it misses would be: say so
   // wherever the summary would otherwise read as all clear.
-  const floatsNote = c.floats > 0 ? ` ${plural(c.floats, c.money > 0 ? 'other float column' : 'float column')} (other_float_columns): check that none holds money.` : '';
+  // Round 21: past 30, say which are listed: no parameter pages through the rest.
+  const floatsNote = c.floats > 0 ? ` ${plural(c.floats, c.money > 0 ? 'other float column' : 'float column')} (other_float_columns${c.floats > MAX_LISTED ? `, the first ${MAX_LISTED} listed` : ''}): check that none holds money.` : '';
   if (c.problems > 0) {
     return `${plural(c.problems, 'problem')} in ${plural(c.problems, 'money column')} (${plural(c.errors, 'error')}, ${plural(c.warnings, 'warning')}). ${applied}${ignoredNote}${otherNote}${floatsNote}`;
   }

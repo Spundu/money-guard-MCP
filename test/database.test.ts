@@ -324,6 +324,8 @@ describe('runScripts with a database that misbehaves', () => {
     // Review round 8: every file had run, so data loading is not what took the time.
     expect(await fixOf('reading', 3000)).toBe('timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.');
     expect(await fixOf('unusable')).toBe('Lint a copy without that statement.');
+    // Review round 21: a schema-only dump is told to take more time, not only to be made schema-only.
+    expect(await fixOf('hang', 2000)).toBe('If the file loads data, lint a schema-only copy (pg_dump --schema-only); a large schema dump can take tens of seconds, so pass a larger timeout_seconds. timeout_seconds may be up to 300, but a limit over 60 seconds helps only with a client that waits longer than that for an answer.');
     expect(await fixOf('crash')).toBe('Lint parts of the file on their own to find the statement that stops the database.');
     expect(await fixOf('reading-crash')).toBe("Lint parts of the file on their own to find the statement that breaks the read (one that replaces PostgreSQL's own functions, say).");
   });

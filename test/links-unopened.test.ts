@@ -47,4 +47,12 @@ describe('a link out of the project, or a loop', () => {
     expect([through(path.join(p, 'door')), through(path.join(p, 'db', 'sub')), through(path.join(p, 'loops', 'a'))]).toEqual([[], [], []]);
     expect(seen.paths.length).toBeGreaterThan(0); // realpath was watched: the folder itself was opened
   });
+
+  it.skipIf(process.platform === 'win32')('keeps the rest of a link text past a missing part, so ".." can still lead out', () => {
+    // Review round 21: "missing/../../out" from the project leads out; cut at the missing part, it read as inside.
+    const base = tempDir();
+    writeTree(base, { 'p/keep.txt': '', 'out/x.sql': 'select 1;' });
+    trySymlink('missing/../../out', path.join(base, 'p', 'bent'), 'dir');
+    expect(codeOf(() => resolveInRoot(rootOf(path.join(base, 'p')), 'bent/x.sql', { kind: 'file', extensions: ['.sql'] }))).toBe('PATH_OUTSIDE_ROOT');
+  });
 });

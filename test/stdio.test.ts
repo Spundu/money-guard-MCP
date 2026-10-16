@@ -3,7 +3,7 @@
 // when a migration raises NOTICEs and WARNINGs.
 
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -11,7 +11,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import { describe, expect, it, vi } from 'vitest';
 import { FIXTURE_KEY_HEX, SHOP } from '../scripts/fixtures.mjs';
-import { tempDir, writeTree } from './support/tmp.js';
+import { tempDir, trySymlink, writeTree } from './support/tmp.js';
 
 const REPO = path.resolve(import.meta.dirname, '..');
 // What ships: test/support/build.ts builds it from the current source before the tests run.
@@ -190,6 +190,30 @@ describe('the stdio process', () => {
       child.kill();
     }
   }, 300_000);
+
+  it('reads the links afresh in each call: one process serves them all', async (ctx) => {
+    // Review round 21: one memory of links for the whole server would keep a link's old answer after it moved
+    // (and add up the parts read across calls, until every linked path was "too many links").
+    const base = tempDir();
+    writeTree(base, { 'p/inside/j.csv': 'id,a\nT1,5\nT1,-5\n', 'out/j.csv': 'id,a\nT1,5\nT1,-5\n' });
+    const door = path.join(base, 'p', 'door');
+    if (!trySymlink(path.join(base, 'out'), door, 'dir')) return ctx.skip();
+    const p = path.join(base, 'p');
+    const client = await connect('legacy', { MONEY_GUARD_ROOT: p });
+    const call = async () => ((await client.callTool({ name: 'money_check_double_entry', arguments: { file: 'door/j.csv', columns: { transaction_id: 'id', amount: 'a' } } })).content as Array<{ text?: string }>).map((c) => c.text ?? '').join('');
+    try {
+      expect(await call()).toMatch(/^PATH_OUTSIDE_ROOT: /);
+      try {
+        unlinkSync(door);
+      } catch {
+        rmdirSync(door); // a Windows junction
+      }
+      expect(trySymlink(path.join(p, 'inside'), door, 'dir')).toBe(true);
+      expect(await call()).toContain('"rows_read":2');
+    } finally {
+      await client.close();
+    }
+  });
 
   it('does not run a call the client cancelled before it ran, logs it CANCELLED, and sends no answer for it', async () => {
     // A million rows take seconds to check; cancelled before it ran, the call is not run at all.

@@ -48,6 +48,8 @@ function resolveRoot(env: Env, cwd: string): Setting<Root> {
   const invalid = (why: string) => ({ ok: false as const, error: new ToolError('ROOT_INVALID', `The project root (from ${source}) ${why}.`, fix) });
   // Fail closed: a broken setting must not quietly widen or move what the tools can read.
   if (PLACEHOLDER.test(value)) return invalid(`is ${quoted(value, 80)}, a placeholder the MCP host did not fill in`);
+  // Quotes kept around the value, as for the keys (review round 21: it read as "does not exist").
+  if (/^["']|["']$/.test(value)) return invalid('starts or ends with a quote mark: the quotes around the value were kept as part of it; remove them');
   // "C:" or "C:folder" means the current folder of drive C on Windows, wherever that is (review round 10).
   if (/^[A-Za-z]:(?![\\/])/.test(value)) return invalid(`is ${quoted(value, 80)}, a drive letter without a backslash after it, which means whatever folder is current on that drive`);
 
@@ -134,7 +136,9 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
     // Errors name pairs by position only: if the setting is malformed, the text before "=" may be key
     // material (a key written where the id belongs), so no part of a pair is ever repeated.
     if (Object.hasOwn(keys, id)) return invalid(`pair ${n} repeats the id of pair ${ids.indexOf(id) + 1}`);
-    if (!HEX.test(hex) || hex.length % 2 !== 0) return invalid(`pair ${n} has a key that is not an even number of hex digits`);
+    // Said apart (review round 21): a semicolon between pairs or an 0x reads as a key that is not hex at all.
+    if (!HEX.test(hex)) return invalid(`pair ${n} has a key that is not hex digits only (0-9, a-f; no 0x; pairs separated by commas)`);
+    if (hex.length % 2 !== 0) return invalid(`pair ${n} has a key with an odd number of hex digits`);
     if (hex.length < MIN_KEY_BYTES * 2) return invalid(`pair ${n} has a key shorter than ${MIN_KEY_BYTES} bytes (${MIN_KEY_BYTES * 2} hex digits)`);
     keys[id] = Buffer.from(hex, 'hex');
     ids.push(id);

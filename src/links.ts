@@ -39,18 +39,25 @@ export function leadsTo(p: string, within?: string, walk: LinkWalk = newLinkWalk
  * link texts the system will have read to open them (realpath reads every link on a path again, each time).
  * Review round 20: a chain of 60 junctions held the server 63 s for 2,000 entries of files, and on Linux
  * realpath took 62 ms for each path through 30 links of "a/../" × 800; past MAX_LINK_PARTS the answer is
- * "too many links".
+ * "too many links". What a path is on disk is kept apart from where a link leads, which is kept for the depth it
+ * was followed at: a link first met deep inside others must not give its "too many links" to a path that meets
+ * it directly (review round 21: the answer depended on the order of the paths).
  */
 export interface LinkWalk {
-  follows: Map<string, Leads | 'following'>;
+  /** Each path looked at: a link's text, or "plain" (not a link), or "missing". */
+  kinds: Map<string, string | Kind>;
+  /** Where a link leads, by the depth it was followed at and its path. */
+  follows: Map<string, Leads>;
   parts: number;
 }
+
+type Kind = { plain: true } | { missing: true };
 
 /** Most parts of link texts one call has the system read: far above any project's, about 2.6 s of Linux's realpath. */
 export const MAX_LINK_PARTS = 2_000_000;
 
 export function newLinkWalk(): LinkWalk {
-  return { follows: new Map(), parts: 0 };
+  return { kinds: new Map(), follows: new Map(), parts: 0 };
 }
 
 /**
@@ -88,29 +95,36 @@ function walkParts(from: string, parts: readonly string[], within: string | unde
   return { at: resolved, ended: false, cost };
 }
 
-/** Where `next` (whose folder is already followed) leads: itself, or where its link leads. Remembered for the call. */
-function follow(next: string, within: string | undefined, walk: LinkWalk, hops: number): Leads {
-  const known = walk.follows.get(next);
-  if (known === 'following') return null; // a loop: it leads through itself
+/** What `next` is on disk: a link's text, plain, or missing. Read once per call. */
+function kindOf(next: string, walk: LinkWalk): string | Kind {
+  const known = walk.kinds.get(next);
   if (known !== undefined) return known;
-  let link: string;
+  let kind: string | Kind;
   try {
-    if (!lstatSync(next).isSymbolicLink()) {
-      walk.follows.set(next, { at: next, ended: false, cost: 0 });
-      return { at: next, ended: false, cost: 0 };
-    }
-    link = readlinkSync(next).replace(/^\\\\\?\\/, ''); // a Windows junction's target may start with \\?\
+    kind = lstatSync(next).isSymbolicLink() ? readlinkSync(next).replace(/^\\\\\?\\/, '') : { plain: true }; // a Windows junction's target may start with \\?\
   } catch {
-    walk.follows.set(next, { at: next, ended: true, cost: 0 }); // missing: the rest is as written
-    return { at: next, ended: true, cost: 0 };
+    kind = { missing: true };
   }
+  walk.kinds.set(next, kind);
+  return kind;
+}
+
+/**
+ * Where `next` (whose folder is already followed) leads at this depth: itself, or where its link leads. A loop
+ * ends at MAX_LINK_HOPS, as each link in it is one deeper. Remembered for the call, by depth and path.
+ */
+function follow(next: string, within: string | undefined, walk: LinkWalk, hops: number): Leads {
+  const link = kindOf(next, walk);
+  if (typeof link !== 'string') return { at: next, ended: 'missing' in link, cost: 0 }; // missing: the rest is as written
   if (hops >= MAX_LINK_HOPS) return null;
-  walk.follows.set(next, 'following');
+  const key = `${hops}\0${next}`;
+  const known = walk.follows.get(key);
+  if (known !== undefined) return known;
   // An absolute target starts again from its root; a relative one from the folder that holds the link.
   const top = path.isAbsolute(link) ? path.parse(link).root : path.dirname(next);
   const parts = splitLink(path.isAbsolute(link) ? link.slice(top.length) : link);
   const inner = walkParts(top, parts, within, walk, hops + 1);
   const led = inner === null ? null : { ...inner, cost: inner.cost + parts.length };
-  walk.follows.set(next, led);
+  walk.follows.set(key, led);
   return led;
 }

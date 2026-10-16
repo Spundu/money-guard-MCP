@@ -71,11 +71,33 @@ describe('the rarer forms of an answer', () => {
     // the first row (T1, 999: unbalanced) was read as the header and the file came back balanced.
     const csv = 'T1,999,GBP\nT2,50,GBP\nT2,-50,GBP\n';
     const e = errorText(() => check('.csv', csv, { columns: { transaction_id: 'id', amount: 'amt' } }));
-    expect(e).toContain('The first line looks like data ("999"), not a header: the first line is always read as the column names.');
+    expect(e).toContain(' The first line holds "999", written like a value: the first line is always read as the column names, so a file without a header line loses its first row.');
     expect(e).not.toContain('Did you mean');
-    expect(e).toMatch(/Fix: Add a first line that names the columns, then map each field to one of those names\.$/);
+    expect(e).toMatch(/Fix: Map each field to one of the column names in the header; if the file has no header line, add one that names the columns first\.$/);
+    // Round 21: a real header may name a column "2023"; the closest match is kept.
+    expect(errorText(() => check('.csv', 'id,amount,2023\nT1,5,1\nT1,-5,1\n', { columns: { transaction_id: 'id', amount: 'amout' } }))).toContain('Did you mean "amount"?');
     expect(check('.csv', csv, { columns: { transaction_id: 'T1', amount: '999' } }).summary).toContain(' The mapped column "999" is named like a value: if the file has no header line, its first row was read as the column names, and was not checked.');
     expect(check('.csv', 'id,amount\nT1,5\nT1,-5\n', { columns: { transaction_id: 'id', amount: 'amount' } }).summary).not.toContain('named like a value');
+  });
+
+  it('says an amount with a comma needs converting, whatever the format', () => {
+    // Review round 21: "1,50" was only "not a decimal amount such as 12.34".
+    for (const amount_format of ['decimal', 'minor_units'] as const) {
+      const r = check('.csv', 't;a\nT1;1,50\nT1;-1,50\n', { columns: { transaction_id: 't', amount: 'a' }, delimiter: ';', amount_format });
+      expect(r.findings[0]?.message, amount_format).toContain('has a comma, a decimal comma or a thousands separator: convert the file to plain amounts first');
+    }
+  });
+
+  it('reads every header cell for one written like a value, and only whole values', () => {
+    const e = (csv: string, columns: Record<string, string>, extra: Record<string, unknown> = {}) => errorText(() => check('.csv', csv, { columns: { transaction_id: 'id', amount: 'amount', ...columns }, ...extra }));
+    expect(e('2024,abc,def\n1,2,3\n', {})).toContain('The first line holds "2024", written like a value'); // the first cell too
+    expect(e('id,1st payment\nT1,5\n', {})).not.toContain('written like a value'); // "1st payment" is a name
+    // With another delimiter likelier, the delimiter fix, and no data note's fix.
+    expect(e('100;T1;GBP\n', {})).toMatch(/Fix: The file looks separated by ";", not ",": pass delimiter ";"\.$/);
+    // "1,50" read with ";" is both written like a value and separated by ",": the delimiter fix comes first.
+    expect(e('1,50\n2,50\n', {}, { delimiter: ';' })).toMatch(/Fix: The file looks separated by ",", not ";": pass delimiter ","\.$/);
+    // JSONL keys named like values get no header hint: JSON has no header line.
+    expect(check('.jsonl', '{"999":"T1","5":5}\n{"999":"T1","5":-5}\n', { columns: { transaction_id: '999', amount: '5' } }).summary).not.toContain('named like a value');
   });
 
   it('suggests no name as far from the one asked for as its whole length', () => {
@@ -99,6 +121,6 @@ describe('the rarer forms of an answer', () => {
   it('gives the advice for code to a Python migration as to a TypeScript one', () => {
     const dir = tempDir();
     writeTree(dir, { 'mig/0001_init.py': 'pass' });
-    expect(errorText(() => collectSources(rootOf(dir), { migrations: 'mig/0001_init.py' }))).toMatch(/^FILE_TYPE_NOT_ALLOWED: .* Migrations written as code \(Knex, TypeORM\) need SQL first/);
+    expect(errorText(() => collectSources(rootOf(dir), { migrations: 'mig/0001_init.py' }))).toMatch(/^FILE_TYPE_NOT_ALLOWED: .* Migrations written as code \(Knex, TypeORM, Django, Alembic\) need SQL first/);
   });
 });

@@ -287,6 +287,20 @@ describe('money_lint_schema: safety', () => {
     }
   });
 
+  it('keeps what a migration writes inside the database, and loads no code from it', async () => {
+    // Review round 21: COPY ... TO writes only to PGlite's in-memory files; a module written there cannot
+    // be loaded, nor made a C function, and a path on this machine is never written.
+    const target = path.join(tempDir(), 'written.txt').replaceAll('\\', '/');
+    for (const sql of [
+      `copy (select 'x') to '/tmp/m.so';\nload '/tmp/m.so';`,
+      `copy (select 'x') to '/tmp/m.so';\ncreate function g() returns int as '/tmp/m.so', 'g' language c;`,
+      `copy (select 'x') to '${target}';`,
+    ]) {
+      expect((await failure({ 'db/migrations/0001.sql': sql })).code, sql).toBe('MIGRATION_FAILED');
+    }
+    expect(existsSync(target)).toBe(false);
+  });
+
   it('runs no program for COPY ... PROGRAM, and reports the statement, which leaves the database unusable, against its file', async () => {
     // The program would write a marker file with this very Node.js, on any system.
     const marker = path.join(tempDir(), 'program-ran').replaceAll('\\', '/');

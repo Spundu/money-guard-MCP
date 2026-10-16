@@ -27,7 +27,7 @@ describe('money_lint_schema: entries of files and file types', () => {
     expect(['db/migrations/../../../outside.sql', `db/migrations/${path.join(dir, 'outside.sql').replaceAll('\\', '/')}`].map(out).filter((f) => f.includes('leave out'))).toEqual([]);
     writeTree(dir, { 'db/migrations/0003_init.ts': 'export {}' });
     const ts = (() => { try { collectSources(rootOf(dir), { migrations: 'db/migrations/0003_init.ts' }); } catch (err) { return (err as { fix: string }).fix; } return ''; })();
-    expect(ts).toMatch(/^Pass a folder of \.sql migrations, or one \.sql file, .* Migrations written as code \(Knex, TypeORM\) need SQL first/);
+    expect(ts).toMatch(/^Pass a folder of \.sql migrations, or one \.sql file, .* Migrations written as code \(Knex, TypeORM, Django, Alembic\) need SQL first/);
   });
 
   it('gives the advice for code to migrations only, and names a files entry as it was written', () => {
@@ -35,7 +35,7 @@ describe('money_lint_schema: entries of files and file types', () => {
     const dir = tempDir();
     writeTree(dir, { 'mig/0001.sql': 'select 1;', 'mig/0002.ts': 'export {}', 'seed.ts': 'export {}' });
     const failed = (args: { migrations: string; setup?: string; files?: string[] }) => { try { collectSources(rootOf(dir), args); } catch (err) { return (err as { toText(): string }).toText(); } return ''; };
-    expect(failed({ migrations: 'mig/0002.ts' })).toMatch(/^FILE_TYPE_NOT_ALLOWED: .* Migrations written as code \(Knex, TypeORM\) need SQL first/);
+    expect(failed({ migrations: 'mig/0002.ts' })).toMatch(/^FILE_TYPE_NOT_ALLOWED: .* Migrations written as code \(Knex, TypeORM, Django, Alembic\) need SQL first/);
     expect(failed({ migrations: 'mig', setup: 'seed.ts' })).toBe('FILE_TYPE_NOT_ALLOWED: "seed.ts" is not one of the file types this tool reads. Fix: Pass a file ending in .sql inside the project folder "' + rootOf(dir).name + '".');
     expect(failed({ migrations: 'mig', files: ['0001.sql', '0002.ts'] })).toBe('FILE_TYPE_NOT_ALLOWED: "0002.ts" in files is not a .sql file. Fix: Leave it out of files: only .sql migrations run.');
   });

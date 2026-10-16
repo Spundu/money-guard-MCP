@@ -152,7 +152,8 @@ function judgeWords(all: readonly string[]): Verdict {
   // "debit_in_account_currency": the debit is the column; the rest says which currency it is in.
   const inAt = all.indexOf('in');
   if ((end === 'currency' || end === 'ccy') && inAt > 0) return judgeWords(all.slice(0, inAt));
-  if (RATIO_WORDS.has(end) && all.includes('per')) return 'not'; // "fee_per_txn_bps": a ratio
+  // "fee_per_txn_bps": a ratio; but "price_per_share": one share is what the price is for (review round 21).
+  if (RATIO_WORDS.has(end) && all.includes('per') && !(/^shares?$/.test(end) && all.at(-2) === 'per')) return 'not';
   if (end === 'rate' && PAY_RATE_WORDS.has(all.at(-2) ?? '')) return 'money'; // "hourly_rate": a price of time
   const per = all.indexOf('per');
   if (per === 1 && all[0] === 'rate' && PRICED_UNITS.has(all[2] ?? '')) return 'money'; // "rate_per_hour": a price
@@ -174,7 +175,9 @@ function judgeWords(all: readonly string[]): Verdict {
   const held = ws.map((w) => /^(?:balance|budget|allowance|bal)s?$/.test(w)).lastIndexOf(true);
   if (held >= 0 && !ws.slice(held + 1).some((w) => MONEY_WORDS.has(w))) {
     const budget = /^budgets?$/.test(ws[held] ?? '');
-    const holds = (words: ReadonlySet<string>) => held > 0 && words.has(ws[held - 1] ?? '') && !partOfMoney(ws, held - 1);
+    // "time off" is leave, as pto is (review round 21: time_off_balance, in hours, got x100).
+    const word = ws[held - 1] === 'off' && ws[held - 2] === 'time' ? 'leave' : (ws[held - 1] ?? '');
+    const holds = (words: ReadonlySet<string>) => held > 0 && words.has(word) && !partOfMoney(ws, held - 1);
     if (holds(budget ? BUDGET_HELD_WORDS : HELD_WORDS) || ws.slice(held + 1).some((w) => HELD_AFTER_WORDS.has(w))) return 'not';
     if (holds(budget ? BUDGET_GUESS_WORDS : HELD_GUESS_WORDS)) return 'guess';
   }
@@ -214,10 +217,13 @@ function isUnitWord(w: string): boolean {
 
 /**
  * Whether a name ends in price, cost or fee and then a measure unit, with any unit or currency words left out
- * ("price_kg", review round 19; "price_kwh_pence", "cost_kwh_gbp", "price_pence_kwh", round 20).
+ * ("price_kg", review round 19; "price_kwh_pence", "cost_kwh_gbp", "price_pence_kwh", round 20), and a number
+ * before the unit ("price_100g", the price of 100 g) and any three-letter word after it, a currency code
+ * ("price_kwh_aud", round 21).
  */
 function pricesAMeasure(ws: readonly string[]): boolean {
-  const rest = ws.filter((w) => !isUnitWord(w));
+  const rest = ws.filter((w) => !isUnitWord(w) && !/^\d+$/.test(w));
+  while (rest.length > 2 && /^[a-z]{3}$/.test(rest.at(-1) ?? '') && !PRICED_MEASURE_WORDS.has(rest.at(-1) ?? '')) rest.pop();
   return PRICED_MEASURE_WORDS.has(rest.at(-1) ?? '') && ['price', 'cost', 'fee'].includes(rest.at(-2) ?? '');
 }
 
@@ -251,8 +257,11 @@ export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   const ws = per > 0 ? all.slice(0, per) : all;
   if (ws.some((w) => FINER_UNIT_WORDS.has(w) || MORE_DECIMAL_CURRENCIES.has(w))) return 'unsure';
   // A scale other than pounds ("revenue_millions", "amount_k", "amount_x100"): review round 20, where x100 made 12.5 1250.
+  // Folded too: "amountx100", "salaryk" (review round 21), a money word and then x or k.
   const raw = words(name);
-  if (ws.some((w) => SCALE_WORDS.has(w)) || raw.some((w, i) => w === 'x' && /^10+$/.test(raw[i + 1] ?? ''))) return 'unsure';
+  const foldedX = (w: string) => w.endsWith('x') && MONEY_WORDS.has(w.slice(0, -1));
+  const foldedK = raw.length === 1 && (raw[0] ?? '').endsWith('k') && MONEY_WORDS.has((raw[0] ?? '').slice(0, -1));
+  if (ws.some((w) => SCALE_WORDS.has(w)) || foldedK || raw.some((w, i) => (w === 'x' || foldedX(w)) && /^10+$/.test(raw[i + 1] ?? ''))) return 'unsure';
   // Only the word right after "per" says what the amount is for; a unit word after that is the amount's
   // own ("price_per_unit_cents", "cost_per_click_micros"): review round 16, where they read as pounds.
   const after = per > 0 ? all.slice(per + 2) : [];
@@ -312,5 +321,6 @@ export const RULE_WORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   pricedMeasure: PRICED_MEASURE_WORDS,
   perOrdinary: PER_ORDINARY_WORDS,
   budgetGuess: BUDGET_GUESS_WORDS,
+  folding: FOLDING_WORDS,
   scale: SCALE_WORDS,
 };

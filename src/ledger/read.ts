@@ -128,15 +128,16 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   const other = header.length === 1 ? DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0] : undefined;
   // A sep= first line in a form money-guard does not read (review round 14: the delimiter hint led to a second error).
   const sepFirst = /^sep\s*=/i.test(header[0] ?? ''); // "sep = ;" too (round 15)
-  // A file with no header line: its first row is read as the names (review round 20: its cells were suggested as names).
+  // A file with no header line: its first row is read as the names (review round 20). A real header may have a
+  // name like "2023" (round 21): said as a possibility, with the closest match kept.
   const data = header.find(looksLikeValue);
   throw new ToolError(
     'COLUMN_NOT_FOUND',
-    `The CSV header has no column ${quoted(name)} (mapped as ${field}).${sepFirst || data !== undefined ? '' : hint} The columns are: ${shown.join(', ')}${more}.${data === undefined ? '' : ` The first line looks like data (${quoted(data)}), not a header: the first line is always read as the column names.`}`,
+    `The CSV header has no column ${quoted(name)} (mapped as ${field}).${sepFirst ? '' : hint} The columns are: ${shown.join(', ')}${more}.${data === undefined ? '' : ` The first line holds ${quoted(data)}, written like a value: the first line is always read as the column names, so a file without a header line loses its first row.`}`,
     sepFirst
       ? SEP_FIX
       : data !== undefined && other === undefined
-      ? 'Add a first line that names the columns, then map each field to one of those names.'
+      ? 'Map each field to one of the column names in the header; if the file has no header line, add one that names the columns first.'
       : other === undefined
       ? 'Map each field to one of the column names in the header.'
       : fromSepLine
