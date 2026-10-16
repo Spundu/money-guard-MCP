@@ -46,7 +46,7 @@ const COUNT_WORDS: ReadonlySet<string> = new Set([
 /** Rates and measures: the non-money last words that also say what a total measures. */
 const MEASURE_WORDS: ReadonlySet<string> = new Set([
   'percent', 'percentage', 'pct', 'rate', 'ratio', 'bps', 'factor', 'multiplier', 'weight', 'score', 'share',
-  'split', 'distance', 'duration', 'km', 'kg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
+  'split', 'distance', 'duration', 'km', 'kg', 'g', 'mg', 'kwh', 'volume', 'points', 'votes', 'miles', 'ml', 'margin',
   'elasticity', 'calories', 'kcal', 'energy', 'lb', 'lbs', 'rating', 'ratings', 'tonnage', 'area', 'size',
   'length', 'width', 'height', 'depth', 'power', 'usage', 'capacity', 'speed', 'temperature', 'precision', 'scale',
   'growth',

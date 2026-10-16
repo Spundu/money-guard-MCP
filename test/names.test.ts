@@ -83,6 +83,7 @@ const MONEY = [
   'distance_fee_total', 'weight_surcharge_total', 'kwh_cost_total', 'current_total', 'day_total', 'month_total',
 ];
 const NOT_MONEY = [
+  'amount_g', 'amount_mg', // review round 15: grams
   'id', 'stripe_price_id', 'price_id', 'amount_currency', 'currency', 'price_updated_at', 'total_count',
   'tax_rate', 'vat_rate', 'fee_bps', 'discount_percent', 'total_items', 'payment_method',
   'payment_status', 'payment_attempts', 'refund_reason', 'charge_id', 'tax_code', 'vat_number',
@@ -140,7 +141,7 @@ describe('looksLikeMoney', () => {
 
   it('has the table of about 500 names that SPEC.md §3.5 and the README promise', () => {
     expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(490);
-    expect(MONEY.length + NOT_MONEY.length).toBeLessThan(520); // "about 490": the SPEC number moves with the table (review round 10)
+    expect(MONEY.length + NOT_MONEY.length).toBeLessThan(520); // "about 500": the SPEC number moves with the table (review round 10)
   });
 });
 

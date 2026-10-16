@@ -1,5 +1,6 @@
 // A log is read once (SPEC.md §5.7), one with its last LF missing too. Review round 14: the check that
-// only the LF is missing read a 100 MiB log a second time, 8 s instead of 4.
+// only the LF is missing read a 100 MiB log a second time, 8 s instead of 4. And what that one read
+// gives for the last line: torn only when it does not read as an entry (§5.4, review round 15).
 import { appendEntry, InMemoryKeyProvider, toJsonlLine, type SealedEntry } from 'sealed-audit-chain';
 import { describe, expect, it, vi } from 'vitest';
 import { verifyAuditLog } from '../src/audit/verify.js';
@@ -42,5 +43,14 @@ describe('audit_verify_chain reads a log once', () => {
     if (!keys.ok) throw new Error(keys.error.toText());
     const r = verifyAuditLog({ file: 'logs/audit.jsonl', bytes: Buffer.from(sealed().replace('"bob"', '"eve"').slice(0, -1)), keys: keys.value });
     expect([r.break?.code, r.break?.entry_index]).toEqual(['CONTENT_TAMPERED', 1]);
+  });
+
+  it('reports an edited last entry as edited when its LF is missing too, not as an interrupted write', () => {
+    // Review round 15: the edit read as "cut off ... an interrupted write", and deleting the line hides it.
+    const keys = parseAuditKeys(`k1=${KEY_HEX}`);
+    if (!keys.ok) throw new Error(keys.error.toText());
+    const r = verifyAuditLog({ file: 'logs/audit.jsonl', bytes: Buffer.from(sealed().replace('"carol"', '"eve"').slice(0, -1)), keys: keys.value });
+    expect([r.break?.code, r.break?.entry_index, calls.n > 0]).toEqual(['CONTENT_TAMPERED', 2, true]);
+    expect(r.notes).toContain('The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands.');
   });
 });

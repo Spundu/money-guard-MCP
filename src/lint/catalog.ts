@@ -101,7 +101,7 @@ export const DETAIL_SQL = `
   -- Each unique or exclusion index's text, read once per index (review round 14: read per column and
   -- per dependency, one index of 1,000 terms on 1,000 columns ran the database thread out of memory).
   idx AS MATERIALIZED (
-    SELECT i.indexrelid, i.indrelid,
+    SELECT i.indexrelid, i.indrelid, i.indkey::pg_catalog.int2[] AS keycols,
       -- Past 2,000 characters (MAX_EXPR_CHARS) a stand-in of 2,001, which counts as holding an amount as
       -- the text would, so that a long text is not copied to every column.
       CASE WHEN pg_catalog.length(x.expr) > 2000 THEN pg_catalog.repeat('x', 2001) ELSE x.expr END AS expr,
@@ -116,8 +116,18 @@ export const DETAIL_SQL = `
     WHERE (i.indisunique OR i.indisexclusion) AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
   ),
   col_indexes AS (
-    -- One row per index and column it reads, however many pg_depend rows say so.
-    SELECT m.root, m.attname, pg_catalog.array_agg(DISTINCT d.expr) AS index_exprs
+    -- One row per index and column it reads, however many pg_depend rows say so. Null for an index whose
+    -- expressions or WHERE clause also read another column of a number type (not one of its plain key
+    -- columns): "WHERE amount > approval_limit" would compare pence with pounds (review round 15).
+    SELECT m.root, m.attname,
+           pg_catalog.array_agg(DISTINCT CASE WHEN EXISTS (
+             SELECT FROM pg_catalog.pg_depend p2
+             JOIN pg_catalog.pg_attribute a2 ON a2.attrelid = p2.refobjid AND a2.attnum = p2.refobjsubid
+             JOIN pg_catalog.pg_type t2 ON t2.oid = a2.atttypid
+             WHERE p2.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p2.objid = d.indexrelid
+               AND p2.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p2.refobjid = d.indrelid
+               AND p2.refobjsubid <> m.attnum AND p2.refobjsubid <> ALL (d.keycols) AND t2.typcategory = 'N'
+           ) THEN NULL ELSE d.expr END) AS index_exprs
     FROM idx d
     JOIN members m ON m.rel = d.indrelid AND (d.whole_row OR EXISTS (
       SELECT FROM pg_catalog.pg_depend p
@@ -172,7 +182,7 @@ export function isDetailRow(row: unknown): row is DetailRow {
     (r.domain_name === null || text('domain_name')) &&
     texts('defaults') &&
     texts('checks', true) &&
-    texts('index_exprs')
+    texts('index_exprs', true)
   );
 }
 
@@ -190,8 +200,8 @@ export interface DetailRow {
   defaults: string[] | null;
   /** Each CHECK constraint on the column (in its table, partitions and children) as written back; null for one that also uses another column. Null when there are none. */
   checks: Array<string | null> | null;
-  /** The expressions and WHERE clauses, as written back, of each unique or exclusion index that has either and uses the column, in its table, partitions and children; null when there are none. */
-  index_exprs: string[] | null;
+  /** The expressions and WHERE clauses, as written back, of each unique or exclusion index that has either and uses the column, in its table, partitions and children; null for one that also reads another number-typed column there. Null when there are none. */
+  index_exprs: Array<string | null> | null;
   via_array: boolean;
   domain_name: string | null;
   base_name: string;
@@ -302,7 +312,7 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
   const unit = unitOfName(row.column_name);
   const minor = unit === 'minor';
   const checkHoldsAmount = (row.checks ?? []).some((expr) => expr === null || !reader.holdsNoAmount(expr));
-  const indexHoldsAmount = (row.index_exprs ?? []).some((expr) => !reader.holdsNoAmount(expr));
+  const indexHoldsAmount = (row.index_exprs ?? []).some((expr) => expr === null || !reader.holdsNoAmount(expr));
   const keepsOldUnit = checkHoldsAmount || indexHoldsAmount || (row.defaults ?? []).some((expr) => !reader.isZeroOrNullDefault(expr));
   const times100 = (using: string) => (keepsOldUnit ? null : `${head} USING ${using};`);
   // A name that may or may not say minor units (price_minor, price_sat) needs the unit decided first;

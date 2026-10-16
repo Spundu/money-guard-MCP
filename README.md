@@ -41,7 +41,8 @@ cd money-guard-mcp
 npm ci    # installs the dependencies, then builds dist/
 ```
 
-Then, in your own project's folder, add the server to Claude Code:
+Then, in your own project's folder, add the server to Claude Code (to verify audit logs as well, which
+needs a key, set it up as [Settings](#settings) says instead):
 
 ```sh
 claude mcp add --transport stdio money-guard -- node /path/to/money-guard-mcp/dist/index.js
@@ -342,16 +343,19 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   are refused even inside the project.
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
   cut to 40 characters (a few longer texts, such as a Postgres error, have their own limits: SPEC.md
-  §2.4). Paging through findings can still show up to three mapped columns of every row (the id,
-  and the amount or the debit and the credit), 40 characters each, so a secrets file the name list
-  misses is not safe from the ledger tool. Table and column names stay
+  §2.4). But the agent chooses which columns to map: paging through findings can show any three
+  columns of every row in one call, 40 characters each, and every column over a few calls; a column
+  name that matches none also lists up to 30 cells of the first line, which in a file with no header
+  is data. So a
+  secrets file the name list misses is not safe from the ledger tool. Table and column names stay
   whole, so the agent can act on them; a path over
   400 characters is cut in the middle. Characters that can hide text are escaped in money-guard's
   results and errors, by Unicode category: control characters, the zero-width and direction
   characters of the "Trojan Source" trick, and the invisible TAG characters that can spell out
   instructions a person cannot see but a model reads. (A few blank-looking characters, such as wide
-  spaces, are outside those categories and pass as they are; every backslash is doubled, as JSON
-  shows one, so text cannot pass for an escape.) A result is at most 20,000 characters.
+  spaces, are outside those categories and pass as they are; every backslash outside `fix_sql` is
+  doubled, as JSON shows one, so text cannot pass for an escape. `fix_sql` is SQL to run, so it keeps
+  a name's backslashes single, and is null for a name that holds `\u`.) A result is at most 20,000 characters.
   SPEC.md §2.4 has the exact rules.
 - **Links get the same checks.** A link in a migrations folder must lead to a `.sql` file inside the
   project that does not look like a secret.
@@ -359,7 +363,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   result, an error or a log line; an error about a malformed key setting names the bad pair by its
   position only. An agent with shell access can still read its host's environment: see
   [Settings](#settings). The log (stderr) has a startup line and one line per call: the tool, the time
-  it took and the outcome code. Writing it never holds up an answer: a host that does not read it
+  it took and the outcome code, plus a line for a transport error and, for an unexpected error, its
+  type and code locations (file:line:column), never file content. Writing it never holds up an answer: a host that does not read it
   loses log lines, not answers.
 - **One schema lint at a time.** A second one gets `BUSY` straight away, and so do the ledger and
   audit tools while a lint runs, so that its memory limit keeps being checked. Otherwise the server

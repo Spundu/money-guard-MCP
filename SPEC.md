@@ -38,7 +38,7 @@ internet and never touches a real database.
 | 3 | Does Claude Code speak 2026-07-28? | **Yes.** Since v2.1.292 it asks local (stdio) servers for 2026-07-28 by default (`MCP_PROTOCOL_NEGOTIATION=legacy` opts out). Since v2.1.139 stdio servers get `CLAUDE_PROJECT_DIR`. Output: warning above 10,000 tokens, cap 25,000 (`MAX_MCP_OUTPUT_TOKENS`); a result over 50,000 characters is saved to a file unless the tool sets `_meta["anthropic/maxResultSizeChars"]`. With tool search (the default) only tool **names and server instructions** load at start; descriptions are cut at 4,096 characters (loaded up front) or 16,384 (loaded by search); server instructions at 4,096. The Claude API refuses `anyOf`/`oneOf`/`allOf` at the **root** of an input schema (Claude Code flattens them); property names must be 1-64 characters of `A-Za-z0-9_.-`; schemas must pass the JSON Schema 2020-12 meta-schema. | [CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (2.1.292, 2.1.139, 2.1.91), [Claude Code MCP docs](https://code.claude.com/docs/en/mcp) | Server instructions must say when to use the tools. No root-level unions in input schemas. Every result stays under 20,000 characters. |
 | 4 | SDK v2 version and API? | **`@modelcontextprotocol/server` 2.3.1** (2026-10-05), Node ≥ 20, zod ^4.2, Apache-2.0. `registerTool(name, { title, description, inputSchema, outputSchema, annotations, icons, _meta }, handler(args, ctx))`; `ctx.mcpReq.signal` reports cancellation. Arguments that fail the schema come back as an `isError` result before the handler runs; a thrown error becomes an `isError` result; output validation is skipped on `isError`. `maxToolInputElements` caps argument size. **Correction to the plan:** `serveStdio(factory, { legacy })` takes a **factory**, and its default is already `'serve'` (it also serves 2025 clients). **Testing correction:** `InMemoryTransport.createLinkedPair()` connects **2025-era** instances only; 2026-era in-process tests go through `createMcpHandler(factory)` + `handler.fetch`; stdio via `StdioClientTransport`; a client picks the era with `versionNegotiation` (`'auto'` or a pin on `'2026-07-28'`; the default is the 2025 handshake). | npm registry; SDK docs: [tools](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/tools.md), [errors](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/servers/errors.md), [stdio](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/stdio.md), [legacy clients](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/legacy-clients.md), [testing](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/testing.md), [protocol versions](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/protocol-versions.md); the installed `.d.ts` | Entry point is `serveStdio(createServer)`. Tests cover both eras (§7). |
 | 5 | Inspector CLI flags? | **v2.11.0** (Node ≥ 22.19); the v1 flags changed. `npx --yes @modelcontextprotocol/inspector@2.11.0 --cli node dist/index.js --method tools/list --format json`; `--method tools/call --tool-name X --tool-args-json '{...}'`; `--protocol-era legacy\|auto\|modern`; `--strict` checks schema portability (exit 6). Exit codes: 0 ok, 1 usage, 4 unreachable, 5 tool error. | [Inspector README](https://github.com/modelcontextprotocol/inspector), [CLI smoke-testing guide](https://github.com/modelcontextprotocol/inspector/blob/main/docs/cli-smoke-testing.md), [CLI README](https://github.com/modelcontextprotocol/inspector/blob/main/clients/cli/README.md) | CI smoke test in both eras, `--strict` must report nothing (§7). |
-| 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib extensions ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start); with pgvector and plpgsql, §3.4 lists what `CREATE EXTENSION` can load (auto_explain is a module, not an extension). pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code`, and a 1-based `position` when the error points at a place in the text (a syntax error, often an unknown name or schema; not a missing role or a duplicate table). A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
+| 6 | PGlite (for tool 1) | **0.5.9 = PostgreSQL 18.6** in 32-bit WebAssembly, Apache-2.0, ~26 MB. 34 contrib modules ship with it (citext, pgcrypto, uuid-ossp, hstore, pg_trgm, ltree, ...), each registered when the database starts (all 34: ~1.5 s start): 33 extensions and auto_explain, a module, not an extension. §3.4 lists the 38 names `CREATE EXTENSION` can load: those 33, autoinc, insert_username and refint (built in, with no module of their own), plpgsql and pgvector. pgvector is a separate 67 KB package (`@electric-sql/pglite-pgvector` 0.0.10, needs PGlite 0.5.9): `CREATE EXTENSION vector` works. Runs inside a Node worker thread. Sees only a **virtual** filesystem: `COPY ... FROM '/etc/hosts'`, `pg_read_file()` and `lo_import()` of host paths fail. `COPY ... TO/FROM PROGRAM` runs **no** host program (a marker file it should have written never appeared), but it leaves that database stuck. Runs as superuser `postgres`; `CREATE ROLE` works. A failed multi-statement script is rolled back as a whole. Errors carry the SQLSTATE `code`, and a 1-based `position` when the error points at a place in the text (a syntax error, often an unknown name or schema; not a missing role or a duplicate table). A catalog query takes ~6 ms. | npm registry; a throwaway probe in the scratch folder (no repo code) | Tool 1 design (§3.4). |
 | 7 | Can one process start a PGlite thread while another ends? | **Not safely on Node.js 24.** Its V8 (13.6) can free a wasm-to-JS import wrapper twice when a thread with WebAssembly is torn down while another thread looks the wrapper up, and then aborts the whole process (`Check failed: jit_page_->allocations_.erase(addr) == 1`). Fixed in V8 (9b8ca54d5a, 68210d500a); the Node.js 24 backport is still open; Node.js 22 and 26 are not affected. Review round 4 saw it twice in nine full test runs. | [nodejs/node#66366](https://github.com/nodejs/node/issues/66366), [nodejs/node#66376](https://github.com/nodejs/node/pull/66376) | One database thread at a time (§3.4). |
 | 8 | Other | `money-guard-mcp` and `sealed-audit-chain` are both **still free on npm**. `csv-parse` 7.0.3 is MIT with no dependencies. The 2026-07-28 security page: servers meant to run locally "SHOULD ... use the `stdio` transport to limit access to just the MCP client". | npm registry; [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) | stdio only. |
 
@@ -159,15 +159,21 @@ Every path argument:
      `token.json`, `tokens.json` and `auth.json`; `key.json` and names ending `-key.json`, `_key.json`
      or `.key.json` (`sa-key.json`); and a Google Cloud key as
      downloaded, `<project>-<12 hex digits>.json` with at least one letter among the digits (so a
-     timestamp such as `export-202401011230.json` is not one). The same words in another name, such as
+     timestamp such as `export-202401011230.json` is not one). A word is bounded by anything but a
+     letter or digit (a space, a bracket, `-`, `_`, `.`), and a space may join a two-word name
+     (`Bitwarden Export.json`, `Secrets (1).json`, `api key.json`); a camelCase word is a word too
+     (`awsCredentials.csv`), and a copy's ` (1)` before the extension is left out (`token (1).json`,
+     `myproject-1a2b3c4d5e6f (1).json`). The same words in another name, such as
      the migration `0002_create_access_keys.sql` or the folder `add_service_accounts`, are not a
      secret. A name the list misses is not refused: the list covers the usual downloads, not every one.
      Some ordinary ledger names are refused too, and must be renamed: `service_account_statement.csv`,
-     `tokens.json`, `secret_santa_ledger.csv`, and an id of 12 hex digits after a dash
+     `tokens.json`, `secret_santa_ledger.csv`, `password_reset_fees.csv`, and an id of 12 hex digits after a dash
      (`stripe-balance-1a2b3c4d5e6f.json`); `credentialing_fees.csv` is not. And a file the list misses
-     can be read through the ledger tool, page by page: up to three mapped columns
-     of every row (the id, and the amount or the debit and the credit, through `BAD_AMOUNT`), 40
-     characters each.
+     can be read through the ledger tool, page by page. The caller chooses the mapping, so one call can
+     show any three columns of every row (mapped as the id and as two of amount, side, debit, credit
+     or currency, echoed through `BAD_AMOUNT`, `BAD_SIDE` and the nets of `UNBALANCED`), 40
+     characters each, and a few calls every column. `COLUMN_NOT_FOUND` lists up to 30 cells of the
+     first line, 40 characters each: in a file with no header, they are data.
    - anything inside `.git/`
 
    This is defence in depth. The tools echo only tiny pieces of a file, but a read-only tool must
@@ -282,7 +288,7 @@ Shared error codes:
   hostile migration could grow by gigabytes before it was stopped. Once the lint has answered, they run.
 - `money_check_double_entry` and `audit_verify_chain` run to the end before the server reads the next
   message, so they answer one call after another; on the largest files they allow (25 and 100 MiB)
-  that can take several seconds: 2 to 4 for a million-row CSV ledger and about 9 for a 100 MiB audit log on
+  that can take several seconds: 2 to 4 for a million-row CSV ledger and about 4 for a 100 MiB audit log on
   an ordinary machine, more on a busy one. A hostile file cannot make the ledger tool take much longer
   or fill memory: it keeps the first 10,000 findings (counting all), reads a CSV row of at most 1 MiB
   of values, and a JSON file of at most 7,000,000 values and 100,000 different keys (§4.8).
@@ -608,7 +614,7 @@ The word lists:
     position, priority, index, seq, sequence, step, steps, stage, stages, orders, records, lines, last,
     first, frequency, grade, schedule, cycle
   - rates and measures: percent, percentage, pct, rate, ratio, bps, factor, multiplier, weight, score,
-    share, split, distance, duration, km, kg, kwh, volume, points, votes, miles, ml, margin, elasticity,
+    share, split, distance, duration, km, kg, g, mg, kwh, volume, points, votes, miles, ml, margin, elasticity,
     calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
     power, usage, capacity, speed, temperature, precision, scale, growth
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
@@ -696,8 +702,11 @@ conversion follows the name and the declared scale; the test suite runs each kin
   inheritance child (an ALTER of the parent changes their column too): a default other than zero or
   `NULL`; a CHECK constraint that holds a number other than zero, calls a function, reads the whole row (`x.*`, as
   `to_jsonb(x.*)` does) or also uses
-  another column; or a unique or exclusion index whose expression or `WHERE` clause does (it decides
-  which rows may exist together). `ALTER COLUMN ... TYPE` converts the stored rows with `USING`, but
+  another column; or a unique or exclusion index whose expression or `WHERE` clause holds such an
+  amount, or also reads another column of a number type (`WHERE amount > approval_limit`; a plain key
+  column of the index does not count) (it decides which rows may exist together). A number in such a
+  condition withholds the fix even when it is compared only with another column (`WHERE kind = 2`,
+  `WHERE created_at > '2020-01-01'`): doubt withholds it. `ALTER COLUMN ... TYPE` converts the stored rows with `USING`, but
   leaves those as written: a default of 2.50 becomes 3 pence, and `CHECK (amount <= 1000.00)` a cap of
   £10. The next lint could not see that, so such a fix is not offered. A trigger or a function that
   compares the column with an amount in its body is not seen either: PostgreSQL records no link from a
@@ -973,7 +982,7 @@ Those functions throw at the first problem. This tool returns **every** problem.
   with that delimiter, whatever `delimiter` says, and the line is not the header; lines still count from
   the file's first. It may end in LF, CR LF or a lone CR. When the header then reads as one column that
   holds another delimiter, COLUMN_NOT_FOUND's fix says the `sep=` line names the wrong one. A header
-  whose first column starts `sep=` in another form, and a PARSE_ERROR in a file whose first line does,
+  whose first column starts `sep=` in another form (spaces around `=` too), and a PARSE_ERROR in a file whose first line does,
   get a fix that says to delete that line.
 - **JSON parsing:** money-guard's own strict RFC 8259 parser (`src/ledger/json.ts`, adapted from
   sealed-audit-chain's; depth ≤ 100), **never `JSON.parse`**: V8 12.9 and later misparse escaped
@@ -1064,7 +1073,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities anywhere in it, or cur alone or before code, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung, Devise, Moneda, Valuta or 4217 (`iso_4217`), anywhere in it, or cur alone or before code, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -1073,7 +1082,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 | `counts_by_code` | object | e.g. `{ "UNBALANCED": 1 }`, over all pages. |
 | `findings` | Finding[] | This page: at most `limit` findings, fewer if the result would pass its budget (§2.4). |
 | `offset`, `limit`, `total_findings` | integer | `limit` as asked (default 20). |
-| `next_offset` | integer or null | The first finding not on this page; null on the last page of the findings kept (the first 10,000, §4.8). When there are more, the summary says so: "Only the first 10,000 findings can be paged; the counts cover all N." |
+| `next_offset` | integer or null | The first finding not on this page; null on the last page of the findings kept (the first 10,000, §4.8). When there are more, the summary says so: "Only the first 10,000 findings can be paged; the counts cover all N. On a page past the last finding: "No findings from offset 500: there are 30 to page."" |
 
 ### 4.7 Errors (besides §2.5)
 | Code | When |
@@ -1196,7 +1205,7 @@ Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", 
 ### 5.4 Reason codes
 | Code | sealed-audit-chain reason | Plain meaning |
 |---|---|---|
-| `TORN_LAST_LINE` | last line is not terminated (torn) | A write was cut off, or the file was cut mid-line. When only the final LF is missing (§5.5 `notes`), the summary says the entry "lacks the line end a sealed log puts after every entry; with it, every entry verifies". |
+| `TORN_LAST_LINE` | last line is not terminated (torn) | A write was cut off, or the file was cut mid-line: a last line without LF that does not read as JSON. One that holds a whole entry is checked as it stands, so an edited or forged last entry is `CONTENT_TAMPERED`, `HMAC_MISMATCH` and so on, with the note "The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands." When only the final LF is missing (§5.5 `notes`), the summary says the entry "lacks the line end a sealed log puts after every entry; with it, every entry verifies". |
 | `LINE_TOO_LARGE` | line exceeds the canonical size limit | |
 | `NOT_UTF8` | line is not valid UTF-8 | |
 | `NOT_JSON` | line is not valid JSON | |
@@ -1225,10 +1234,10 @@ mapped.
 | `ok` | boolean | |
 | `entries_verified` | integer | The entries vouched for: all of them when `ok` (the library's `lastSeq + 1`); otherwise those before the break (`break.entry_index`). For `ANCHOR_HEAD_MISMATCH` that is the entries before the one the anchor recorded (its count less one): their chain verified, though the log may have been replaced. |
 | `break` | object or null | `{ entry_index, line, code, reason, writer_key_id? }`. `line` = `entry_index + 1`, or null when that line does not exist (an anchor that counts more entries). `reason` is sealed-audit-chain's wording, cut at 120 characters (a canonicalization error can quote a key name from the line). |
-| `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). |
+| `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). When only the final LF is missing, the anchor is compared with the log with that LF restored: true when it matches, with the note "The anchor matches the log once the line end after its last entry is restored." if it covers the last entry. |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the anchor's own answer, `ANCHOR_HEAD_MISMATCH` or the "cut short" note below): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |
@@ -1239,7 +1248,7 @@ mapped.
 A bad `anchor` (wrong hex, a negative count) is refused by the input schema.
 
 ### 5.7 Limits
-The file is at most 100 MiB. Verification is linear, reads the log once and stops at the first break. A
+The file is at most 100 MiB. Verification is linear, verifies the log once and stops at the first break. A
 log whose last line has no LF is read once with an LF added (a copy of the file): the entries before
 that line are the same either way, so a break there is the log's break, and at that line the log is torn.
 

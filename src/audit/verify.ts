@@ -143,6 +143,13 @@ function entryHashAt(bytes: Uint8Array, index: number): string {
 
 type MakeResult = (summary: string, brk: AuditBreak | null, head: Anchor | null, anchorChecked: boolean) => AuditResult;
 
+/** The result for an anchor that counts more entries than the log holds, each of them whole. */
+function countMismatch(count: number, anchor: Anchor, result: MakeResult): AuditResult {
+  const brk: AuditBreak = { entry_index: count, line: null, code: 'ANCHOR_COUNT_MISMATCH', reason: `count ${count} < anchor count ${anchor.count} (truncation)` };
+  const what = `the log has ${entries(count)} but the anchor says ${anchor.count}: entries were removed from the end, or the log was replaced`;
+  return result(`The log does NOT verify: ${what} (ANCHOR_COUNT_MISMATCH).`, brk, null, true);
+}
+
 /**
  * The result for an anchor whose last entry is not the one it recorded (entry count - 1 of a log whose
  * entries up to there verified), or null when it is. A count of 0 goes with the genesis hash.
@@ -169,12 +176,17 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   // given to this tool is a head from an earlier run, which an honest log grows past (SPEC.md §5.3).
   // A log whose last line has no LF is read once, with the LF added (review round 14: it was read twice,
   // 8 s for 100 MiB). The entries before that line are the same bytes either way, so a break before it is
-  // the same break; at or after it, the log as given breaks there, torn.
+  // the same break. At that line, a line that does not read as JSON is torn (an interrupted write); a whole
+  // entry that fails its hash, seal or link keeps that answer, as it would with its LF (review round 15:
+  // an edited or forged last entry without its LF read as an interrupted write).
   const completed = bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a ? Buffer.concat([bytes, Buffer.from('\n')]) : null;
   const read = verifyJsonl(completed ?? bytes, keys.provider);
   const tornAt = completed === null ? -1 : jsonlLineCount(bytes);
-  const verdict = completed === null || (!read.ok && (read.brokenAt ?? 0) < tornAt) ? read : { ok: false, lastSeq: tornAt - 1, brokenAt: tornAt, reason: TORN_REASON };
+  const brokenAtLast = completed !== null && !read.ok && (read.brokenAt ?? 0) >= tornAt;
+  const lastIsWhole = brokenAtLast && !TORN_LIKE.has(reasonCode(read.reason ?? ''));
+  const verdict = completed === null || (!read.ok && (read.brokenAt ?? 0) < tornAt) || lastIsWhole ? read : { ok: false, lastSeq: tornAt - 1, brokenAt: tornAt, reason: TORN_REASON };
   const notes: string[] = [];
+  if (lastIsWhole) notes.push(NO_FINAL_NEWLINE_TOO_NOTE);
   if (!anchor && bytes.length === 0) notes.push(EMPTY_NOTE);
   if (!anchor) notes.push(NO_ANCHOR_NOTE);
   // The fields in SPEC.md §5.5's order.
@@ -197,7 +209,11 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   // log replaced as well, and the anchor checks say so (review round 14).
   const onlyFinalNewline = completed !== null && read.ok;
   if (onlyFinalNewline && anchor) {
-    if (anchor.count > read.lastSeq + 1) return broken(bytes, verdict, anchor, notes, result);
+    // Every entry is whole: entries are gone after the last, as with the LF kept (review round 15).
+    if (anchor.count > read.lastSeq + 1) {
+      notes.push(NO_FINAL_NEWLINE_TOO_NOTE);
+      return countMismatch(read.lastSeq + 1, anchor, result);
+    }
     const replaced = headMismatch(completed, anchor, result);
     if (replaced) return replaced;
   }
@@ -208,11 +224,7 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   const intact = count === 0 ? 'The log is empty, which always verifies.' : `The log verifies: ${entries(count)}, every seal and link intact.`;
   if (!anchor) return result(`${intact}${count === 0 ? '' : ' Keep head and pass it as anchor next time.'}`, null, head, false);
 
-  if (anchor.count > count) {
-    const brk: AuditBreak = { entry_index: count, line: null, code: 'ANCHOR_COUNT_MISMATCH', reason: `count ${count} < anchor count ${anchor.count} (truncation)` };
-    const what = `the log has ${entries(count)} but the anchor says ${anchor.count}: entries were removed from the end, or the log was replaced`;
-    return result(`The log does NOT verify: ${what} (ANCHOR_COUNT_MISMATCH).`, brk, null, true);
-  }
+  if (anchor.count > count) return countMismatch(count, anchor, result);
   const replaced = headMismatch(bytes, anchor, result);
   if (replaced) return replaced;
   const added = count - anchor.count;
@@ -220,8 +232,15 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   return result(`${intact}${tail}`, null, head, true);
 }
 
+/** What a last line without LF that does not read as an entry fails with, once an LF is added: it is torn. */
+const TORN_LIKE: ReadonlySet<ReasonCode> = new Set(['NOT_JSON', 'NOT_UTF8', 'LINE_TOO_LARGE']);
+
+const NO_FINAL_NEWLINE_TOO_NOTE = 'The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands.';
+
 /** sealed-audit-chain's reason for a last line without LF (its jsonl.js). */
 const TORN_REASON = 'last line is not terminated (torn)';
+
+const ANCHOR_WITH_NEWLINE_NOTE = 'The anchor matches the log once the line end after its last entry is restored.';
 
 const FINAL_NEWLINE_NOTE = 'Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one.';
 
@@ -240,8 +259,10 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const raw = verdict.reason ?? 'unknown';
   const code = reasonCode(raw);
   if (anchor && onlyFinalNewline) {
-    // The completed log matched the anchor (verifyAuditLog checked it).
-    if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
+    // The completed log matched the anchor (verifyAuditLog checked it). An anchor that covers the entry
+    // without its LF does not end before the break (review round 15).
+    if (anchor.count > index) notes.push(ANCHOR_WITH_NEWLINE_NOTE);
+    else if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
   } else if (anchor && anchorChecked) {
     const replaced = headMismatch(bytes, anchor, result);
     if (replaced) return replaced;

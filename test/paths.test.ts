@@ -268,6 +268,15 @@ describe('resolveInRoot', () => {
     }
     expect(codeOf(() => resolveInRoot(root, 'exports/notes.csv', CSV))).toBe('SENSITIVE_PATH');
   });
+
+  it('refuses a path through a folder link into .git, on every machine', () => {
+    // Review round 15: the test above skips on Windows without Developer Mode; a junction needs no
+    // privilege, so the check of the real path is tested there too.
+    const dir = tempDir();
+    writeTree(dir, { '.git/export.csv': 'a\n' });
+    expect(trySymlink(path.join(dir, '.git'), path.join(dir, 'reports'), 'dir')).toBe(true);
+    expect(codeOf(() => resolveInRoot(rootOf(dir), 'reports/export.csv', CSV))).toBe('SENSITIVE_PATH');
+  });
 });
 
 describe('resolveInRoot and links to the wrong kind of file', () => {
@@ -363,7 +372,13 @@ describe('isSensitive', () => {
       // review round 13: every type the ledger tool reads
       'credentials.tsv', 'app_secrets.jsonl', 'access_token.ndjson',
       // review round 14: a second download, a dated copy, and passwords as a word
-      'logins (1).csv', 'logins-2026-10-16.csv', 'logins_backup.json', 'keystore (1).json', 'Chrome Passwords (1).csv', 'Passwords (2).csv', 'passwords-export.csv']) {
+      'logins (1).csv', 'logins-2026-10-16.csv', 'logins_backup.json', 'keystore (1).json', 'Chrome Passwords (1).csv', 'Passwords (2).csv', 'passwords-export.csv',
+      // review round 15: words between spaces or brackets, and two-word names with a space
+      'Dashlane Export.csv', 'KeePass Export.csv', 'LastPass Export.csv', 'Bitwarden Export.json', 'my secrets.json', 'Secrets (1).json',
+      'app secret.json', 'api key.json', 'access token.json', 'service account.json',
+      // review round 15: camelCase words, and a second download of any of them
+      'firebaseCredentials.json', 'awsCredentials.csv', 'userPasswords.csv', 'ChromePasswords.csv', 'App Secrets.json', 'private key.json',
+      'secrets (1).json', 'access_token (1).json', 'token (1).json', 'key (1).json', 'auth (1).json', 'sa-key (1).json', 'myproject-1a2b3c4d5e6f (1).json']) {
       expect(isSensitive(p), p).toBe(true);
     }
     for (const p of [

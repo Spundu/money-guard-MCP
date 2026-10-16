@@ -95,7 +95,8 @@ export function checkLedgerFile(root: Root, params: LedgerParams): LedgerResult 
   const checked = outcome.transactionsFound - outcome.transactionsNotChecked;
 
   const result: LedgerResult = {
-    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names) + (total > MAX_LISTED_FINDINGS ? ` Only the first ${num(MAX_LISTED_FINDINGS)} findings can be paged; the counts cover all ${num(total)}.` : ''),
+    summary: summarise(outcome.rowsRead, errors, warnings, outcome.transactionsFound, outcome.transactionsBalanced, outcome.transactionsNotChecked, countsByCode, withoutTransaction) + poundsHint(params.amount_format ?? 'minor_units', outcome.amounts) + currencyHint(params.columns, names) + (total > MAX_LISTED_FINDINGS ? ` Only the first ${num(MAX_LISTED_FINDINGS)} findings can be paged; the counts cover all ${num(total)}.` : '')
+      + (offset > 0 && page.length === 0 && total > 0 ? ` No findings from offset ${num(offset)}: there are ${num(Math.min(total, MAX_LISTED_FINDINGS))} to page.` : ''), // as the lint says (round 15)
     file: clipPath(target.rel),
     format,
     file_sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -171,9 +172,10 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
     (name.startsWith('/') ? name.slice(name.lastIndexOf('/') + 1) : name)
       .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
       .toLowerCase()
-      .split(/[^a-z0-9]+/)
+      .split(/[^\p{L}\p{N}]+/u)
       .filter((w) => w !== '');
-  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities']; // hledger, beancount: commodity
+  // hledger, beancount: commodity; German, French, Spanish, Italian and Dutch; ISO 4217 (review round 15)
+  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities', 'währung', 'devise', 'moneda', 'valuta', '4217'];
   const looksLikeCurrency = (name: string) => {
     const ws = wordsOf(name);
     // A flag (is_foreign_currency) or a pair (ccy_pair, GBPUSD) is not the currency of a row (review round 12).

@@ -243,12 +243,23 @@ describe('money_lint_schema: fix_sql', () => {
     // quoted name does not start a literal that hides the whole row after it.
     expect(r.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.products', false], ['public.q', true], ['public.rows_hashed', true], ['public.skus', false]]);
     expect(holdsNoAmount('(("it\'s" IS NOT NULL) AND (q.* IS NOT NULL) AND ("o\'k" IS NOT NULL))')).toBe(false);
+    // Review round 15: an index condition that compares the amount with another number column would
+    // compare pence with pounds; a plain key column, or another column cast to a date, would not.
+    const other = await lint({ 'db/migrations/0001.sql': [
+      'create table refunds (order_id int, approval_limit numeric(10,2), amount numeric(10,2));',
+      'create unique index one_big_refund on refunds (order_id) where amount > approval_limit;',
+      'create extension btree_gist;',
+      'create table deposits (room int, min_deposit int, deposit double precision, exclude using gist (room with =) where (deposit > min_deposit));',
+      'create table charges (user_id int, created_at timestamp, amount double precision);',
+      'create unique index one_a_day on charges (user_id, amount, (created_at::date));',
+    ].join('\n') });
+    expect(other.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.charges', false], ['public.deposits', true], ['public.refunds', true]]);
   });
 
   it('reads a long unique-index condition once per index, not once per column', async () => {
     // Review round 14: 1,000 terms over 1,000 columns, read per column and per pg_depend row, ran the
     // database thread out of memory (or past 120 s with the whole row as well).
-    const cols = Array.from({ length: 1000 }, (_, i) => `c${i} int`).join(', ');
+    const cols = Array.from({ length: 1000 }, (_, i) => `c${i} text`).join(', ');
     const terms = Array.from({ length: 1000 }, (_, i) => `c${i} is not null`).join(' and ');
     const schema = `create table w (${cols}, price double precision);\ncreate unique index w_u on w (c0) where ${terms} and w is not null;`;
     const r = await lint({ 'db/migrations/0001.sql': schema }, { timeout_seconds: 30 });

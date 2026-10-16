@@ -35,15 +35,24 @@ describe('money_check_double_entry: reading CSV', () => {
       expect(r.findings.map((f) => [f.code, f.lines]), String(delimiter)).toEqual([['UNBALANCED', [3, 4]]]);
     }
     // Review round 14: with lone-CR or LF line ends too; and a sep= line the data contradicts says so.
-    for (const [first, end] of [['sep=;', '\r'], ['sep=;', '\n'], ['"sep=;"', '\r\n'], ['sep=; ', '\n']] as const) {
-      const r = check('.csv', [first, 't;a', 'T1;1', 'T1;2', ''].join(end), { columns: { transaction_id: 't', amount: 'a' } });
+    for (const [first, end] of [['sep=;', '\r'], ['sep=;', '\n'], ['"sep=;"', '\r\n'], ['sep=; ', '\n'], ['sep=;\r', '\n']] as const) {
+      // the last: a lone CR after the sep= line, LF after the others (round 15)
+      const r = check('.csv', [first, 't;a', 'T1;1', 'T1;2', ''].join(end).replace('sep=;\r\n', 'sep=;\r'), { columns: { transaction_id: 't', amount: 'a' } });
       expect(r.findings.map((f) => [f.code, f.lines]), JSON.stringify(first + end)).toEqual([['UNBALANCED', [3, 4]]]);
     }
     // An empty name, from a trailing delimiter, is never the one suggested (round 14).
     expect(errorText(() => check('.csv', 'id,amt,\nT1,1,\n', { columns: { transaction_id: 'x', amount: 'amt' } }))).not.toContain('Did you mean ""');
+    // Review round 15 (found by mutation): a sep= line it reads, then a broken quote, gets the ordinary
+    // fix; a BOM, quotes and spaces near the 24 bytes it looks at are read; an unread upper-case form
+    // says to delete it; and no "Did you mean" beside that.
+    expect(errorText(() => check('.csv', 'sep=;\nt;a\nT1;"1\n', { columns: { transaction_id: 't', amount: 'a' } }))).toMatch(/^PARSE_ERROR: Line 3: .* Fix: Fix the CSV at that line/);
+    const near24 = check('.csv', '\u{feff}"sep=;"    \t  \r\nt;a\r\nT1;1\r\nT1;2\r\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(near24.findings.map((f) => [f.code, f.lines])).toEqual([['UNBALANCED', [3, 4]]]);
+    expect(errorText(() => check('.csv', 'SEP=;;\nt;a\nT1;1\n', { columns: { transaction_id: 't', amount: 'a' } }))).toMatch(/Fix: The first line looks like Excel's "sep=" line/);
+    expect(errorText(() => check('.csv', 'sep=;x\nt;a\n', { columns: { transaction_id: 'sep=;y', amount: 'a' } }))).not.toContain('Did you mean');
     // A sep= line in a form it does not read says to delete it, never to pass a delimiter.
     for (const delimiter of [undefined, ';'] as const) {
-      const e = errorText(() => check('.csv', 'sep=;;\nt;a\nT1;1\n', { columns: { transaction_id: 't', amount: 'a' }, ...(delimiter ? { delimiter } : {}) }));
+      const e = errorText(() => check('.csv', `${delimiter === ';' ? 'sep=;;' : 'sep = ;'}\nt;a\nT1;1\n`, { columns: { transaction_id: 't', amount: 'a' }, ...(delimiter ? { delimiter } : {}) }));
       expect(e, String(delimiter)).toMatch(/^(?:COLUMN_NOT_FOUND|PARSE_ERROR): [^?]*Fix: The first line looks like Excel's "sep=" line, in a form money-guard does not read .*: delete that line, or write it so\.$/);
     }
     expect(errorText(() => check('.csv', 'SEP=;\nt,a\nT1,1\n', { columns: { transaction_id: 't', amount: 'a' } }))).toMatch(/Fix: The file looks separated by ",", but its first line, sep=, names ";", which wins over the delimiter parameter: fix or remove that line\.$/);
@@ -312,6 +321,9 @@ describe('money_check_double_entry: arguments', () => {
     expect([first.findings.length, first.total_findings, first.next_offset]).toEqual([10, 30, 10]);
     const last = check('.csv', `t,a\n${rows}\n`, { columns, offset: 20, limit: 10 });
     expect([last.findings[0]?.transaction_id, last.next_offset]).toEqual(['T20', null]);
+    expect(last.summary).not.toContain('No findings from offset');
+    // Review round 15: past the end, the summary says so, as the lint's does.
+    expect(check('.csv', `t,a\n${rows}\n`, { columns, offset: 500 }).summary).toMatch(/ No findings from offset 500: there are 30 to page\.$/);
     expect(check('.csv', `t,a\n${rows}\n`, { columns, limit: 500 }).limit).toBe(50);
     expect(first.counts_by_code).toEqual({ TOO_FEW_LEGS: 30 });
   });

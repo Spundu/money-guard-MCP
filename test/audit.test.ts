@@ -221,6 +221,9 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(all.notes.some((n) => n.includes('cut short'))).toBe(false);
     expect(all.notes).toContain(FINAL);
     expect(all.anchor_checked).toBe(true); // the completed log ends in the entry it recorded (round 14)
+    // Review round 15: an anchor of count 0 covers no entry, so no note says they are intact.
+    expect(run(bytes(FIVE.slice(0, -1)), { count: 0, last_hash: GENESIS_HASH }).notes).toEqual([FINAL]);
+    expect(all.notes).toEqual(['The anchor matches the log once the line end after its last entry is restored.', FINAL]); // not "comes after them" (round 15)
     // Review round 14: another chain of 5 under the same key, its last LF dropped, was replaced, not edited.
     const other = text(chain([...DRAFTS, { event: 'payment.capture', amount_pence: 999 }, { event: 'user.login', user: 'eve' }]));
     const swapped = run(bytes(other.slice(0, -1)), { count: 5, last_hash: (JSON.parse(FIVE.split('\n')[4] ?? '{}') as { entry_hash: string }).entry_hash });
@@ -229,7 +232,9 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     expect(run(bytes(FIVE.slice(0, -5)), HEAD).notes).not.toContain(FINAL);
     // Review round 14: cut back to 2 entries of the 3 the anchor covers, and the last LF lost too, is cut short.
     const two = run(bytes(FIVE.slice(0, FIVE.indexOf('\n', FIVE.indexOf('\n') + 1))), HEAD);
-    expect([two.break?.code, two.notes]).toEqual(['TORN_LAST_LINE', ['The anchor covers 3 entries, but the log ends inside entry 1: it was cut short, and entries the anchor vouched for are gone.']]);
+    // Round 15: its entries are whole, so it gets the answer it gets with the LF: entries were removed.
+    expect([two.break?.code, two.entries_verified, two.notes]).toEqual(['ANCHOR_COUNT_MISMATCH', 2, ['The last line also lacks its line end (LF); the entry on it is whole, so it was checked as it stands.']]);
+    expect(two.summary).toBe('The log does NOT verify: the log has 2 entries but the anchor says 3: entries were removed from the end, or the log was replaced (ANCHOR_COUNT_MISMATCH).');
   });
 
   it('asks to check the key setting when a seal fails at the first entry after a change of key', () => {

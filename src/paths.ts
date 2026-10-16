@@ -106,11 +106,20 @@ export function leadsTo(p: string): string | null {
  * .tsv, .json, .jsonl, .ndjson): a migration such as 0002_create_access_keys.sql, or a folder add_service_accounts, is not a secret.
  */
 export function isSensitive(rel: string): boolean {
-  const segments = rel.split(/[\\/]/).map((s) => s.toLowerCase());
+  const raw = rel.split(/[\\/]/);
+  const segments = raw.map((s) => s.toLowerCase());
   if (segments.includes('.git')) return true;
   // Azure Functions' local secrets, and Docker's registry logins (review round 12).
   if (segments.at(-1) === 'local.settings.json' || (segments.at(-1) === 'config.json' && segments.at(-2) === '.docker')) return true;
-  const base = segments.at(-1) ?? '';
+  // A copy's " (1)" before the extension is not part of the name, and camelCase words are words too
+  // (review round 15: "secrets (1).json", "awsCredentials.csv"). Both forms are tried: "KeePass" and
+  // "GitHub" are one word each.
+  const last = (raw.at(-1) ?? '').replace(/ ?\(\d+\)(?=\.[^.]+$)/, '');
+  return [last.toLowerCase(), last.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase()].some(sensitiveName);
+}
+
+/** Whether a file name, in lower case, is one isSensitive refuses. */
+function sensitiveName(base: string): boolean {
   return (
     base === '.env' ||
     base.startsWith('.env.') ||
@@ -120,9 +129,10 @@ export function isSensitive(rel: string): boolean {
     ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext)) ||
     // Every type the ledger tool reads; logins and keystore as the export names only, as wallet and logins
     // also name ledgers (review round 13: wallet_transactions.csv was refused), with what a second download
-    // or a copy adds (review round 14: logins (1).csv, logins-2026-10-16.csv); password(s) as a word.
+    // or a copy adds (review round 14: logins (1).csv, logins-2026-10-16.csv). Words are bounded by anything
+    // but a letter or digit, and a space joins two-word names (review round 15: "Bitwarden Export.json").
     (/\.(?:csv|tsv|json|jsonl|ndjson)$/.test(base) &&
-      (/^(?:logins|keystore)(?:[ _-]*(?:\(\d+\)|\d[\d-]*|backup|export|copy))*\.(?:csv|json)$|(?:^|[^a-z])(?:passwords?|credentials?)(?:[^a-z]|$)|(?:^|[-_.])(?:secrets?|creds|bitwarden|lastpass|1password|keepass|dashlane|private[-_]?keys?|secret[-_]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_]?tokens?)(?:[-_.]|$)|^\.?secrets[._-]|api[-_]?keys?|access[-_]?keys?|keyfile|oauth[-_]?tokens?|accesstokens|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
+      (/^(?:logins|keystore)(?:[ _-]*(?:\(\d+\)|\d[\d-]*|backup|export|copy))*\.(?:csv|json)$|(?:^|[^a-z])(?:passwords?|credentials?)(?:[^a-z]|$)|(?:^|[^a-z0-9])(?:secrets?|creds|bitwarden|lastpass|1password|keepass|dashlane|private[-_ ]?keys?|secret[-_ ]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_ ]?tokens?)(?:[^a-z0-9]|$)|^\.?secrets[._-]|api[-_ ]?keys?|access[-_ ]?keys?|keyfile|oauth[-_ ]?tokens?|accesstokens|rootkey|client_secret|service[-_ ]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
         // a Google Cloud key as downloaded: the project's name, then 12 hex digits with at least one letter
         /-(?=[0-9a-f]*[a-f])[0-9a-f]{12}\.json$/.test(base)))
   );

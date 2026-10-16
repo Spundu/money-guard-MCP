@@ -121,7 +121,7 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   const count = (d: string) => (header[0] ?? '').split(d).length - 1;
   const other = header.length === 1 ? DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0] : undefined;
   // A sep= first line in a form money-guard does not read (review round 14: the delimiter hint led to a second error).
-  const sepFirst = /^sep=/i.test(header[0] ?? '');
+  const sepFirst = /^sep\s*=/i.test(header[0] ?? ''); // "sep = ;" too (round 15)
   throw new ToolError(
     'COLUMN_NOT_FOUND',
     `The CSV header has no column ${quoted(name)} (mapped as ${field}).${sepFirst ? '' : hint} The columns are: ${shown.join(', ')}${more}.`,
@@ -163,17 +163,18 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
   const ends: number[] = [];
   let records: string[][];
   try {
-    records = parse(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), {
+    // The data after the sep= line, so that its line end does not decide the others' (review round 15: a
+    // "sep=;" CR line before LF lines read the whole file as one record). Offsets count from the file's start.
+    records = parse(Buffer.from(bytes.buffer, bytes.byteOffset + sepEnd, bytes.byteLength - sepEnd), {
       bom: true,
       delimiter,
       relax_column_count: false,
       max_record_size: MAX_ROW_CHARS,
       skip_empty_lines: true,
       trim: true,
-      to: MAX_ROWS + 2 + (sepEnd === 0 ? 0 : 1), // the header, the limit, and one more to detect "too many"
-      from_line: sepEnd === 0 ? 1 : 2,
+      to: MAX_ROWS + 2, // the header, the limit, and one more to detect "too many"
       on_record: (record: string[], context: { bytes: number }) => {
-        ends.push(context.bytes);
+        ends.push(sepEnd + context.bytes);
         return record;
       },
     }) as string[][];
@@ -181,7 +182,7 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
     if (!(err instanceof CsvError)) throw err;
     const line = lineStarts([...ends, bytes.length]).at(-1) ?? 1;
     const problem = CSV_PROBLEMS[err.code] ?? 'the CSV structure is broken';
-    const unreadSep = sepEnd === 0 && /^(?:\uFEFF)?"?sep=/i.test(new TextDecoder().decode(bytes.subarray(0, 8)));
+    const unreadSep = sepEnd === 0 && /^(?:\uFEFF)?"?sep\s*=/i.test(new TextDecoder().decode(bytes.subarray(0, 16)));
     throw new ToolError('PARSE_ERROR', `Line ${line}: ${problem}.`, unreadSep ? SEP_FIX : 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.');
   }
   const [header, ...data] = records;

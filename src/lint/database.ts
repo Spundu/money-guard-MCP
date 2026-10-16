@@ -44,7 +44,8 @@ const SANITY_MS = 5000;
 /**
  * How much more memory the lint may take while the scripts run than it had once the database had
  * started (SPEC.md §3.9; measured by lintMemory). resourceLimits caps only the worker's JavaScript heap;
- * PGlite keeps its WebAssembly memory and its in-memory files outside it, so the process is watched.
+ * PGlite keeps its WebAssembly memory and its in-memory files outside it, so the whole thread is
+ * measured (getHeapStatistics on Node.js 22.16 and later), not only its heap.
  */
 export const MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024;
 
