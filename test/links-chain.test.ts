@@ -22,12 +22,15 @@ function codeOf(call: () => unknown): string {
   }
 }
 
-/** A project whose db/migrations/c leads through db/chain/J1 … J60 to db/migrations/target, with links to J1 in db/migrations/e. Undefined where links cannot be made. */
+/** How long a chain realpath follows here: Windows follows 63 links, Linux 40. */
+const CHAIN = process.platform === 'win32' ? 60 : 30;
+
+/** A project whose db/migrations/c leads through db/chain/J1 … J(CHAIN) to db/migrations/target, with links to J1 in db/migrations/e. Undefined where links cannot be made. */
 function chained(links: number): string | undefined {
   const dir = tempDir();
   writeTree(dir, { 'db/migrations/target/x.sql': 'select 1;', 'db/migrations/0001.sql': 'select 1;', 'db/chain/keep.txt': '' });
-  for (let i = 60; i >= 1; i -= 1) {
-    const to = i === 60 ? path.join(dir, 'db', 'migrations', 'target') : path.join(dir, 'db', 'chain', `J${i + 1}`);
+  for (let i = CHAIN; i >= 1; i -= 1) {
+    const to = i === CHAIN ? path.join(dir, 'db', 'migrations', 'target') : path.join(dir, 'db', 'chain', `J${i + 1}`);
     if (!trySymlink(to, path.join(dir, 'db', 'chain', `J${i}`), 'dir')) return undefined;
   }
   if (!trySymlink(path.join(dir, 'db', 'chain', 'J1'), path.join(dir, 'db', 'migrations', 'c'), 'dir')) return undefined;
