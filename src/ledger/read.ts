@@ -4,7 +4,7 @@
 
 import { CsvError, parse } from 'csv-parse/sync';
 import { closest } from '../closest.js';
-import { clip, NAME_MAX, quoted } from '../echo.js';
+import { clip, hasUnsafe, NAME_MAX, quoted } from '../echo.js';
 import { MAX_FIELDS, MAX_ROW_CHARS, rowWithTooManyFields, startLines } from './csv-lines.js';
 import { ToolError } from '../errors.js';
 import { JsonLimitError, JsonNumber, JsonSyntaxError, MAX_FIELD_NAMES, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
@@ -322,7 +322,9 @@ function readJson(text: string, columns: ColumnMap, recordsPointer: string): Led
     const where = recordsPointer === '' ? 'The top of the file' : `The value at ${quoted(recordsPointer, 80)}`;
     // One field that holds an array is very likely the rows: name its pointer (review round 18).
     const arrays = isRecord(records) ? Object.keys(records).filter((k) => Array.isArray(records[k])) : [];
-    const only = arrays.length === 1 ? `${recordsPointer}/${encodeToken(arrays[0] ?? '')}` : undefined;
+    // Only one that can be passed back as it is shown: whole, and with no character records_pointer refuses (round 19).
+    const one = arrays.length === 1 ? `${recordsPointer}/${encodeToken(arrays[0] ?? '')}` : undefined;
+    const only = one !== undefined && one.length <= NAME_MAX && !hasUnsafe(one) ? one : undefined;
     throw new ToolError('RECORDS_NOT_ARRAY', `${where} is ${describe(records)}, not an array of records.`, only === undefined ? 'Pass records_pointer: the JSON Pointer of the array of ledger rows, such as "/data/entries".' : `Pass records_pointer ${quoted(only, NAME_MAX)}, the one field there that holds an array.`);
   }
   if (records.length > MAX_ROWS) throw tooManyRows();

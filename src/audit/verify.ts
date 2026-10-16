@@ -183,7 +183,9 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   const read = verifyJsonl(completed ?? bytes, keys.provider);
   const tornAt = completed === null ? -1 : jsonlLineCount(bytes);
   const brokenAtLast = completed !== null && !read.ok && (read.brokenAt ?? 0) >= tornAt;
-  const lastIsWhole = brokenAtLast && !TORN_LIKE.has(reasonCode(read.reason ?? ''));
+  // A BOM breaks the first line whatever follows it (review round 19: Notepad's BOM and no final LF read as cut off).
+  const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  const lastIsWhole = brokenAtLast && (!TORN_LIKE.has(reasonCode(read.reason ?? '')) || (bom && tornAt === 0));
   const verdict = completed === null || (!read.ok && (read.brokenAt ?? 0) < tornAt) || lastIsWhole ? read : { ok: false, lastSeq: tornAt - 1, brokenAt: tornAt, reason: TORN_REASON };
   const notes: string[] = [];
   if (lastIsWhole) notes.push(NO_FINAL_NEWLINE_TOO_NOTE);

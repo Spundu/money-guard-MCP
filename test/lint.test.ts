@@ -102,7 +102,7 @@ describe('money_lint_schema: judging columns', () => {
       ['FLOAT_MONEY', 'public.base_fees.fee', 'double precision', 'ALTER TABLE public.base_fees ALTER COLUMN fee TYPE bigint USING pg_catalog.round(fee OPERATOR(pg_catalog.*) 100)::bigint;'],
       ['FLOAT_MONEY', 'public.shop.amount_pence', 'real', 'ALTER TABLE public.shop ALTER COLUMN amount_pence TYPE bigint USING pg_catalog.round(amount_pence)::bigint;'],
       ['MONEY_TYPE', 'public.shop.plain_label', 'money', 'ALTER TABLE public.shop ALTER COLUMN plain_label TYPE bigint USING (plain_label::numeric OPERATOR(pg_catalog.*) 100)::bigint;'],
-      ['FLOAT_MONEY', 'public.shop.price_dom', 'amount_ff (double precision)', null],
+      ['FLOAT_MONEY', 'public.shop.price_dom', 'public.amount_ff (double precision)', null],
       ['FLOAT_MONEY', 'public.shop.prices', 'double precision[]', null],
       ['MONEY_TYPE', 'public.shop.refund', 'money', 'ALTER TABLE public.shop ALTER COLUMN refund TYPE bigint USING (refund::numeric OPERATOR(pg_catalog.*) 100)::bigint;'],
       ['FLOAT_MONEY', 'public.shop.total', 'double precision', null],
@@ -124,6 +124,21 @@ describe('money_lint_schema: judging columns', () => {
       ['fee', '0003_fee_float.sql'],
       ['grand_total', '0001_init.sql'],
     ]);
+  });
+
+  it('reads the catalog with PostgreSQL\'s own operators, and gives each migration the search_path the last one left', async () => {
+    // Review round 19: a public.= put first on search_path made the lint say no tables existed.
+    const r = await lint({
+      'db/migrations/0001.sql': 'create table orders (price double precision);',
+      'db/migrations/0002.sql': [
+        'create function public.never(a "char", b "char") returns boolean language sql immutable as \'select false\';',
+        'create operator public.= (leftarg = "char", rightarg = "char", function = public.never);',
+        'create schema app;',
+        'set search_path = app, public, pg_catalog;',
+      ].join('\n'),
+      'db/migrations/0003.sql': 'create table later (total real);', // created in app, as the setting says
+    });
+    expect(r.findings.map((f) => `${f.table}.${f.column}`).sort()).toEqual(['app.later.total', 'public.orders.price']);
   });
 
   it('treats listed columns as money, skips ignored ones and counts them', async () => {
@@ -275,6 +290,9 @@ describe('money_lint_schema: judging columns', () => {
     // Review round 9: the summary says so, as the ledger's does.
     expect(r.summary).toMatch(/ Not every finding is listed \(findings_truncated\): pass next_offset as offset for the next ones\.$/);
     expect([r.files_applied.length, r.files_applied_truncated, r.files_applied_count]).toEqual([30, true, 35]);
+    // Review round 19: exactly 30 files are all listed, so the list is not cut short.
+    const thirty = await lint(Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`db/migrations/${String(i).padStart(4, '0')}.sql`, 'select 1;'])));
+    expect([thirty.files_applied.length, thirty.files_applied_truncated, thirty.files_applied_count]).toEqual([30, false, 30]);
     expect([r.other_float_columns.length, r.other_float_columns_count]).toEqual([30, 32]);
     expect(JSON.stringify(r).length).toBeLessThanOrEqual(20_000);
     // Exactly 50 findings are all there: nothing is cut.

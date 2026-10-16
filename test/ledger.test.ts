@@ -207,7 +207,10 @@ describe('money_check_double_entry: the rules', () => {
       expect(other.summary, name).toContain(`"${name}" looks like a currency and is not mapped`);
     }
     // Round 17: "curr" before a date or a period is "current".
-    for (const name of ['curr_month', 'Curr Date']) {
+    // Round 19: "Valuta" beside a date is the value date, "Curr Bal" a balance; a plain currency word first.
+    const ing = check('.csv', 'Buchung,Valuta,t,a,Währung\n2026-01-01,2026-01-02,T1,5,GBP\n2026-01-01,2026-01-03,T1,-5,EUR\n', { columns: { transaction_id: 't', amount: 'a' } });
+    expect(ing.summary).toContain('"Währung" looks like a currency');
+    for (const name of ['curr_month', 'Curr Date', 'Data valuta', 'Curr Bal']) {
       expect(check('.csv', `t,a,${name}\nT1,5,GBP\nT1,-5,EUR\n`, { columns: { transaction_id: 't', amount: 'a' } }).summary, name).not.toContain('looks like a currency');
     }
     const laterJson = check('.json', '[{"t":"T0","a":5},{"t":"T0","a":-5},{"t":"T1","a":10000,"ccy":"GBP"},{"t":"T1","a":-10000,"ccy":"EUR"}]', { columns });

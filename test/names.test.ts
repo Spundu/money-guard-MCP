@@ -1,7 +1,7 @@
 // Which column names count as money (src/lint/names.ts, SPEC.md §3.5), against a table of real column
 // names, and which names say the amounts are minor units already.
 import { describe, expect, it } from 'vitest';
-import { looksLikeMoney, moneyByGuess, unitOfName, words } from '../src/lint/names.js';
+import { looksLikeMoney, moneyByGuess, pricesAUnit, unitOfName, words } from '../src/lint/names.js';
 
 describe('words', () => {
   it('splits snake_case, kebab-case, camelCase, acronyms and digits', () => {
@@ -219,11 +219,27 @@ describe('unitOfName', () => {
     expect(['costbasis', 'new_cost_basis', 'new_costbasis', 'base_pricepoint'].map(looksLikeMoney)).toEqual([true, true, false, false]);
     // Review round 18: an inventory, stock or data balance may be money either way: a guess, so no x100;
     // one with money after it is money.
+    // Review round 19: overtime and time off in lieu are hours; a time balance may be real-time money; a
+    // measure after the balance counts too, and bal is a balance.
+    expect(['balance_hours_remaining', 'allowance_days_left', 'budget_tokens_remaining', 'pto_bal', 'hours_bal', 'balance_change', 'balance_after', 'bal_amount'].map(looksLikeMoney))
+      .toEqual([false, false, false, false, false, true, true, true]);
+    expect(['overtime_balance', 'flexi_balance', 'toil_balance', 'time_balance', 'real_time_balance', 'carbon_budget', 'mileage_budget', 'mileage_allowance'].map((n) => [looksLikeMoney(n), moneyByGuess(n)]))
+      .toEqual([[false, false], [false, false], [false, false], [true, true], [true, true], [false, false], [true, true], [true, true]]); // mileage is paid per mile
+    // A price of a measure unit is money, and the price of one unit.
+    expect(['price_kg', 'cost_kwh', 'fee_gb', 'fuel_price_litre', 'weight_kg', 'distance_km'].map((n) => [looksLikeMoney(n), pricesAUnit(n)]))
+      .toEqual([[true, true], [true, true], [true, true], [true, true], [false, false], [false, false]]);
     expect(['inventory_balance', 'stock_balance', 'data_allowance', 'holiday_allowance_remaining', 'leave_balance_amount'].map((n) => [looksLikeMoney(n), moneyByGuess(n)]))
       .toEqual([[true, true], [true, true], [true, true], [false, false], [true, false]]);
     // A budget is money unless it is of computing or time; a folded -ing name splits.
     expect(['holiday_budget', 'stock_budget', 'inventory_budget', 'growth_budget', 'marketingbudget', 'listingfee', 'latency_budget', 'cpu_budget', 'data_budget'].map((n) => [looksLikeMoney(n), moneyByGuess(n)]))
       .toEqual([[true, false], [true, false], [true, false], [true, false], [true, false], [true, false], [false, false], [false, false], [true, true]]);
+    // Review round 19: a budget in days or hours was money and got x100; a budget for a month or a day is money.
+    const timed = ['time_budget', 'pto_days_budget', 'vacation_days_budget', 'sprint_hour_budget', 'weeks_budget', 'minute_budget', 'nights_budget', 'hrs_budget', 'secs_budget', 'month_budget', 'monthly_budget', 'daily_budget', 'holidaysbalance'];
+    expect(timed.map(looksLikeMoney)).toEqual([false, false, false, false, false, false, false, false, false, true, true, true, false]);
+    // Review round 19: each word added to split folded names, tested folded (an unquoted ParkingFee).
+    const folded = ['advertisingbudget', 'parkingfee', 'packagingcost', 'trainingbudget', 'fundingamount', 'shippingfee', 'bookingfee', 'leavebalance', 'ptobalance', 'vacationbalance', 'sickbalance', 'errorbalance', 'errorbudget', 'baggageallowance', 'luggageallowance', 'luggagefee', 'luggageallowanceamount', 'baggagefee', 'packagingbudget', 'fundingfee', 'databudget'];
+    expect(folded.map(looksLikeMoney)).toEqual([true, true, true, true, true, true, true, false, false, false, false, false, false, false, false, true, true, true, true, true, true]);
+    expect(moneyByGuess('databudget')).toBe(true); // as data_budget
     const minor = ['amount_jpy', 'total_krw', 'price_vnd', 'amount_msat', 'fee_msats', 'amount_yen', 'price_yen',
       // Review round 9: folded (an unquoted AmountJPY) they were multiplied by 100.
       'amountjpy', 'feeyen', 'pricekrw', 'totaljpy', 'balancejpy', 'priceyen',

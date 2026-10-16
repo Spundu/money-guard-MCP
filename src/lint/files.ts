@@ -4,15 +4,6 @@
 
 import { createHash } from 'node:crypto';
 import { readdirSync, realpathSync, statSync, type Dirent } from 'node:fs';
-
-/** Whether `p` is a file now; any failure (missing, unreadable) is no. */
-function isFile(p: string): boolean {
-  try {
-    return statSync(p).isFile();
-  } catch {
-    return false;
-  }
-}
 import path from 'node:path';
 import { quoted, quotedPath } from '../echo.js';
 import { ToolError } from '../errors.js';
@@ -199,11 +190,15 @@ function walk(root: Root, dir: string, base: string, out: string[], visited: Set
       // otherwise ship db/migrations/0002.sql pointing at ../../.env, and run the secrets as SQL.
       const shown = quotedPath(toPosix(path.relative(root.real, full)));
       const outside = () => new ToolError('PATH_OUTSIDE_ROOT', `${shown} is a link to a place outside the project folder "${root.name}".`, 'Remove the link, or pass files with the migrations to run.');
+      // Where it leads, read before it is followed: realpath would open a share it points at (review round 19).
+      const leads = leadsTo(full, root.real);
+      if (leads === null) throw tooManyLinks(toPosix(path.relative(root.real, full)));
+      if (!isInside(root.real, leads)) throw outside();
       try {
         real = realpathSync.native(full);
       } catch (err) {
         // A broken link that leads outside gets the answer one to a place that exists there would.
-        const target = leadsTo(full);
+        const target = leadsTo(full, root.real);
         if (target === null) throw tooManyLinks(toPosix(path.relative(root.real, full)));
         if (isInside(root.real, target)) {
           if (deniedOrLocked(err)) throw unreadable(toPosix(path.relative(root.real, full)), err);
@@ -306,19 +301,31 @@ export function collectSources(root: Root, args: { migrations: string; files?: r
     chosen = [target];
   } else if (args.files !== undefined) {
     chosen = args.files.flatMap((entry) => {
-      // An entry written from the project root, as a model may write it (review round 16).
-      // Not "./" of the root itself (round 17), and only when the shorter path is a file (round 18).
-      const shorter = toPosix(entry).slice(target.rel.length + 1);
-      const fromRoot = target.rel !== '.' && toPosix(entry).startsWith(`${target.rel}/`) && isFile(path.resolve(target.real, shorter));
-      const notInFolder = new ToolError('FILE_NOT_IN_FOLDER', `${quotedPath(entry)} is not a file in ${folder}.`, fromRoot ? `Every entry of files is a path relative to ${folder}: leave out the leading ${quotedPath(`${target.rel}/`)}.` : `Every entry of files is a path relative to ${folder}. Check the spelling.`);
+      // An entry written from the project root, as a model may write it (review round 16). Not "./" of the
+      // root itself (round 17), and only when the shorter path is a migration in the folder (round 18),
+      // looked up as any path argument is, so a shorter path that is absolute, a share (//host/share) or
+      // climbs out with ".." is refused before anything is touched (review round 19: it reached any file,
+      // pipe or share, and the answer told whether it existed).
+      const fromRoot = () => {
+        const shorter = toPosix(entry).slice(target.rel.length + 1);
+        if (!toPosix(entry).startsWith(`${target.rel}/`)) return false; // under ".", "./x.sql" and "x.sql" are the same file
+        try {
+          return isInside(target.real, resolveInRoot(root, toPosix(path.relative(root.real, path.resolve(target.real, shorter))), { kind: 'file', extensions: ['.sql'] }).real);
+        } catch {
+          return false;
+        }
+      };
+      const notInFolder = () => new ToolError('FILE_NOT_IN_FOLDER', `${quotedPath(entry)} is not a file in ${folder}.`, fromRoot() ? `Every entry of files is a path relative to ${folder}: leave out the leading ${quotedPath(`${target.rel}/`)}.` : `Every entry of files is a path relative to ${folder}. Check the spelling.`);
       const lexical = path.resolve(target.real, entry);
-      if (!isInside(target.real, lexical)) throw notInFolder;
+      if (!isInside(target.real, lexical)) throw notInFolder();
       try {
         const f = resolveInRoot(root, toPosix(path.relative(root.real, lexical)), { kind: 'file', extensions: ['.sql'] });
-        if (!isInside(target.real, f.real)) throw notInFolder;
+        if (!isInside(target.real, f.real)) throw notInFolder();
         return f.real === setupReal ? [] : [f]; // the setup file runs once, as setup
       } catch (err) {
-        if (err instanceof ToolError && (err.code === 'PATH_NOT_FOUND' || err.code === 'NOT_A_FILE')) throw notInFolder;
+        if (err instanceof ToolError && (err.code === 'PATH_NOT_FOUND' || err.code === 'NOT_A_FILE')) throw notInFolder();
+        // Named as the entry was written, with what to do in files (review round 19: it was told to pass a folder).
+        if (err instanceof ToolError && err.code === 'FILE_TYPE_NOT_ALLOWED') throw new ToolError('FILE_TYPE_NOT_ALLOWED', `${quotedPath(toPosix(entry))} in files is not a .sql file.`, 'Leave it out of files: only .sql migrations run.');
         throw err;
       }
     });

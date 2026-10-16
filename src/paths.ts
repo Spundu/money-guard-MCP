@@ -8,7 +8,7 @@
 import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { clip, quotedPath } from './echo.js';
+import { clip, NAME_MAX, quoted, quotedPath } from './echo.js';
 import { ToolError } from './errors.js';
 
 /** The project folder, already resolved to its real path (config.ts). */
@@ -60,9 +60,11 @@ const MAX_LINK_HOPS = 64; // above Windows' 63 and Linux's 40: a chain realpath 
  * without needing the end to exist (the parts from the first missing one stay as written). Null when
  * the links go round more than MAX_LINK_HOPS times (a loop says nothing about what is outside). When realpath fails, this tells a link that leads
  * outside the project from a path that is missing inside it, so that through a link that leads outside,
- * a target that exists and one that does not get the same answer (review round 9).
+ * a target that exists and one that does not get the same answer (review round 9). With `within`, it
+ * stops where the path leaves that folder (neither inside it nor above it), before touching anything
+ * there: a link to a share (\\host\share) or an automount (/net/host) is never opened (review round 19).
  */
-export function leadsTo(p: string): string | null {
+export function leadsTo(p: string, within?: string): string | null {
   // A link's text is taken part by part, never tidied first: ".." goes up from where the links before
   // it led, as Linux and macOS take it ("d/../x" through a link d to a folder outside is outside;
   // path.resolve would have dropped "d/..", review round 10). Windows applies ".." in a symbolic link's
@@ -78,6 +80,7 @@ export function leadsTo(p: string): string | null {
       continue;
     }
     const next = path.join(resolved, part);
+    if (within !== undefined && !isInside(within, next) && !isInside(next, within)) return path.join(next, ...parts);
     let link: string;
     try {
       if (!lstatSync(next).isSymbolicLink()) {
@@ -112,13 +115,20 @@ export function splitCamel(text: string, sep: string): string {
 
 const CREDENTIAL_FOLDERS: ReadonlySet<string> = new Set(['.aws', '.azure', '.gcloud', 'gcloud', '.kube', '.ssh', 'configstore', 'legacy_credentials']);
 
+/** The folder of `rel` where command-line tools keep their logins, when `rel` is a ledger-type file in one. */
+export function credentialFolder(rel: string): string | undefined {
+  const raw = rel.split(/[\\/]/);
+  if (!/\.(?:csv|tsv|json|jsonl|ndjson)$/i.test(raw.at(-1) ?? '')) return undefined;
+  return raw.slice(0, -1).find((s) => CREDENTIAL_FOLDERS.has(s.toLowerCase()));
+}
+
 export function isSensitive(rel: string): boolean {
   const raw = rel.split(/[\\/]/);
   const segments = raw.map((s) => s.toLowerCase());
   if (segments.includes('.git')) return true;
   // The folders where command-line tools keep their logins (review round 18: gcloud's adc.json, the Azure
   // CLI's token cache): any ledger-type file in them.
-  if (segments.slice(0, -1).some((s) => CREDENTIAL_FOLDERS.has(s)) && /\.(?:csv|tsv|json|jsonl|ndjson)$/.test(segments.at(-1) ?? '')) return true;
+  if (credentialFolder(rel) !== undefined) return true;
   // Azure Functions' local secrets, and Docker's registry logins (review round 12).
   if (segments.at(-1) === 'local.settings.json' || (segments.at(-1) === 'config.json' && segments.at(-2) === '.docker')) return true;
   // A copy is the same file: " (1)", Windows' " - Copy (2)", macOS's " copy 2" and "Copy of " are left
@@ -172,6 +182,15 @@ function checkSyntax(input: string): void {
 }
 
 function checkSensitive(input: string, rel: string): void {
+  // A billing export saved in gcloud/ is refused for its folder: name it, and the way out (review round 19).
+  const folder = credentialFolder(rel);
+  if (folder !== undefined) {
+    throw new ToolError(
+      'SENSITIVE_PATH',
+      `${shown(input)} is inside ${quoted(folder, NAME_MAX)}, a folder where command-line tools keep their logins.`,
+      'money-guard reads no ledger-type file there. Copy the export to another folder of the project, then pass that path.',
+    );
+  }
   if (isSensitive(rel)) {
     throw new ToolError(
       'SENSITIVE_PATH',
@@ -181,11 +200,13 @@ function checkSensitive(input: string, rel: string): void {
   }
 }
 
-function checkExtension(root: Root, input: string, rel: string, extensions: readonly string[]): void {
+function checkExtension(root: Root, input: string, rel: string, rule: PathRule): void {
+  const extensions = rule.extensions ?? [];
   const ext = path.extname(rel).toLowerCase();
   if (!extensions.includes(ext)) {
-    // A migration written as code needs SQL first, as NO_SQL_FILES says for a folder (review round 18).
-    const code = extensions.includes('.sql') && /^\.(?:[cm]?[jt]s|py|rb|go|java|kt|php|cs|ex|exs)$/.test(ext);
+    // A migration written as code needs SQL first, as NO_SQL_FILES says for a folder (review round 18):
+    // said for migrations only, which take a folder or a file; setup takes one file (round 19).
+    const code = rule.kind === 'either' && extensions.includes('.sql') && /^\.(?:[cm]?[jt]s|py|rb|go|java|kt|php|cs|ex|exs)$/.test(ext);
     throw new ToolError(
       'FILE_TYPE_NOT_ALLOWED',
       `${shown(input)} is not one of the file types this tool reads.`,
@@ -247,7 +268,12 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   // A file rule refuses the wrong type before touching the disk; 'either' must first learn what it is.
   // A name with no extension at all may be a folder: the disk says which (NOT_A_FILE), and a file of that
   // name is refused after it (review round 12: a folder was "not one of the file types").
-  if (rule.kind === 'file' && rule.extensions && path.extname(lexRel) !== '') checkExtension(root, input, lexRel, rule.extensions);
+  if (rule.kind === 'file' && rule.extensions && path.extname(lexRel) !== '') checkExtension(root, input, lexRel, rule);
+
+  // Where the links lead, read before any is followed: realpath would open a share a link points at.
+  const leads = leadsTo(lexical, root.real);
+  if (leads === null) throw tooManyLinks(input);
+  if (!isInside(root.real, leads)) throw linkOutside(root, input);
 
   let real: string;
   try {
@@ -256,7 +282,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     // Through a link that leads out of the project, whether the rest of the path exists would say what
     // is there: the answer is the same either way.
     const near = nearestExisting(root, lexical);
-    const target = leadsTo(lexical);
+    const target = leadsTo(lexical, root.real);
     if (target === null) throw tooManyLinks(input); // the same answer, wherever the chain ends (review round 10)
     if (!isInside(root.real, near.real) || !isInside(root.real, target)) throw linkOutside(root, input);
     if (deniedOrLocked(err)) throw unreadable(toPosix(lexRel), err);
@@ -285,8 +311,8 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
   }
   if (stat.isFile() && rule.extensions) {
     // Both names must pass: the one given, and the real one a link leads to.
-    checkExtension(root, input, lexRel, rule.extensions);
-    checkExtension(root, input, realRel, rule.extensions);
+    checkExtension(root, input, lexRel, rule);
+    checkExtension(root, input, realRel, rule);
   }
   if (stat.isFile() && rule.maxBytes !== undefined && stat.size > rule.maxBytes) {
     throw new ToolError(

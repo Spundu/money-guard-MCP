@@ -4,10 +4,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { describe, expect, it } from 'vitest';
-import { collectSources } from '../src/lint/files.js';
 import { lintSchema } from '../src/lint/run.js';
 import { SPEC_FILES, codeOf, failure, lastDir, lint, newDir, projectRoot } from './support/lint.js';
-import { rootOf, tempDir, writeTree } from './support/tmp.js';
+import { tempDir, writeTree } from './support/tmp.js';
 
 describe('money_lint_schema: failures', () => {
   it('names the file, line and column of a failing statement', async () => {
@@ -104,22 +103,6 @@ describe('money_lint_schema: failures', () => {
     const cased = await failure({ 'db/migrations/0001.sql': 'create table t (id int);' }, { files: ['0001.sql', '0001.SQL'] });
     const insensitive = existsSync(path.join(projectRoot().real, lastDir(), 'db/migrations/0001.SQL'));
     expect(cased.message).toMatch(insensitive ? / is named twice in files: / : /"0001\.SQL" is not a file in /);
-  });
-
-  it('says to leave out the migrations folder from an entry of files written from the project root', () => {
-    // Review round 16: a likely mistake, answered only with "Check the spelling".
-    const dir = tempDir();
-    writeTree(dir, { 'db/migrations/0001.sql': 'select 1;' });
-    const e = (() => { try { collectSources(rootOf(dir), { migrations: 'db/migrations', files: ['db/migrations/0001.sql'] }); } catch (err) { return err as { toText(): string }; } return undefined; })();
-    expect(e?.toText()).toBe('FILE_NOT_IN_FOLDER: "db/migrations/0001.sql" is not a file in "db/migrations". Fix: Every entry of files is a path relative to "db/migrations": leave out the leading "db/migrations/".');
-    // Review round 17: not for the root itself ("./0002.sql"), nor for a sibling folder's name.
-    const fix = (migrations: string, entry: string) => { try { collectSources(rootOf(dir), { migrations, files: [entry] }); } catch (err) { return (err as { fix: string }).fix; } return ''; };
-    expect([fix('.', './0002.sql'), fix('db/migrations', 'db/migrations_old/0001.sql')].map((f) => f.includes('leave out'))).toEqual([false, false]);
-    // Round 18: nor when the shorter path is not a file either; a migration written as code is told what to do.
-    expect(fix('db/migrations', 'db/migrations/0002.sql')).toContain('Check the spelling');
-    writeTree(dir, { 'db/migrations/0003_init.ts': 'export {}' });
-    const ts = (() => { try { collectSources(rootOf(dir), { migrations: 'db/migrations/0003_init.ts' }); } catch (err) { return (err as { fix: string }).fix; } return ''; })();
-    expect(ts).toMatch(/^Pass a folder of \.sql migrations, or one \.sql file, .* Migrations written as code \(Knex, TypeORM\) need SQL first/);
   });
 
   it('runs CREATE INDEX CONCURRENTLY alone in its file, as the 25001 hint says', async () => {
@@ -321,7 +304,7 @@ describe('money_lint_schema: safety', () => {
       'db/migrations/0000.sql': "create or replace function pg_catalog.textcat(text, text) returns text language sql as $$ select pg_catalog.repeat('x', 1000000) $$;",
       'db/migrations/0001.sql': 'create table t (price double precision);',
     });
-    expect([e.code, e.message]).toEqual(['MIGRATION_FAILED', `"${lastDir()}/db/migrations/0001.sql": after this file the database no longer answers correctly (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`]);
+    expect([e.code, e.message]).toEqual(['MIGRATION_FAILED', `"${lastDir()}/db/migrations/0001.sql": after this file the database returns its catalog in a form PostgreSQL never gives (a migration may have replaced one of its built-in functions).`]); // the cause, not COPY ... PROGRAM (round 19)
   });
 
   it('stops an endless migration at the time limit', async () => {

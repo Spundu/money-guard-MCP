@@ -90,7 +90,8 @@ export function parseAuditKeys(raw: string | undefined): Setting<AuditKeys> {
   if (PLACEHOLDER.test(raw.trim())) {
     // Name the variable, never the rest: a default after ":-" could be a key.
     const variable = PLACEHOLDER_NAME.exec(raw.trim())?.[1];
-    const which = variable === undefined ? 'a ${...} placeholder' : `the placeholder for ${variable}`;
+    // Unless the name looks like a key (review round 19: "${<64 hex digits>}" was shown whole).
+    const which = variable === undefined || /[0-9a-fA-F]{32}/.test(variable) ? 'a ${...} placeholder' : `the placeholder for ${variable}`;
     return {
       ok: false,
       error: new ToolError(

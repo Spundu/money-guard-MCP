@@ -295,12 +295,13 @@ describe('money_lint_schema: fix_sql', () => {
 
   it('converts a money column by the unit its name says, as for the other types', async () => {
     // Review round 18: amount_pence money and amount_jpy money were multiplied by 100.
-    const schema = 'create table mm (price money, amount_pence money, amount_jpy money, amount_kwd money, cost_micros money);';
+    const schema = 'create table mm (price money, amount_pence money, amount_jpy money, amount_kwd money, cost_micros money, total_passengers money);';
     const r = await lint({ 'db/migrations/0001.sql': schema });
     const fixes = Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql]));
     expect([fixes.amount_kwd, fixes.cost_micros]).toEqual([null, null]); // the unit needs deciding first
-    const run = [schema, 'insert into mm values (19.99, 1999, 500, 1.234, 1500000);', fixes.price ?? '', fixes.amount_pence ?? '', fixes.amount_jpy ?? ''];
-    expect(await sql(run, 'select price::text, amount_pence::text, amount_jpy::text from mm')).toEqual([{ price: '1999', amount_pence: '1999', amount_jpy: '500' }]);
+    const run = [schema, 'insert into mm values (19.99, 1999, 500, 1.234, 1500000, 3.50);', fixes.price ?? '', fixes.amount_pence ?? '', fixes.amount_jpy ?? '', fixes.total_passengers ?? ''];
+    // Review round 19: the type says it is money, so a name that is money only by a guess is converted too.
+    expect(await sql(run, 'select price::text, amount_pence::text, amount_jpy::text, total_passengers::text as tp from mm')).toEqual([{ price: '1999', amount_pence: '1999', amount_jpy: '500', tp: '350' }]);
   });
 
   it('gives no fix_sql for the price of one unit in a float or a numeric with no scale, which may be below a penny', async () => {
@@ -309,6 +310,10 @@ describe('money_lint_schema: fix_sql', () => {
     expect(Object.fromEntries(r.findings.map((f) => [f.column, f.fix_sql === null]))).toEqual({
       price: false, price_per_kwh: true, price_per_unit_cents: true, cost_per_request: true, unit_price: true, price_per_gb: true, unit_cost: true, unit_fee: false, // a declared scale says its decimals
     });
+    expect(r.fixes.FLOAT_MONEY).toContain('which may be below a penny (choose the unit first)'); // review round 19: the words were missing
+    // Review round 19: a price per a time or a person is an ordinary price.
+    const p = await lint({ 'db/migrations/0001.sql': 'create table rates (price_per_month float8, salary_per_annum float8, rate_per_hour float8, price_per_night numeric, cost_per_click float8, price_unit float8, cost_unit float8, unit_fee float8);' });
+    expect(Object.fromEntries(p.findings.map((f) => [f.column, f.fix_sql === null]))).toEqual({ price_per_month: false, salary_per_annum: false, rate_per_hour: false, price_per_night: false, cost_per_click: true, price_unit: true, cost_unit: true, unit_fee: true }); // review round 19: the unit word after, as Odoo's price_unit
   });
 
   it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {

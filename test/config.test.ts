@@ -48,6 +48,8 @@ describe('parseAuditKeys', () => {
       const text = errorText(parseAuditKeys(raw));
       for (const secret of [KEY_A.slice(0, 8), KEY_B.slice(0, 8), BASE64.slice(0, 8)]) expect(text, raw).not.toContain(secret);
     }
+    // Review round 19: a placeholder whose name is a key is not named.
+    expect(errorText(parseAuditKeys(`\${${'ab'.repeat(32)}}`))).not.toContain('abababab');
   });
 
   it('reads id=hex pairs, with spaces around them, in either letter case', () => {

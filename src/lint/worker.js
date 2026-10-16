@@ -44,6 +44,7 @@ import { tsm_system_time } from '@electric-sql/pglite/contrib/tsm_system_time';
 import { unaccent } from '@electric-sql/pglite/contrib/unaccent';
 import { uuid_ossp } from '@electric-sql/pglite/contrib/uuid_ossp';
 import { vector } from '@electric-sql/pglite-pgvector';
+import { bounded, saneSnapshot } from './worker-rows.js';
 
 /**
  * @typedef {{ name: string, text: string }} Script
@@ -98,9 +99,25 @@ async function main() {
   );
   send({ type: 'ready', version, available, reserved });
 
+  /**
+   * Runs a catalog query with search_path set to pg_catalog alone, then gives the migrations theirs back: the
+   * queries' operators (=, ||, %) are not named with their schema, and a migration can create public.= and put
+   * public first (review round 19). SET and SHOW are statements, which no migration can replace.
+   * @param {string} sql @param {unknown[]} [params]
+   */
+  const catalog = async (sql, params) => {
+    const saved = /** @type {{ search_path: string }} */ ((await db.query('SHOW search_path')).rows[0]).search_path;
+    await db.exec('SET search_path = pg_catalog');
+    try {
+      return (await db.query(sql, params)).rows;
+    } finally {
+      await db.query('SELECT pg_catalog.set_config($1, $2, false)', ['search_path', saved]);
+    }
+  };
+
   for (const [step, script] of job.scripts.entries()) {
     send({ type: 'running', step });
-    const mark = /** @type {{ mark: string }} */ ((await db.query(job.markSql)).rows[0]).mark;
+    const mark = /** @type {{ mark: string }} */ ((await catalog(job.markSql))[0]).mark;
     try {
       await db.exec(script.text);
     } catch (err) {
@@ -126,14 +143,14 @@ async function main() {
       send({ type: 'failed', step, error: { message: OPEN_TRANSACTION } });
       return;
     }
-    const rows = (await db.query(job.snapshotSql, [mark])).rows.map((r) => {
+    const rows = (await catalog(job.snapshotSql, [mark])).map((r) => {
       const row = /** @type {{ col: unknown, ty: unknown }} */ (r);
       return [row.col, row.ty];
     });
     // A migration can replace the functions these are built with and make them huge, which the main thread
     // would keep to the end of the lint, past this thread's limits (review round 18): checked here.
-    if (!rows.every(([col, ty]) => typeof col === 'string' && /^\d{1,10}:\d{1,5}$/.test(col) && typeof ty === 'string' && /^(?:float|\d{1,10})$/.test(ty))) {
-      send({ type: 'unusable', step });
+    if (!saneSnapshot(rows)) {
+      send({ type: 'unusable', step, catalog: true });
       return;
     }
     send({ type: 'snapshot', step, rows });
@@ -141,54 +158,9 @@ async function main() {
   // Said first, so a time limit or a failure while the catalog is read says so, rather than seeming to
   // happen while the last file ran.
   send({ type: 'reading' });
-  const detail = bounded((await db.query(job.detailSql)).rows);
+  const detail = bounded(await catalog(job.detailSql));
   send({ type: 'done', detail });
   await db.close();
-}
-
-/**
- * The catalog rows with their expression texts bounded here, where a migration cannot change the code
- * (review round 17: it can replace pg_catalog.length, and an inheritance chain multiplied distinct
- * defaults to 194 million characters). A text over 2,000 characters, past the 50th of a column, or past
- * 1,000,000 characters in all is left out, and one stand-in takes the place of all a column lost, which
- * the main thread reads as possibly holding an amount: for defaults a text over 2,000 characters, for
- * CHECKs and index texts null. A value that is not text is passed on, for the main thread to refuse.
- * @param {unknown[]} rows
- */
-function bounded(rows) {
-  let left = 1_000_000;
-  /** @param {unknown} texts @param {string | null} stand */
-  const bound = (texts, stand) => {
-    if (!Array.isArray(texts)) return texts;
-    /** @type {unknown[]} */
-    const out = [];
-    let lost = false;
-    for (const t of texts) {
-      if (typeof t === 'string' && (t.length > 2000 || t.length > left || out.length >= 50)) {
-        lost = true;
-        continue;
-      }
-      if (typeof t === 'string') left -= t.length;
-      out.push(t);
-    }
-    if (lost) out.push(stand);
-    return out;
-  };
-  // Names and the column key are short in a database whose functions are PostgreSQL's own (a name is at most
-  // 63 bytes); one that is not sends a row the main thread refuses as a value of the wrong kind, not the text.
-  // A type's text is cut instead, as a result shows it cut (review round 18: a replaced textcat or format_type
-  // made them huge, past this thread's limits once the main thread held them).
-  const EXPRESSIONS = ['defaults', 'checks', 'index_exprs'];
-  const TYPES = ['declared', 'domain_name'];
-  const sane = (/** @type {Record<string, unknown>} */ row) =>
-    typeof row.col === 'string' && /^\d{1,10}:\d{1,5}$/.test(row.col) && Object.entries(row).every(([k, v]) => EXPRESSIONS.includes(k) || TYPES.includes(k) || typeof v !== 'string' || v.length <= 512);
-  if (!rows.every((r) => sane(/** @type {Record<string, unknown>} */ (r)))) return [null];
-  /** @param {unknown} v */
-  const short = (v) => (typeof v === 'string' && v.length > 512 ? v.slice(0, 512) : v);
-  return rows.map((r) => {
-    const row = /** @type {Record<string, unknown>} */ (r);
-    return { ...row, declared: short(row.declared), domain_name: short(row.domain_name), defaults: bound(row.defaults, 'x'.repeat(2001)), checks: bound(row.checks, null), index_exprs: bound(row.index_exprs, null) };
-  });
 }
 
 main().catch((err) => send({ type: 'crashed', error: dbError(err) }));

@@ -166,7 +166,7 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   // nor one that ends in a rate or a ratio. A plain currency name ("Currency", "ccy", "Currency Code")
   // is preferred to one that says which currency it is ("Original Currency"), and a name that ends in
   // its currency word or in "code" to the others.
-  const AMOUNT_WORDS = ['amount', 'amounts', 'balance', 'balances', 'debit', 'credit', 'total', 'price', 'fee', 'value', 'values', 'period', 'rate', 'rates', 'factor', 'ratio', 'in'];
+  const AMOUNT_WORDS = ['amount', 'amounts', 'balance', 'balances', 'bal', 'bals', 'debit', 'credit', 'total', 'price', 'fee', 'value', 'values', 'period', 'rate', 'rates', 'factor', 'ratio', 'in'];
   // For a JSON Pointer, the field's own name: "/amount/currency" is a currency beside an amount.
   const wordsOf = (name: string) =>
     splitCamel(name.startsWith('/') ? name.slice(name.lastIndexOf('/') + 1) : name, ' ') // "ISOCurrencyCode" too (round 16)
@@ -178,11 +178,13 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities', 'währung', 'devise', 'moneda', 'divisa', 'valuta', '4217'];
   // "curr" before a date or a period is "current" (review round 17: curr_month, Curr Date).
   const PERIOD_WORDS = ['date', 'day', 'week', 'month', 'quarter', 'year', 'period', 'time'];
+  // "Valuta" is also the value date (German banks; Italian "Data valuta"): beside a date word it is that (round 19).
+  const DATE_WORDS = ['date', 'data', 'datum', 'dt', 'tag', 'giorno'];
   const looksLikeCurrency = (name: string) => {
     const ws = wordsOf(name);
     // A flag (is_foreign_currency) or a pair (ccy_pair, GBPUSD) is not the currency of a row (review round 12).
     if (['is', 'has'].includes(ws[0] ?? '') || ws.includes('pair') || ws.includes('pairs')) return false;
-    const currency = ws.some((w, i) => CURRENCY.includes(w) && !(w === 'curr' && PERIOD_WORDS.includes(ws[i + 1] ?? ''))) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
+    const currency = ws.some((w, i) => CURRENCY.includes(w) && !(w === 'curr' && PERIOD_WORDS.includes(ws[i + 1] ?? '')) && !(w === 'valuta' && ws.some((x) => DATE_WORDS.includes(x)))) || (ws[0] === 'cur' && (ws.length === 1 || ws[1] === 'code'));
     return currency && !ws.some((w) => AMOUNT_WORDS.includes(w));
   };
   const endsLikeOne = (name: string) => [...CURRENCY, 'cur', 'code'].includes(wordsOf(name).at(-1) ?? '');
@@ -190,7 +192,9 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
     const ws = wordsOf(name);
     return CURRENCY.includes(ws[0] ?? '') && (ws.length === 1 || (ws.length === 2 && ws[1] === 'code'));
   };
-  const candidates = names.filter(looksLikeCurrency);
+  // "Valuta" alone may still be the value date: a name with another currency word comes first (ING: "Valuta", "Währung").
+  const found = names.filter(looksLikeCurrency);
+  const candidates = [...found.filter((n) => !wordsOf(n).includes('valuta')), ...found.filter((n) => wordsOf(n).includes('valuta'))];
   const name = candidates.find(plain) ?? candidates.find(endsLikeOne) ?? candidates[0];
   return name === undefined ? '' : ` ${quoted(name)} looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }

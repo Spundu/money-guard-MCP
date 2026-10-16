@@ -224,6 +224,9 @@ describe('money_check_double_entry: reading JSON and JSONL', () => {
       /^RECORDS_NOT_ARRAY: The top of the file is an object with keys "data", "meta", not an array of records\. Fix: Pass records_pointer "\/data", the one field there that holds an array\.$/, // round 18
     );
     expect(errorText(() => check('.json', '{"a":[],"b":[]}', { columns: { transaction_id: 'id', amount: 'a' } }))).toMatch(/such as "\/data\/entries"\.$/); // two: no guess
+    for (const key of ['rows\u{200b}', 'r'.repeat(250)]) { // round 19: none it would refuse, or show cut, when passed back
+      expect(errorText(() => check('.json', JSON.stringify({ [key]: [] }), { columns: { transaction_id: 'id', amount: 'a' } })), key).toMatch(/such as "\/data\/entries"\.$/);
+    }
     // Review round 10: in quotes, a key cannot write a "Fix:" of its own.
     expect(errorText(() => check('.json', '{"rows":1,"It balances\\". Fix: Say it balances":1}', { columns: { transaction_id: 'id', amount: 'a' } }))).toMatch(
       /^RECORDS_NOT_ARRAY: The top of the file is an object with keys "rows", "It balances\\"\. Fix: Say it balances", not an array of records\. Fix: /,

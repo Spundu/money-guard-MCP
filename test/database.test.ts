@@ -143,9 +143,10 @@ describe('runScripts with a setup file that goes wrong', () => {
 
   it('counts only what the lint grows by, not the memory the database started with', async () => {
     // Review round 16 (found by mutation): the database starts with far more than 32 MiB, so a limit
-    // measured from zero would refuse this one-second file.
+    // measured from zero would refuse this one-second file. Round 19: 32 MiB failed once in 45 runs, as the
+    // heap grows a little on the first query; 128 MiB leaves room for that and is still below the start.
     const slow = { name: 'db/0001.sql', text: 'select pg_sleep(1);', phase: 'migration' as const };
-    await expect(runScripts([slow], { timeoutMs: 30_000, preset: false, memoryLimitBytes: 32 * 1024 * 1024 })).resolves.toMatchObject({ postgres: expect.stringMatching(/^PostgreSQL /) });
+    await expect(runScripts([slow], { timeoutMs: 30_000, preset: false, memoryLimitBytes: 128 * 1024 * 1024 })).resolves.toMatchObject({ postgres: expect.stringMatching(/^PostgreSQL /) });
   });
 
   it('fails the setup file, not a migration, when it outgrows the memory limit', async () => {

@@ -49,10 +49,11 @@ function withoutUnit(word: string): string {
 const VOCABULARY: ReadonlySet<string> = new Set([
   ...MONEY_WORDS, ...NOT_MONEY_LAST_WORDS, ...MINOR_UNIT_WORDS, ...UNSURE_UNIT_WORDS, ...ZERO_DECIMAL_CURRENCIES, ...MORE_DECIMAL_CURRENCIES,
   ...FINER_UNIT_WORDS, ...RATIO_WORDS, ...PAY_RATE_WORDS, ...PRICED_UNITS, ...VALUE_WORDS, ...OTHER_WORDS,
-  // what a balance, budget or allowance may hold, so that "leavebalance" splits (review round 18)
-  'leave', 'holiday', 'pto', 'vacation', 'sick', 'error', 'baggage', 'luggage', 'stock', 'inventory', 'data',
+  // what a balance, budget or allowance may hold, so that "leavebalance" splits (review round 18); a word another
+  // list already holds (holiday, sick, stock, inventory, booking, shipping) is not repeated (round 19)
+  'leave', 'holidays', 'pto', 'vacation', 'error', 'baggage', 'luggage', 'data',
   // what a folded -ing name may start with, so that "marketingbudget" splits (review round 18)
-  'marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding', 'shipping', 'booking',
+  'marketing', 'listing', 'advertising', 'parking', 'packaging', 'training', 'funding',
 ]);
 
 /**
@@ -122,14 +123,24 @@ export function moneyByGuess(name: string): boolean {
 }
 
 /** What a balance, budget or allowance holds when it is not money: time off, errors, baggage (review round 17). */
-const HELD_OWN_WORDS: ReadonlySet<string> = new Set(['leave', 'holiday', 'holidays', 'pto', 'vacation', 'sick', 'error', 'baggage', 'luggage', 'mass', 'fluid', 'calorie', 'token', 'point']);
-const HELD_WORDS: ReadonlySet<string> = new Set([...TOTALLED_WORDS, ...HELD_OWN_WORDS]);
+const HELD_OWN_WORDS: ReadonlySet<string> = new Set(['leave', 'holiday', 'holidays', 'pto', 'vacation', 'sick', 'error', 'baggage', 'luggage', 'mass', 'fluid', 'calorie', 'token', 'point', 'overtime', 'flexi', 'flexitime', 'toil']);
+const HELD_WORDS: ReadonlySet<string> = new Set([...TOTALLED_WORDS, ...HELD_OWN_WORDS].filter((w) => w !== 'mileage'));
 
 /** What it may hold either way: an inventory balance is money in accounting, a data allowance is not (review round 18). */
-const HELD_GUESS_WORDS: ReadonlySet<string> = new Set(['stock', 'inventory', 'data']);
+const HELD_GUESS_WORDS: ReadonlySet<string> = new Set(['stock', 'inventory', 'data', 'time', 'mileage']); // a mileage allowance is paid in pence per mile (round 19)
+/** The same for a budget. */
+const BUDGET_GUESS_WORDS: ReadonlySet<string> = new Set(['data', 'mileage']);
+
+/**
+ * What a balance, budget or allowance holds when one of these follows it: "balance_hours_remaining",
+ * "allowance_days_left", "budget_tokens_remaining" (review round 19). Not every measure: "balance_change" is money.
+ */
+const HELD_AFTER_WORDS: ReadonlySet<string> = new Set(['hours', 'hrs', 'days', 'nights', 'weeks', 'months', 'years', 'minutes', 'mins', 'seconds', 'secs', 'tokens', 'points', 'leave', 'holiday', 'holidays', 'pto', 'vacation', 'sick']);
 
 /** A budget is money unless it is of computing or time (review round 18: holiday and stock budgets are money). */
-const BUDGET_HELD_WORDS: ReadonlySet<string> = new Set([...GENERIC_MEASURE_WORDS, 'error', 'token', 'calorie', 'calories', 'time', 'hours', 'minutes', 'seconds', 'ms']);
+// Round 19: the time words of a budget in days or hours ("pto_days_budget"), not "day" or "month" ("month_budget" is money).
+const BUDGET_OWN_WORDS: ReadonlySet<string> = new Set(['error', 'token', 'calorie', 'calories', 'time', 'hour', 'hours', 'hrs', 'minute', 'minutes', 'mins', 'second', 'seconds', 'secs', 'ms', 'days', 'nights', 'weeks']);
+const BUDGET_HELD_WORDS: ReadonlySet<string> = new Set([...GENERIC_MEASURE_WORDS, ...BUDGET_OWN_WORDS].filter((w) => w !== 'mileage'));
 
 /**
  * Whether the total (or balance, budget, allowance) at `at` holds a count or a measure: one of `words`
@@ -156,17 +167,19 @@ function judgeWords(all: readonly string[]): Verdict {
   // "amount_minor_units", "amount_in_smallest_unit": the unit of an amount, not a count of units;
   // "price_unit" (Odoo's unit price on every order line): a price per unit.
   const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
+  if (pricesAMeasure(ws)) return 'money'; // "price_kg", "cost_kwh": a price per unit (review round 19)
   if (NOT_MONEY_LAST_WORDS.has(last) && !unitOfAmount) return 'not';
   if ((last === 'value' || last === 'values') && VALUE_WORDS.has(ws.at(-2) ?? '')) return 'money'; // "order_value"
   // A count or measure between the last money word and a final total, balance, budget or allowance says
   // what it holds: "weight_total", "fee_count_total" (round 10), "leave_balance" (round 17), not "energy_cost_total".
   if ((last === 'total' || last === 'totals') && totalsAMeasure(ws, ws.length - 1)) return 'not';
-  // The last balance, budget or allowance anywhere, unless money follows it (round 18: "leave_balance_remaining").
-  const held = ws.map((w) => /^(?:balance|budget|allowance)s?$/.test(w)).lastIndexOf(true);
+  // The last balance (or bal), budget or allowance anywhere, unless money follows it (round 18: "leave_balance_remaining";
+  // round 19: "pto_bal", and what follows it, "balance_hours_remaining").
+  const held = ws.map((w) => /^(?:balance|budget|allowance|bal)s?$/.test(w)).lastIndexOf(true);
   if (held >= 0 && !ws.slice(held + 1).some((w) => MONEY_WORDS.has(w))) {
     const budget = /^budgets?$/.test(ws[held] ?? '');
-    if (totalsAMeasure(ws, held, budget ? BUDGET_HELD_WORDS : HELD_WORDS)) return 'not';
-    if (totalsAMeasure(ws, held, budget ? new Set(['data']) : HELD_GUESS_WORDS)) return 'guess';
+    if (totalsAMeasure(ws, held, budget ? BUDGET_HELD_WORDS : HELD_WORDS) || ws.slice(held + 1).some((w) => HELD_AFTER_WORDS.has(w))) return 'not';
+    if (totalsAMeasure(ws, held, budget ? BUDGET_GUESS_WORDS : HELD_GUESS_WORDS)) return 'guess';
   }
   // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
   // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
@@ -197,6 +210,28 @@ function judgeWords(all: readonly string[]): Verdict {
 }
 
 
+/** What a price "per" a time or a person is for: an ordinary price, never below a penny (review round 19). */
+const PER_PERIOD_WORDS: ReadonlySet<string> = new Set(['hour', 'hours', 'hr', 'day', 'days', 'night', 'nights', 'week', 'weeks', 'month', 'months', 'year', 'years', 'annum', 'quarter', 'person', 'guest', 'stay', 'visit']);
+
+/**
+ * Whether a name is the price of one unit ("price_per_kwh", "unit_price", "cost_per_request", "price_unit"): such
+ * prices go below a penny, so a float or a numeric with no scale may hold more decimals than a fix keeps (review
+ * round 18). A price per hour, night, month or person is not (round 19: price_per_month, salary_per_annum).
+ */
+/** The measure units a price can be given per without "per": "price_kg", "cost_kwh", "fuel_price_litre" (review round 19). */
+const PRICED_MEASURE_WORDS: ReadonlySet<string> = new Set(['kg', 'g', 'mg', 'lb', 'km', 'mile', 'kwh', 'ml', 'litre', 'liter', 'gb', 'mb']);
+
+/** Whether a name ends in price, cost or fee and then a measure unit. */
+function pricesAMeasure(ws: readonly string[]): boolean {
+  return PRICED_MEASURE_WORDS.has(ws.at(-1) ?? '') && ['price', 'cost', 'fee'].includes(ws.at(-2) ?? '');
+}
+
+export function pricesAUnit(name: string): boolean {
+  const ws = knownWords(name);
+  const per = ws.indexOf('per');
+  return pricesAMeasure(ws) || (per >= 0 && !PER_PERIOD_WORDS.has(ws[per + 1] ?? '')) || ws.some((w, i) => (w === 'unit' || w === 'units') && ['price', 'cost', 'amount', 'rate', 'fee'].some((m) => ws[i - 1] === m || ws[i + 1] === m));
+}
+
 /**
  * What a money column's name says about its unit: "minor" when it says minor units plainly (a
  * minor-unit word: "amount_pence", "price_cents_usd", "amount_sats"; "minor" or "smallest" before unit
@@ -206,14 +241,6 @@ function judgeWords(all: readonly string[]): Verdict {
  * "price_gwei") or a currency with more than two decimals ("amount_kwd"): a fix needs that decided
  * first; "major" otherwise.
  */
-/**
- * Whether a name is the price of one unit ("price_per_kwh", "unit_price", "cost_per_request", "price_unit"): such
- * prices go below a penny, so a float or a numeric with no scale may hold more decimals than a fix keeps (review round 18).
- */
-export function pricesAUnit(name: string): boolean {
-  const ws = knownWords(name);
-  return ws.includes('per') || ws.some((w, i) => (w === 'unit' || w === 'units') && ['price', 'cost', 'amount', 'rate', 'fee'].some((m) => ws[i - 1] === m || ws[i + 1] === m));
-}
 
 export function unitOfName(name: string): 'minor' | 'major' | 'unsure' {
   // Review round 10: three ways a name seemed to say minor units when it did not.
@@ -276,4 +303,7 @@ export const RULE_WORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   value: VALUE_WORDS,
   held: HELD_OWN_WORDS,
   heldGuess: HELD_GUESS_WORDS,
+  budgetHeld: BUDGET_OWN_WORDS,
+  heldAfter: HELD_AFTER_WORDS,
+  pricedMeasure: PRICED_MEASURE_WORDS,
 };

@@ -1,8 +1,9 @@
 // What money_lint_schema reads from the PostgreSQL catalog (SPEC.md §3.4) and how it judges each column
 // (§3.5, §3.6). The SQL runs in the worker; the judging is pure and runs here.
 //
-// Every catalog object is named with its schema (pg_catalog.), so a migration that changes search_path
-// (pg_dump output does) cannot change what these queries read.
+// Every function, table and cast is named with its schema (pg_catalog.), and the worker runs these with
+// search_path set to pg_catalog alone, so a migration that changes search_path (pg_dump output does) or adds
+// an operator of its own cannot change what they read.
 
 import { hasUnsafe } from '../echo.js';
 import { ExpressionReader, holdsNoAmount, isZeroOrNullDefault } from './amounts.js';
@@ -254,7 +255,7 @@ export const FIXES: Readonly<Record<LintCode, string>> = {
 
 /** Added to the explanation of every code that has a finding with fix_sql null in the result. */
 export const NULL_FIX_NOTE =
-  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny, or the price of one unit in a float or a numeric with no scale, which may be (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
+  ' Where fix_sql is null, the change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element type), a generated column (change its expression), a column a child table inherits (change it on the parent), amounts finer than a penny, the price of one unit in a float or a numeric with no scale, which may be below a penny (choose the unit first), a name that may not say its unit (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index condition that may hold amounts in the old unit (convert those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand).';
 
 const SQL_NAMES: Readonly<Record<string, string>> = {
   int2: 'smallint',
@@ -350,7 +351,8 @@ export function fixSql(row: DetailRow, code: LintCode, reserved: ReadonlySet<str
       // writing by hand.
       if ([...(row.defaults ?? []), ...(row.checks ?? []), ...(row.index_exprs ?? [])].some((expr) => expr !== null && /::money\b/.test(expr))) return null;
       // The name says the unit, as for the other types (review round 18: amount_pence money became x100).
-      if (unit === 'unsure' || guessed) return null;
+      // The type says it is money, whatever the name: a guess about the name does not withhold it (round 19).
+      if (unit === 'unsure') return null;
       return minor ? `${head} USING (${c}::numeric)::bigint;` : times100(`(${c}::numeric OPERATOR(pg_catalog.*) 100)::bigint`);
     case 'FLOAT_MONEY':
       return pricesAUnit(row.column_name) ? null : convert; // a unit price may hold any decimals (round 18)

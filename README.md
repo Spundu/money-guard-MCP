@@ -194,6 +194,8 @@ agent adds it as a new migration and runs the check again, and the check runs th
 It is `null` where the change needs a decision or the agent's own migration:
 - the unit is unclear: a column with four decimal places, or a name such as `amount_minor`,
   `price_sat` (Saturday?), `cost_micros` or `amount_kwd` (a dinar has 1,000 fils);
+- the price of one unit in a float or a numeric with no scale (`unit_price`, `price_per_kwh`), which may
+  be below a penny; a price per month or per night is converted as usual;
 - the name is money only by a guess: `total_passengers` may be a count (list it in `money_columns` if it
   is money);
 - a default, a CHECK constraint or a unique index condition may hold amounts in pounds, in the table

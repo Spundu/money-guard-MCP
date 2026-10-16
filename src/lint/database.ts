@@ -79,7 +79,7 @@ type Message =
   | { type: 'snapshot'; step: number; rows: Array<[string, string]> }
   | { type: 'reading' }
   | { type: 'failed'; step: number; error: DbError }
-  | { type: 'unusable'; step: number }
+  | { type: 'unusable'; step: number; catalog?: boolean }
   | { type: 'crashed'; error: DbError }
   | { type: 'done'; detail: DetailRow[] }; // from the real worker, checked with isDetailRow: the migrations control the database
 
@@ -242,10 +242,10 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
       return new ToolError(failedCode(script), `${script.name}: ${what} (${why}).`, fix);
     };
     // After a statement PGlite cannot carry out (COPY ... PROGRAM), the database answers wrongly or not at all.
-    const stuck = (step: number, what: string): ToolError => {
+    const stuck = (step: number, what: string, why = 'a statement PGlite cannot carry out, such as COPY ... PROGRAM'): ToolError => {
       const script = scriptAt(step);
       const fix = wayPast(script, options.single, { setup: 'Take that statement out of the setup file.', folder: 'Leave the file out with files.', single: 'Lint a copy without that statement.' });
-      return new ToolError(failedCode(script), `${script.name}: after this file the database ${what} (a statement PGlite cannot carry out, such as COPY ... PROGRAM).`, fix);
+      return new ToolError(failedCode(script), `${script.name}: after this file the database ${what} (${why}).`, fix);
     };
 
     const memoryLimit = options.memoryLimitBytes ?? MEMORY_LIMIT_BYTES;
@@ -331,7 +331,8 @@ function startScripts(scripts: readonly Script[], options: RunOptions, ended: ()
           finish({ error: failure(scriptAt(m.step), m.error, { available, preset: options.preset, filesGiven: options.filesGiven ?? false, single: options.single ?? false, setupGiven: options.setupGiven ?? false }) });
           break;
         case 'unusable':
-          finish({ error: stuck(m.step, 'no longer answers correctly') });
+          // Review round 19: rows of a shape the catalog never has come from a replaced built-in function.
+          finish({ error: m.catalog === true ? stuck(m.step, 'returns its catalog in a form PostgreSQL never gives', 'a migration may have replaced one of its built-in functions') : stuck(m.step, 'no longer answers correctly') });
           break;
         case 'crashed':
           // The database's own message may quote the migrations (RAISE EXCEPTION): in quotes.

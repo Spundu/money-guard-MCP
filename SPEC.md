@@ -126,7 +126,10 @@ internet and never touches a real database.
 Every path argument:
 1. is a string of 1-1,024 characters. It is relative to the root; an absolute path is accepted only if
    it lies inside the root.
-2. is resolved with `realpath`, so symlinks are followed first and checked after. The real target must
+2. is resolved with `realpath`, so symlinks are followed first and checked after. Before that, each
+   link's text is read (`readlink`) part by part, and a path whose links lead out of the project is
+   refused without opening anything there: a link to a share (`\\host\share`) or an automount
+   (`/net/host`) makes no network request (review round 19). The real target must
    be inside the real root. The check is `path.relative(realRoot, realTarget)`: the result must not
    start with `..` and must not be absolute (on Windows a different drive comes back absolute).
 3. must not contain NUL. Windows device and UNC forms are refused (`\\?\`, `\\.\`, `\\server\share`).
@@ -280,8 +283,8 @@ Shared error codes:
 | `PATH_OUTSIDE_ROOT` | Resolves outside the root (including through a symlink). | Use a path inside the project. On Windows, for a path that starts with one `/`, it adds that such a path begins at the root of the drive: Git Bash paths (`/c/Users/...`) are not understood. |
 | `PATH_NOT_FOUND` | Nothing at that path. | Names the nearest existing parent folder. |
 | `NOT_A_FILE` | A folder where a file is needed, or something that is neither a file nor a folder. | Says which one the tool expects. |
-| `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. |
-| `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. |
+| `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. For `migrations` given a migration written as code (.ts, .js, .py and the like), says to generate SQL first, as `NO_SQL_FILES` does. A `files` entry is named as written and told to leave the file out of `files`. |
+| `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. A ledger-type file in a folder where command-line tools keep their logins (§2.3) is named as inside that folder, and the fix says to copy the export to another folder of the project. |
 | `FILE_TOO_LARGE` | Over the tool's size limit. | States the limit; suggests a smaller export. |
 | `FILE_UNREADABLE` | The file or folder passed the checks but cannot be read: another program has it locked (Windows), permission is denied, or it went away. | Locked: close the program that holds it. Permission denied: give the user that runs the server read access, and read and search (x) access to each folder on its path. Gone: check the path. Then call again. |
 | `BUSY` | A second `money_lint_schema`, or a ledger or audit check, while a lint runs (§2.6). | Retry after the running lint finishes: usually a few seconds, at most its time limit. |
@@ -472,8 +475,10 @@ never converged: verify by executing, not by parsing.
    - created as float in `0001`, still float → `0001`.
    - created as numeric in `0001`, altered to float in `0005` → `0005`.
 7. The worker is terminated when the lint ends (it has its answer, fails, runs out of time or is
-   cancelled), and the database is discarded. Catalog queries name every object with its schema
-   (`pg_catalog.`), so a migration that changes `search_path` cannot change what they read.
+   cancelled), and the database is discarded. Catalog queries name every function, table and cast with its schema
+   (`pg_catalog.`) and run with `search_path` set to `pg_catalog` alone (the migrations' own setting is
+   put back after each), so a migration that changes `search_path` or adds operators of its own cannot
+   change what they read. One that replaces PostgreSQL's own functions still can (§6).
 8. **One database thread at a time.** The lint answers at once, but the next lint's worker starts only
    once the last one has ended (a fraction of a second after it was told to). On Node.js 24, a thread
    with WebAssembly that starts while another is being torn down can make V8 abort the whole process
@@ -628,14 +633,21 @@ The word lists:
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
 - **A balance, budget or allowance of something else** is not money: a count or measure word, or one
   of leave, holiday, holidays, pto, vacation, sick, error, baggage, luggage, mass, fluid, calorie,
-  token or point, between the last balance, budget or allowance in the name and the money word before it,
-  with no money word after it (`hours_balance`, `holiday_allowance`, `error_budget`,
-  `leave_balance_remaining`, the folded `leavebalance`; `account_balance`, `travel_allowance` and
-  `balance_after` are money). With stock, inventory or data there it may be either (an inventory
-  balance is money in accounting), so it is money by a guess: a finding with a null `fix_sql`. A
-  budget is money unless the word before it is of computing or time (latency, cpu, memory, tokens,
-  errors, hours: `latency_budget`); `holiday_budget`, `stock_budget` and `growth_budget` are money,
-  and `data_budget` is a guess.
+  token, point, overtime, flexi, flexitime or toil, between the last balance, budget or allowance in
+  the name and the money word before it, with no money word after it (`hours_balance`,
+  `holiday_allowance`, `error_budget`, `leave_balance_remaining`, the folded `leavebalance`,
+  `overtime_balance`), or one of hours, hrs, days, nights, weeks, months, years, minutes, mins,
+  seconds, secs, tokens, points, leave, holiday, holidays, pto, vacation or sick after it
+  (`balance_hours_remaining`, `allowance_days_left`, `budget_tokens_remaining`); bal counts as balance
+  (`pto_bal`). `account_balance`, `travel_allowance`, `balance_after` and `balance_change` are money. With
+  stock, inventory, data, time or mileage there it may be either (an inventory balance is money in accounting,
+  and so is `real_time_balance`), so it is money by a guess: a finding with a null `fix_sql`. A
+  budget is money unless a measure after generic money words, or one of error, token, calorie, calories,
+  time, hour, hours, hrs, minute, minutes, mins, second, seconds, secs, ms, days, nights or weeks, stands there instead (`latency_budget`, `carbon_budget`,
+  `time_budget`); `holiday_budget`, `stock_budget` and `growth_budget` are money,
+  and `data_budget` and `mileage_budget` are guesses (a mileage allowance is paid in pence per mile).
+- **A price of a measure unit** is money: price, cost or fee as the word before a last word of kg, g,
+  mg, lb, km, mile, kwh, ml, litre, liter, gb or mb (`price_kg`, `cost_kwh`), the price of one unit (§3.6).
 - **Minor-unit words** (`fix_sql` only rounds; the word right after "per" does not count, as it says
   what the amount is for, as in `price_per_cent`, but a unit word after that does: `price_per_unit_cents`
   is in cents, and `cost_per_click_micros`, `price_per_unit_kwd` and `price_per_month_minor_units`,
@@ -704,13 +716,16 @@ conversion follows the name and the declared scale; the test suite runs each kin
   less) holds whole numbers, which stay as they are (`... TYPE bigint;`); no declared scale rounds like
   a float. A column finer than a minor unit (more than 2 decimal places, or any decimals on a
   minor-unit name) gets `null`: the unit needs a decision first.
-- **`MONEY_TYPE`:** `... USING (<c>::numeric OPERATOR(pg_catalog.*) 100)::bigint;` (the money type holds major units, with
+- **`MONEY_TYPE`:** `... USING (<c>::numeric OPERATOR(pg_catalog.*) 100)::bigint;`, or for a minor-unit name
+  (`amount_pence`, `amount_jpy`) `... USING (<c>::numeric)::bigint;`, and `null` for a name whose unit is
+  unsure (`amount_minor`, `cost_micros`); a name that is money only by a guess (`total_passengers`) is still
+  converted, as the type says it is money. The money type holds major units, with
   the fraction digits of the database's `lc_monetary`: 2 in the lint database and most locales; check
-  a database set to a locale with 0 or 3, such as ja_JP, before running it).
+  a database set to a locale with 0 or 3, such as ja_JP, before running it.
   `null` when the default is written as a money value (`0::money`): PostgreSQL cannot cast it to
   bigint, so the ALTER would fail.
 - **`SMALLINT_MONEY`:** `... TYPE bigint;`
-- **`null`** for a conversion of `FLOAT_MONEY` or `NUMERIC_MONEY` when the name is money only by a
+- **`null`** for a conversion of `FLOAT_MONEY` or `NUMERIC_MONEY` (not `MONEY_TYPE`) when the name is money only by a
   guess (§3.5: `total_passengers`, `water_total`) and the column is not in `money_columns`: a
   measure must not be multiplied by 100. Widening a whole-number column (`... TYPE bigint;`) is still
   offered.
@@ -761,8 +776,10 @@ conversion follows the name and the declared scale; the test suite runs each kin
     own (a date or time, `interval`, `boolean`, `uuid`, `inet`, `cidr`, JSON, `bytea`): a domain
     (`price::small_amt`) or an enum, whose own rules may bound the amount;
   - a pattern over the amount's text, `~`, `LIKE` or `SIMILAR TO`, which checks its form in pounds;
-  - the price of one unit (`price_per_kwh`, `cost_per_request`, `unit_price`, `price_unit`) in a float
-    or a `numeric` with no declared scale: it may hold less than a penny, which rounding would lose;
+  - the price of one unit (`price_per_kwh`, `cost_per_request`, `unit_price`, `price_unit`, `price_kg`) in a float
+    or a `numeric` with no declared scale: it may hold less than a penny, which rounding would lose
+    (a price per hour, day, night, week, month, year, annum, quarter, person, guest, stay or visit is an
+    ordinary price, and is converted: `price_per_month`);
   - a default, CHECK or index expression longer than 2,000 characters, which is not read and counts as
     holding an amount; and more than 50 defaults, CHECKs or index texts of one column (counting its
     partitions and children), past which the rest are not read;
@@ -800,7 +817,7 @@ shows it: the tool runs the new migration too.
 | `severity` | `"error"` or `"warning"` | |
 | `table` | string | `schema.table` |
 | `column` | string | |
-| `type` | string | `"double precision"`, `"numeric(10,2)"`, `"pence (bigint)"` for a domain |
+| `type` | string | `"double precision"`, `"numeric(10,2)"`, `"public.pence (bigint)"` for a domain (named with its schema, as the catalog is read with `search_path` set to `pg_catalog`) |
 | `introduced_in` | string | The migration file, relative to the root. |
 | `fix_sql` | string or null | |
 
@@ -811,7 +828,7 @@ shows it: the tool runs the new migration too.
 | `SETUP_FAILED` | The preset or the `setup` file fails, or the `setup` file is not UTF-8. | The same details; the fix speaks of the setup file, which `files` cannot leave out. |
 | `NO_SQL_FILES` | The folder has no `.sql` files to run. | What it holds instead, subfolders included (the five most common file types, such as "It holds 3 .js files and 1 .ts file." or "It holds 1 .prisma file."; or "It is empty.", or "It holds folders but no files."), with the fix "Check that migrations points at the folder of migrations. Migrations written as code (Knex, TypeORM) need SQL first: drizzle-kit generate, prisma migrate diff --script, or pg_dump --schema-only."; or that it holds no migrations to run: its `.sql` files are down steps (left out) or the setup file (run once, as setup), and the same when `migrations`, or every entry of `files`, names the setup file. |
 | `TOO_MANY_FILES` | More than 2,000 `.sql` files, more than 10,000 files and folders to look through for them (listing them blocks the server), or folders (or links to folders) nested more than 100 deep. | Points at the folder of migrations, or `files`; for more than 2,000 files, which `files` cannot hold either, at one schema-only dump (`pg_dump --schema-only`). |
-| `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, names a file another entry names too, or `files` is given with a single `.sql` file. | For an entry that starts with the migrations folder (written from the project root), the fix says to leave out that leading folder. |
+| `FILE_NOT_IN_FOLDER` | A `files` entry is missing or lies outside `migrations`, names a file another entry names too, or `files` is given with a single `.sql` file. | For an entry that starts with the migrations folder (written from the project root), the fix says to leave out that leading folder, when the rest of the entry is a migration in the folder (looked up as any path argument is, so a path outside the project is never touched); otherwise it says to check the spelling. |
 | `BAD_COLUMN_NAME` | A `money_columns`/`ignore_columns` entry is not `table.column` or `schema.table.column`, or names no column that the migration files create or change. | The entry, and the closest real column when there is one (PostgreSQL folds unquoted names to lowercase); or that the column comes from setup or the preset, whose columns are not checked. An inherited column is named by the table that defines it. |
 | `TIMEOUT` | The time limit was hit. | Which file was running (or that the database was starting, or that the catalog was being read after every file had run), and the limit. The fix says to leave slow data-loading files out with `files` (the setup file: take slow data loading out of it; one migrations file: lint a schema-only copy; a folder of 300 files or more: pass a larger `timeout_seconds`, or lint one schema-only dump of the database they build; linting the files in groups would fail, as each group needs the ones before it; while the catalog was read, after every file had run: none of these), and that a limit over 60 seconds helps only with a client that waits longer than that. |
 
@@ -883,7 +900,7 @@ ROLE ..., CREATE SCHEMA ...).`
   it (PGlite's WebAssembly memory and in-memory files), as Node.js 22.16 and later report for one
   thread, so what the main thread holds has no effect on it. What the database thread sends the main
   thread is bounded there before it is sent: each file's column keys and types must have their usual
-  form, or the lint stops ("no longer answers correctly"); names over 512 characters make the catalog
+  form, or the lint stops ("returns its catalog in a form PostgreSQL never gives"); names over 512 characters make the catalog
   read fail; types are cut to 512 characters, and expressions as above. (Older Node.js cannot measure one thread:
   there the process's memory, less what the main thread's JavaScript heap and buffers hold, stands in,
   and memory the main thread frees but the system keeps can count against the lint: on Linux, 200 MiB
@@ -946,7 +963,7 @@ shortened):
 When a code has a finding whose `fix_sql` is null, its text ends with: "Where fix_sql is null, the
 change needs a decision or belongs elsewhere: a domain or array type (change the domain or the element
 type), a generated column (change its expression), a column a child table inherits (change it on the
-parent), amounts finer than a penny, or the price of one unit in a float or a numeric with no scale, which may be (choose the unit first), a name that may not say its unit
+parent), amounts finer than a penny, the price of one unit in a float or a numeric with no scale, which may be below a penny (choose the unit first), a name that may not say its unit
 (amount_minor, price_sat, cost_micros, amount_kwd: decide the unit first), a name that may not be money (total_passengers: if it is, list it in money_columns), a default, CHECK constraint or unique index
 condition that may hold amounts in the old unit (convert
 those in the same migration: ALTER COLUMN ... TYPE does not), a money value (0::money) in a default, CHECK constraint or index condition (it cannot work on a bigint), or a name holding hidden characters or a backslash before u (write it by hand)."
@@ -1114,7 +1131,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung, Devise, Moneda, Divisa, Valuta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`), or cur alone or before code, unless it also holds an amount, balance, debit, credit, total, price, fee, value, period, rate, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung, Devise, Moneda, Divisa, Valuta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`, nor Valuta beside a date word, which is the value date: `Data valuta`), or cur alone or before code, unless it also holds an amount, balance, bal, credit, total, price, fee, value, period, rate, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name with Valuta comes after the others (ING Germany's "Valuta" is a date, beside "Währung"); a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -1132,7 +1149,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 | `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match (≤ 200 characters, so a long name can be mapped). When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. |
-| `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. "an object with keys data, meta" (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"). |
+| `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. "an object with keys data, meta" (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"), if it can be passed back as shown: at most 200 characters, with no character `records_pointer` refuses. |
 | `TOO_MANY_ROWS` | More than 1,000,000 rows. |
 
 ### 4.8 Limits
@@ -1278,7 +1295,7 @@ mapped.
 | `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). When only the final LF is missing, the anchor is compared with the log with that LF restored: true when it matches, with the note "The anchor matches the log once the line end after its last entry is restored." if it covers the last entry. |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix; one that starts with a byte order mark gets a note that an editor may have added it. When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix; one that starts with a byte order mark gets a note that an editor may have added it (and its first line is not read as cut off when it also lacks its final LF, as old Notepad saves a one-entry log). When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the answer the log gets with that LF, `ANCHOR_COUNT_MISMATCH` or `ANCHOR_HEAD_MISMATCH`, with the note that the last line lacks its LF): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |

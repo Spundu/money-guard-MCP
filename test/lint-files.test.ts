@@ -50,7 +50,7 @@ describe('money_lint_schema: names from a hostile project', () => {
 
   it("escapes a domain's name, shown in the column's type", async () => {
     const d = await lint({ 'db/migrations/0001.sql': 'create domain "cash\u{200b}" as double precision; create table p (total "cash\u{200b}");' });
-    expect(d.findings.map((f) => f.type)).toEqual(['"cash\\u200b" (double precision)']);
+    expect(d.findings.map((f) => f.type)).toEqual(['public."cash\\u200b" (double precision)']); // with its schema (round 19)
   });
 
   it('escapes hidden characters in its own errors, without relying on the server', async () => {
@@ -235,8 +235,8 @@ describe('money_lint_schema: which files run', () => {
   });
 
   it('names a files entry with "/" separators, on Windows too', async () => {
-    const e = await failure({ 'db/migrations/0001.sql': 'select 1;', 'db/migrations/notes.txt': 'not sql' }, { files: ['notes.txt'] });
-    expect(e.toText()).toMatch(/^FILE_TYPE_NOT_ALLOWED: "p\d+\/db\/migrations\/notes\.txt" /);
+    const e = await failure({ 'db/migrations/0001.sql': 'select 1;', 'db/migrations/sub/notes.txt': 'not sql' }, { files: [['sub', 'notes.txt'].join(path.sep)] });
+    expect(e.toText()).toMatch(/^FILE_TYPE_NOT_ALLOWED: "sub\/notes\.txt" in files /); // as written, from migrations (round 19)
   });
 
   it('leaves out Diesel down.sql files, which sort before up.sql in each migration folder', async () => {
