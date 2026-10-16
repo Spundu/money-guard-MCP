@@ -342,8 +342,9 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   are refused even inside the project.
 - **Little is copied out of your files.** A value from a data file (a ledger cell, a header, an id) is
   cut to 40 characters (a few longer texts, such as a Postgres error, have their own limits: SPEC.md
-  §2.4). Paging through findings can still show one column of every row, 40 characters each, so a
-  secrets file the name list misses is not safe from the ledger tool. Table and column names stay
+  §2.4). Paging through findings can still show up to three mapped columns of every row (the id,
+  and the amount or the debit and the credit), 40 characters each, so a secrets file the name list
+  misses is not safe from the ledger tool. Table and column names stay
   whole, so the agent can act on them; a path over
   400 characters is cut in the middle. Characters that can hide text are escaped in money-guard's
   results and errors, by Unicode category: control characters, the zero-width and direction
@@ -382,9 +383,9 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 960 tests, about 500 of them rows of the column-name table. They pass on Windows (Node 24) and on Linux (Node 22, in WSL), where
-  the file-link and permission tests that Windows skips run too. The CI workflow is set up to run them
-  on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
+- `npm test` runs about 980 tests, about 500 of them rows of the column-name table. They pass on
+  Windows (Node 24) and on Linux (Node 22, in WSL), where the file-link and permission tests that
+  Windows skips run too. The CI workflow is set up to run them on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package supports; it
   has not run yet, and the badge at the top will show its latest run.
   - This README's example output and JSON, and the example results in SPEC.md (field by field, in
     order), are checked against what the tools return on the demo project.

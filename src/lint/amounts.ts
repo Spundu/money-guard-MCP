@@ -44,7 +44,9 @@ export function holdsNoAmount(expr: string): boolean {
   // PostgreSQL writes every pattern back with ~: LIKE as ~~, ILIKE as ~~*, SIMILAR TO as ~ similar_to_escape().
   if (expr.includes('~')) return false;
   // The whole row ("t.* IS NOT NULL") holds the amount too (review round 12).
-  if (expr.replace(/'(?:[^']|'')*'/g, '').includes('.*')) return false; // not inside a string literal (round 13)
+  // Not inside a string literal or a quoted name, read left to right (rounds 13 and 14: an apostrophe in
+  // a quoted name started a literal that hid the .* after it).
+  if (expr.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, '').includes('.*')) return false;
   const rest = expr
     // A quoted name, or a string literal, read left to right, so a quote inside one cannot start the
     // other. A literal that holds digits ('1000.00'::numeric, a date) keeps them: it may be an amount.
@@ -62,8 +64,11 @@ export function holdsNoAmount(expr: string): boolean {
 /** Longest CHECK or index expression `holdsNoAmount` reads; a real one is a few dozen characters. */
 const MAX_EXPR_CHARS = 2000;
 
-/** Types a cast of the column to cannot cap or guard it: no size, no CHECK of their own. */
-const HARMLESS_TYPE = /(?:numeric|double precision|real|text|money|bigint|integer|smallint|int8|int4|int2|character varying|bpchar|varchar|character|char|bit varying|varbit|bit|decimal|float4|float8)(?![\w$])/y;
+/**
+ * Types a cast to cannot cap or guard an amount: no size, no CHECK of their own. Dates, times, uuid and
+ * the like are other columns' casts in a unique index ("(created_at)::date", review round 14).
+ */
+const HARMLESS_TYPE = /(?:numeric|double precision|real|text|money|bigint|integer|smallint|int8|int4|int2|character varying|bpchar|varchar|character|char|bit varying|varbit|bit|decimal|float4|float8|date|timestamp with time zone|timestamp without time zone|timestamptz|timestamp|time with time zone|time without time zone|timetz|time|interval|boolean|bool|uuid|inet|cidr|jsonb|json|bytea)(?![\w$])/y;
 
 /** A cast type that bounds the value: a size (numeric(5,2), varchar(5): a text of fixed length) or a small integer type. */
 const BOUNDED_TYPE = /(?:numeric|decimal|character varying|varchar|character|char|bpchar|bit varying|varbit|bit)\(\d|(?:smallint|integer|int|int2|int4|bigint|int8)\b/y;

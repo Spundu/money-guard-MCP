@@ -104,7 +104,8 @@ function showDelimiter(d: string): string {
   return d === '\t' ? '"\\t" (tabs)' : JSON.stringify(d);
 }
 
-function findColumn(header: string[], field: MappedField, name: string, delimiter: string): number {
+/** `fromSepLine`: the delimiter came from the file's own "sep=" line, which the delimiter parameter cannot change. */
+function findColumn(header: string[], field: MappedField, name: string, delimiter: string, fromSepLine = false): number {
   const exact = header.flatMap((h, i) => (h === name ? [i] : []));
   const matches = exact.length > 0 ? exact : header.flatMap((h, i) => (h.toLowerCase() === name.toLowerCase() ? [i] : []));
   if (matches.length === 1) return matches[0] ?? -1;
@@ -113,20 +114,29 @@ function findColumn(header: string[], field: MappedField, name: string, delimite
   }
   const shown = header.slice(0, 30).map((h) => `${quoted(h)}`);
   const more = header.length > 30 ? ` and ${header.length - 30} more` : '';
-  const near = closest(name, header);
+  const near = closest(name, header.filter((h) => h !== '')); // never an empty name, from a trailing delimiter (round 14)
   const hint = near === undefined ? '' : ` Did you mean ${quoted(near, NAME_MAX)}?`;
   // A header read as one column that holds another delimiter: the file is separated by that one.
   // The one that occurs most in the header, read as one column, is the likeliest delimiter.
   const count = (d: string) => (header[0] ?? '').split(d).length - 1;
   const other = header.length === 1 ? DELIMITERS.filter((d) => d !== delimiter && count(d) > 0).sort((x, y) => count(y) - count(x))[0] : undefined;
+  // A sep= first line in a form money-guard does not read (review round 14: the delimiter hint led to a second error).
+  const sepFirst = /^sep=/i.test(header[0] ?? '');
   throw new ToolError(
     'COLUMN_NOT_FOUND',
-    `The CSV header has no column ${quoted(name)} (mapped as ${field}).${hint} The columns are: ${shown.join(', ')}${more}.`,
-    other === undefined
+    `The CSV header has no column ${quoted(name)} (mapped as ${field}).${sepFirst ? '' : hint} The columns are: ${shown.join(', ')}${more}.`,
+    sepFirst
+      ? SEP_FIX
+      : other === undefined
       ? 'Map each field to one of the column names in the header.'
-      : `The file looks separated by ${showDelimiter(other)}, not ${showDelimiter(delimiter)}: pass delimiter ${JSON.stringify(other)}.`,
+      : fromSepLine
+        ? `The file looks separated by ${showDelimiter(other)}, but its first line, sep=, names ${showDelimiter(delimiter)}, which wins over the delimiter parameter: fix or remove that line.`
+        : `The file looks separated by ${showDelimiter(other)}, not ${showDelimiter(delimiter)}: pass delimiter ${JSON.stringify(other)}.`,
   );
 }
+
+/** For a first line that starts sep= in a form readCsv does not read: whatever the delimiter, it misleads (review round 14). */
+const SEP_FIX = 'The first line looks like Excel\'s "sep=" line, in a form money-guard does not read (sep= then one of , ; | or a tab): delete that line, or write it so.';
 
 const CSV_PROBLEMS: Readonly<Record<string, string>> = {
   CSV_QUOTE_NOT_CLOSED: 'a quoted field is never closed',
@@ -138,9 +148,9 @@ const CSV_PROBLEMS: Readonly<Record<string, string>> = {
 };
 
 function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
-  // Excel writes "sep=;" as a first line in some locales: it names the delimiter and is not the header
+  // A first line "sep=;", which Excel reads (tools that write CSV for Excel add it), names the delimiter and is not the header
   // (review round 13). It is skipped, and its delimiter used; lines are still counted from the file's first.
-  const sepLine = /^(?:\uFEFF)?sep=([,;\t|])\r?\n/i.exec(new TextDecoder().decode(bytes.subarray(0, 16)));
+  const sepLine = /^(?:\uFEFF)?"?sep=([,;\t|])"?[ \t]*(?:\r\n?|\n)/i.exec(new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes.subarray(0, 24))); // quoted, or with spaces after; the BOM kept, so its 3 bytes count (round 14)
   const delimiter = sepLine?.[1] ?? given;
   const sepEnd = sepLine === null ? 0 : Buffer.byteLength(sepLine[0]);
   const lineStarts = (list: readonly number[]) => (sepEnd === 0 ? startLines(bytes, list) : startLines(bytes, [sepEnd, ...list]).slice(1));
@@ -171,12 +181,13 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
     if (!(err instanceof CsvError)) throw err;
     const line = lineStarts([...ends, bytes.length]).at(-1) ?? 1;
     const problem = CSV_PROBLEMS[err.code] ?? 'the CSV structure is broken';
-    throw new ToolError('PARSE_ERROR', `Line ${line}: ${problem}.`, 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.');
+    const unreadSep = sepEnd === 0 && /^(?:\uFEFF)?"?sep=/i.test(new TextDecoder().decode(bytes.subarray(0, 8)));
+    throw new ToolError('PARSE_ERROR', `Line ${line}: ${problem}.`, unreadSep ? SEP_FIX : 'Fix the CSV at that line (quotes must be doubled inside quoted fields), or pass the right delimiter.');
   }
   const [header, ...data] = records;
   if (header === undefined) return { rows: [], names: [] };
   if (data.length > MAX_ROWS) throw tooManyRows();
-  const indexes = mappedEntries(columns).map(([field, name]) => [field, findColumn(header, field, name, delimiter)] as const);
+  const indexes = mappedEntries(columns).map(([field, name]) => [field, findColumn(header, field, name, delimiter, sepEnd > 0)] as const);
   const lines = lineStarts(ends);
   const rows = data.map((record, seq) => {
     const values: Partial<Record<MappedField, unknown>> = {};

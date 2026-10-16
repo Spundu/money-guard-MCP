@@ -89,6 +89,7 @@ describe('escapeUnsafe, hasUnsafe and escapeStrings', () => {
   it('escapes private-use characters, code points with no character, and four characters drawn blank', () => {
     for (const cp of [0xe000, 0xf8ff, 0xfdd0, 0xfffe, 0x2800, 0x16fe4, 0x13440, 0x1d159]) {
       const char = String.fromCodePoint(cp);
+      expect(RAW_HIDDEN.test(char), cp.toString(16)).toBe(true); // the tests' own check sees it too (round 14)
       expect(escapeUnsafe(`a${char}b`), cp.toString(16)).toBe(`a${'\\'}u${cp > 0xffff ? `{${cp.toString(16)}}` : cp.toString(16).padStart(4, '0')}b`);
     }
   });

@@ -3,7 +3,7 @@
 // PostgreSQL quotes them, whatever a migration does to the database's own functions.
 import { describe, expect, it } from 'vitest';
 import { ExpressionReader, MAX_LINT_EXPR_CHARS } from '../src/lint/amounts.js';
-import { NULL_FIX_NOTE, holdsNoAmount, isZeroOrNullDefault } from '../src/lint/catalog.js';
+import { DETAIL_SQL, NULL_FIX_NOTE, holdsNoAmount, isZeroOrNullDefault } from '../src/lint/catalog.js';
 import { moneyByGuess } from '../src/lint/names.js';
 import { lint } from './support/lint.js';
 import { sql } from './support/sql.js';
@@ -131,6 +131,9 @@ describe('money_lint_schema: fix_sql', () => {
       '(total = trunc(total, 2))', '(scale(total) < 3)', "((total >= (0)::numeric) AND (note <> 'x\"y'::text))",
       // review round 9: a literal cast to a bounded type; more places than two
       "(total >= '0'::numeric(10,2))", '(total = round(total, 4))', '(scale(total) <= 12)',
+      // review round 14: another column cast to a date, a time or a uuid, as a unique index may
+      '(created_at)::date', '((created_at)::timestamp without time zone IS NOT NULL)', '((ref)::uuid IS NOT NULL)', '((paid)::boolean)',
+      "((price >= (0)::double precision) AND (label <> 'a.*b'::text))", // ".*" inside a literal is not the whole row (round 13)
     ];
     for (const expr of safe) expect(holdsNoAmount(expr), expr).toBe(true);
     const amounts = ['((fee > (0)::numeric) AND (fee <= 99.99))', '(cap <= max_total())', '(amount <= (1000)::numeric)', '(round(amount) = amount)', '(amount > (100)::numeric(10,2))', "(code <> '840'::text)",
@@ -141,6 +144,7 @@ describe('money_lint_schema: fix_sql', () => {
       // review round 9: a cast of the column to a bounded type is a cap; a guard of fewer than two places
       // stops guarding once the column holds pence
       '((price)::small_amt IS NOT NULL)', '((price)::public.small_amt IS NOT NULL)', // round 13: a domain can cap
+      '((price)::money_cap IS NOT NULL)', '((price)::numeric_small IS NOT NULL)', // round 14: a domain whose name starts like a harmless type
       '((amount)::numeric(5,2) = amount)', '((amount)::smallint IS NOT NULL)', '(price = ((price)::bigint)::double precision)', '(fee = (fee)::int8)', '((amount)::integer = amount)', '(amount::int4 > 0)',
       '(amount = round(amount, 0))', '(amount = round(amount, 1))',
       // review round 11: the amount's text against a pattern
@@ -234,10 +238,26 @@ describe('money_lint_schema: fix_sql', () => {
 
   it('offers fix_sql beside a unique index of another column\'s expression, and withholds it beside one of the whole row', async () => {
     // Review round 12: lower(sku) also depends on the whole table, which round 11 read as the whole row.
-    const r = await lint({ 'db/migrations/0001.sql': 'create table products (id int, sku text, price double precision);\ncreate unique index products_sku on products (lower(sku));\ncreate table rows_hashed (id int, price double precision);\ncreate unique index rows_whole on rows_hashed (id) where rows_hashed is not null;\ncreate table skus (sku text, price double precision);\ncreate unique index skus_a on skus (sku) where sku ~ \'^A.*\';' });
-    // Review round 13: ".*" inside a string literal is not the whole row.
-    expect(r.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.products', false], ['public.rows_hashed', true], ['public.skus', false]]);
+    const r = await lint({ 'db/migrations/0001.sql': 'create table products (id int, sku text, price double precision);\ncreate unique index products_sku on products (lower(sku));\ncreate table rows_hashed (id int, price double precision);\ncreate unique index rows_whole on rows_hashed (id) where rows_hashed is not null;\ncreate table skus (sku text, price double precision);\ncreate unique index skus_a on skus (sku) where sku ~ \'^A.*\';\ncreate table q (id int, "it\'s" int, "o\'k" int, price double precision);\ncreate unique index q_whole on q (id) where "it\'s" is not null and q is not null and "o\'k" is not null;' });
+    // Review round 13: ".*" inside a string literal is not the whole row. Round 14: an apostrophe in a
+    // quoted name does not start a literal that hides the whole row after it.
+    expect(r.findings.map((f) => [f.table, f.fix_sql === null])).toEqual([['public.products', false], ['public.q', true], ['public.rows_hashed', true], ['public.skus', false]]);
+    expect(holdsNoAmount('(("it\'s" IS NOT NULL) AND (q.* IS NOT NULL) AND ("o\'k" IS NOT NULL))')).toBe(false);
   });
+
+  it('reads a long unique-index condition once per index, not once per column', async () => {
+    // Review round 14: 1,000 terms over 1,000 columns, read per column and per pg_depend row, ran the
+    // database thread out of memory (or past 120 s with the whole row as well).
+    const cols = Array.from({ length: 1000 }, (_, i) => `c${i} int`).join(', ');
+    const terms = Array.from({ length: 1000 }, (_, i) => `c${i} is not null`).join(' and ');
+    const schema = `create table w (${cols}, price double precision);\ncreate unique index w_u on w (c0) where ${terms} and w is not null;`;
+    const r = await lint({ 'db/migrations/0001.sql': schema }, { timeout_seconds: 30 });
+    expect([r.findings.length, r.findings[0]?.fix_sql]).toEqual([1, null]); // past 2,000 characters: may hold an amount
+    // Each column gets the index's text once, cut to the stand-in: 1,001 columns, not 24 MB of copies.
+    const rows = (await sql([schema], DETAIL_SQL)) as Array<{ index_exprs: string[] | null }>;
+    const texts = rows.flatMap((row) => row.index_exprs ?? []);
+    expect([texts.length, Math.max(...texts.map((t) => t.length))]).toEqual([1001, 2001]);
+  }, 60_000);
 
   it('calls only pg_catalog\'s round and *, so an operator a migration planted in the real database never runs', async () => {
     // Review round 11 (CVE-2018-1058): public.* (double precision, integer) matches exactly and is picked

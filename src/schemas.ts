@@ -57,7 +57,7 @@ export const ledgerInput = z
     amount_format: z.enum(['minor_units', 'decimal']).nullish().describe('minor_units (default): whole numbers such as 1234 for £12.34. decimal: 12.34.'),
     decimal_places: z.number().int().min(0).max(4).nullish().describe('Decimal places allowed with amount_format decimal: 2 (default), 0 for JPY, 3 for BHD.'),
     format: z.enum(['csv', 'json', 'jsonl']).nullish().describe('Overrides the format the extension gives.'),
-    delimiter: z.enum([',', ';', '\t', '|']).nullish().describe('CSV delimiter. Default "," (tab for .tsv).'),
+    delimiter: z.enum([',', ';', '\t', '|']).nullish().describe('CSV delimiter. Default "," (tab for .tsv). A first line sep=X in the file sets it instead.'),
     records_pointer: z
       .string()
       .max(256)

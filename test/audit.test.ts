@@ -214,12 +214,22 @@ describe('verifyAuditLog with the head of an earlier run as anchor', () => {
     const r = run(bytes(FIVE.slice(0, -1)), HEAD);
     expect(r.break?.code).toBe('TORN_LAST_LINE');
     expect(r.notes).toEqual(['The entries the anchor covers are intact; the break comes after them.', FINAL]);
+    // Review round 14: the summary agrees with the note, not "a truncated file".
+    expect(r.summary).toBe('The log does NOT verify: entry 4 (line 5) lacks the line end a sealed log puts after every entry; with it, every entry verifies (TORN_LAST_LINE).');
     // An anchor that covers every entry: not "cut short".
     const all = run(bytes(FIVE.slice(0, -1)), { count: 5, last_hash: (JSON.parse(FIVE.split('\n')[4] ?? '{}') as { entry_hash: string }).entry_hash });
     expect(all.notes.some((n) => n.includes('cut short'))).toBe(false);
     expect(all.notes).toContain(FINAL);
+    expect(all.anchor_checked).toBe(true); // the completed log ends in the entry it recorded (round 14)
+    // Review round 14: another chain of 5 under the same key, its last LF dropped, was replaced, not edited.
+    const other = text(chain([...DRAFTS, { event: 'payment.capture', amount_pence: 999 }, { event: 'user.login', user: 'eve' }]));
+    const swapped = run(bytes(other.slice(0, -1)), { count: 5, last_hash: (JSON.parse(FIVE.split('\n')[4] ?? '{}') as { entry_hash: string }).entry_hash });
+    expect([swapped.ok, swapped.break?.code, swapped.notes]).toEqual([false, 'ANCHOR_HEAD_MISMATCH', []]);
     // A log cut inside a line still is.
     expect(run(bytes(FIVE.slice(0, -5)), HEAD).notes).not.toContain(FINAL);
+    // Review round 14: cut back to 2 entries of the 3 the anchor covers, and the last LF lost too, is cut short.
+    const two = run(bytes(FIVE.slice(0, FIVE.indexOf('\n', FIVE.indexOf('\n') + 1))), HEAD);
+    expect([two.break?.code, two.notes]).toEqual(['TORN_LAST_LINE', ['The anchor covers 3 entries, but the log ends inside entry 1: it was cut short, and entries the anchor vouched for are gone.']]);
   });
 
   it('asks to check the key setting when a seal fails at the first entry after a change of key', () => {

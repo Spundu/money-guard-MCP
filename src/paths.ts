@@ -99,11 +99,11 @@ export function leadsTo(p: string): string | null {
 
 /**
  * Names the tools refuse at any depth: environment files, private keys and certificates, package-manager
- * and git credentials, cloud credential downloads (.csv and .json files: AWS access-key CSVs, Google
+ * and git credentials, cloud credential downloads (ledger-type files: AWS access-key CSVs, Google
  * client secrets and service-account keys, key.json and *-key.json, auth.json, access tokens, credentials
  * and secrets files), and anything inside .git
- * (SPEC.md §2.3). Compared in lower case. The credential words only count in .csv and .json names: a
- * migration such as 0002_create_access_keys.sql, or a folder add_service_accounts, is not a secret.
+ * (SPEC.md §2.3). Compared in lower case. The credential words only count in ledger-type names (.csv,
+ * .tsv, .json, .jsonl, .ndjson): a migration such as 0002_create_access_keys.sql, or a folder add_service_accounts, is not a secret.
  */
 export function isSensitive(rel: string): boolean {
   const segments = rel.split(/[\\/]/).map((s) => s.toLowerCase());
@@ -119,9 +119,10 @@ export function isSensitive(rel: string): boolean {
     base.startsWith('id_ed25519') ||
     ['.pem', '.key', '.p12', '.pfx', '.keystore'].some((ext) => base.endsWith(ext)) ||
     // Every type the ledger tool reads; logins and keystore as the export names only, as wallet and logins
-    // also name ledgers (review round 13: wallet_transactions.csv was refused).
+    // also name ledgers (review round 13: wallet_transactions.csv was refused), with what a second download
+    // or a copy adds (review round 14: logins (1).csv, logins-2026-10-16.csv); password(s) as a word.
     (/\.(?:csv|tsv|json|jsonl|ndjson)$/.test(base) &&
-      (/^logins\.(?:csv|json)$|^keystore\.json$|credentials?|(?:^|[-_.])(?:secrets?|creds|bitwarden|lastpass|1password|keepass|dashlane|private[-_]?keys?|secret[-_]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_]?tokens?)(?:[-_.]|$)|^\.?secrets[._-]|api[-_]?keys?|access[-_]?keys?|passwords?\.|keyfile|oauth[-_]?tokens?|accesstokens|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
+      (/^(?:logins|keystore)(?:[ _-]*(?:\(\d+\)|\d[\d-]*|backup|export|copy))*\.(?:csv|json)$|(?:^|[^a-z])(?:passwords?|credentials?)(?:[^a-z]|$)|(?:^|[-_.])(?:secrets?|creds|bitwarden|lastpass|1password|keepass|dashlane|private[-_]?keys?|secret[-_]?keys?|(?:access|auth|api|github|bearer|refresh|id)[-_]?tokens?)(?:[-_.]|$)|^\.?secrets[._-]|api[-_]?keys?|access[-_]?keys?|keyfile|oauth[-_]?tokens?|accesstokens|rootkey|client_secret|service[-_]?account|adminsdk|^tokens?\.json$|^auth\.json$|(?:^|[-_.])key\.json$/.test(base) ||
         // a Google Cloud key as downloaded: the project's name, then 12 hex digits with at least one letter
         /-(?=[0-9a-f]*[a-f])[0-9a-f]{12}\.json$/.test(base)))
   );

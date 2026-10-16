@@ -141,26 +141,33 @@ Every path argument:
    - `id_rsa*`, `id_ed25519*`
    - `.npmrc`, `.pypirc`, `.netrc`, `.git-credentials`
    - cloud credential downloads, which are `.csv`, `.tsv`, `.json`, `.jsonl` and `.ndjson` files (every
-     type the ledger tool reads): names holding `credentials`
+     type the ledger tool reads): names holding `credentials` or `credential` as a word
      (`credentials.csv`, AWS's `alice_credentials.csv`, `application_default_credentials.json`),
      `accesskeys`, `access_keys`, `rootkey`, `client_secret`, `service-account`, `serviceaccount`
      or `adminsdk` (AWS access-key downloads, Google OAuth, service-account and Firebase keys); names
-     starting `secrets` or `.secrets` (`secrets.json`), or named `secret` (`secret.json`, `app-secret.json`);
-     `apikey`, `api_key`, `api-keys`, `access-key`, `access_key`, `passwords`, `keyfile` and
-     `oauth_token` (`api_keys.json`, `aws_access_key.csv`, `passwords.csv`); `credential`, `creds`, and as
+     starting `secrets` or `.secrets` and then `.`, `_` or `-` (`secrets.json`, not `secretsanta.csv`), or named `secret` (`secret.json`, `app-secret.json`);
+     `apikey`, `api_key`, `api-keys`, `access-key`, `access_key`, `keyfile` and
+     `oauth_token` (`api_keys.json`, `aws_access_key.csv`); `password` or `passwords` as a word
+     (`passwords.csv`, `Chrome Passwords (1).csv`, `passwords-export.csv`); `credential`, `creds`, and as
      words anywhere in the name `secret(s)`, `private_key`, `secret_key` and `access_token`, `auth_token`,
      `api_token`, `github_token`, `bearer_token`, `refresh_token`, `id_token` (`app_secrets.json`,
      `access_token.json`); password-manager exports: `bitwarden`, `lastpass`, `1password`, `keepass`,
-     `dashlane` as words (`bitwarden_export.json`), and `logins.csv`, `logins.json` and `keystore.json` as
-     names (a wallet's or a login's ledger, `wallet_transactions.csv`, is not refused);
+     `dashlane` as words (`bitwarden_export.json`), and `logins` and `keystore` as the whole name, `.csv` or `.json`,
+     with what a second download or a copy adds (`logins (1).csv`, `logins-2026-10-16.csv`,
+     `logins_backup.json`; a wallet's or a login's ledger, `wallet_transactions.csv`, is not refused);
      `local.settings.json` (Azure Functions) and `.docker/config.json`; `accesstokens` (`accessTokens.json`);
      `token.json`, `tokens.json` and `auth.json`; `key.json` and names ending `-key.json`, `_key.json`
      or `.key.json` (`sa-key.json`); and a Google Cloud key as
      downloaded, `<project>-<12 hex digits>.json` with at least one letter among the digits (so a
      timestamp such as `export-202401011230.json` is not one). The same words in another name, such as
      the migration `0002_create_access_keys.sql` or the folder `add_service_accounts`, are not a
-     secret. A name the list misses is not refused: the list covers the usual downloads, not every one,
-     and a file it misses can be read 40 characters per row through the ledger tool, page by page.
+     secret. A name the list misses is not refused: the list covers the usual downloads, not every one.
+     Some ordinary ledger names are refused too, and must be renamed: `service_account_statement.csv`,
+     `tokens.json`, `secret_santa_ledger.csv`, and an id of 12 hex digits after a dash
+     (`stripe-balance-1a2b3c4d5e6f.json`); `credentialing_fees.csv` is not. And a file the list misses
+     can be read through the ledger tool, page by page: up to three mapped columns
+     of every row (the id, and the amount or the debit and the credit, through `BAD_AMOUNT`), 40
+     characters each.
    - anything inside `.git/`
 
    This is defence in depth. The tools echo only tiny pieces of a file, but a read-only tool must
@@ -248,7 +255,7 @@ already read the files).
 - **Protocol errors:** only for unknown tools and malformed requests (the SDK sends these).
 - **Arguments that break the input schema** come back from the SDK as an `isError` result ("Input
   validation error: ...", or in other words of its own, as for more than 2,500 elements) before our
-  handler runs. Every input object is strict (unknown keys are refused; the SDK drops a `__proto__` key), so a misspelt parameter name is reported instead of silently ignored. That text comes from
+  handler runs. Every input object is strict (unknown keys are refused; the SDK drops a `__proto__` key at the top level, and refuses one inside `columns` as an unknown key), so a misspelt parameter name is reported instead of silently ignored. That text comes from
   the SDK, does not start with a money-guard code, and is not held to the size budget of §2.4.
 
 Shared error codes:
@@ -705,7 +712,10 @@ conversion follows the name and the declared scale; the test suite runs each kin
   fewer places, `round(total, 0)`, `scale(total) = 0`, which would stop guarding; nor a cast of the
   column to a bounded type, `amount::numeric(5,2) = amount`, `amount::smallint`, `amount::bigint` (whole
   pounds only) or a text of fixed length such as `amount::varchar(5)`, which is a cap or a guard of
-  whole units; nor a pattern over the amount's text, `~`, `LIKE`
+  whole units; nor a cast to a type other than a number, `money`, text, bits, or a built-in type with
+  no rules of its own (a date or time, `interval`, `boolean`, `uuid`, `inet`, `cidr`, JSON, `bytea`):
+  a domain (`price::small_amt`) or an enum, whose own rules may bound the amount. So `price::text <>
+  ''` keeps the fix, and so does a unique index on `(user_id, amount, (created_at::date))`; nor a pattern over the amount's text, `~`, `LIKE`
   or `SIMILAR TO`, which checks its form in pounds; nor a default, CHECK or index expression longer than
   2,000 characters, which is not read and counts as holding an amount); a
   unique index whose condition holds no amount (`WHERE
@@ -720,7 +730,7 @@ shows it: the tool runs the new migration too.
 ### 3.7 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found). "N money columns in M tables" counts only the tables that hold a money column. When not every finding is listed (more than 50, or cut to fit 20,000 characters), it ends: "Not every finding is listed (findings_truncated): pass next_offset as offset for the next ones." On a later page with none after it: "These are findings 51-55 of 55, the last." (or "No findings from offset 100: there are 55." past the end). |
+| `summary` | string | e.g. "2 problems in 2 money columns (1 error, 1 warning). 3 migration files applied." When no table exists after the files ran: "No tables exist after the 1 migration file, so nothing was checked. ..."; when every table comes from setup or the preset: "Nothing was checked: every table that exists after the 1 migration file comes from setup or the preset (a partition counts as part of its parent)." When no money column was found: "No money columns found in 2 tables. ..." ("No money columns of a number type" when money-named text or JSON columns were not checked; "left to check" when ignore_columns left none). When float columns not taken for money exist, every summary that checked tables ends: "2 other float columns (other_float_columns): check that none holds money." ("2 float columns" when no money column was found). "N money columns in M tables" counts only the tables that hold a money column. When not every finding is listed (more than 50, or cut to fit 20,000 characters), it ends: "Not every finding is listed (findings_truncated): pass next_offset as offset for the next ones." On a later page with none after it: "These are findings 51-55 of 55, the last." ("This is finding 55 of 55, the last." for one; "No findings from offset 100: there are 55." past the end; nothing when there are no findings). |
 | `migrations` | string | The path as given, normalised. |
 | `migrations_sha256` | string | SHA-256 over every applied file (path, NUL, bytes, in run order): what was checked. |
 | `postgres` | string | `"PostgreSQL 18.6 (PGlite 0.5.9)"` |
@@ -959,9 +969,12 @@ Those functions throw at the first problem. This tool returns **every** problem.
   `BAD_ROW` finding.
 - **JSONL:** one JSON object per line. Blank lines are skipped. A line that is not a JSON object is a
   `BAD_ROW` finding, and the check goes on.
-- **Excel's `sep=` line:** a CSV whose first line is `sep=;` (as Excel writes in some locales) is read
+- **Excel's `sep=` line:** a CSV whose first line is `sep=;` (a line Excel reads; tools that write CSV for Excel add it), also in quotes or with spaces after it, is read
   with that delimiter, whatever `delimiter` says, and the line is not the header; lines still count from
-  the file's first.
+  the file's first. It may end in LF, CR LF or a lone CR. When the header then reads as one column that
+  holds another delimiter, COLUMN_NOT_FOUND's fix says the `sep=` line names the wrong one. A header
+  whose first column starts `sep=` in another form, and a PARSE_ERROR in a file whose first line does,
+  get a fix that says to delete that line.
 - **JSON parsing:** money-guard's own strict RFC 8259 parser (`src/ledger/json.ts`, adapted from
   sealed-audit-chain's; depth ≤ 100), **never `JSON.parse`**: V8 12.9 and later misparse escaped
   one-character keys, a bug the author found while building sealed-audit-chain. It keeps every
@@ -1183,7 +1196,7 @@ Call `{ "file": "exports/journal.csv", "columns": { "transaction_id": "txn_id", 
 ### 5.4 Reason codes
 | Code | sealed-audit-chain reason | Plain meaning |
 |---|---|---|
-| `TORN_LAST_LINE` | last line is not terminated (torn) | A write was cut off, or the file was cut mid-line. |
+| `TORN_LAST_LINE` | last line is not terminated (torn) | A write was cut off, or the file was cut mid-line. When only the final LF is missing (§5.5 `notes`), the summary says the entry "lacks the line end a sealed log puts after every entry; with it, every entry verifies". |
 | `LINE_TOO_LARGE` | line exceeds the canonical size limit | |
 | `NOT_UTF8` | line is not valid UTF-8 | |
 | `NOT_JSON` | line is not valid JSON | |
@@ -1215,7 +1228,7 @@ mapped.
 | `anchor_checked` | boolean | True when an anchor was given and compared, also when the chain breaks after the entries it covers (a log that was replaced is then reported first, as `ANCHOR_HEAD_MISMATCH`, so a later break that looks like an accident cannot hide it); false when the chain breaks at or before the last entry it covers, so the entries it vouched for could not be checked (a note says so). |
 | `head` | object or null | `{ count, last_hash }` when `ok`. Keep it and pass it as `anchor` next time. |
 | `key_ids_configured` | string[] | Ids only, never key bytes. |
-| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. When only the final LF is missing (with it, every entry verifies): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
+| `notes` | string[] | e.g. "No anchor was given, so entries removed from the end cannot be detected." For an empty log without an anchor: "The log is empty. An empty log always verifies; pass an anchor to detect a deleted or emptied log." When the file has CR LF line ends (a sealed log has LF only), a note names the first such line, the likely cause (git's core.autocrlf on Windows) and the fix. When only the final LF is missing (with it, every entry verifies, and an anchor, if given, matches the log with it: otherwise the anchor's own answer, `ANCHOR_HEAD_MISMATCH` or the "cut short" note below): "Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one." Otherwise, when the log ends inside an entry the anchor covers: "The anchor covers 5 entries, but the log ends inside entry 3: it was cut short, and entries the anchor vouched for are gone." When the break is `UNKNOWN_KEY_ID`, or `HMAC_MISMATCH` at the first entry or the first after a change of key id: "A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered." |
 
 ### 5.6 Errors (besides §2.5)
 | Code | When |
@@ -1226,7 +1239,9 @@ mapped.
 A bad `anchor` (wrong hex, a negative count) is refused by the input schema.
 
 ### 5.7 Limits
-The file is at most 100 MiB. Verification is linear and stops at the first break.
+The file is at most 100 MiB. Verification is linear, reads the log once and stops at the first break. A
+log whose last line has no LF is read once with an LF added (a copy of the file): the entries before
+that line are the same either way, so a break there is the log's break, and at that line the log is torn.
 
 ### 5.8 Example
 The demo project's log, `fixtures/shop/logs/audit.jsonl`: two entries sealed with the test key `k1`. Call
@@ -1285,7 +1300,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 960); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 980); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit

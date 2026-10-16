@@ -34,8 +34,23 @@ describe('money_check_double_entry: reading CSV', () => {
       const r = check('.csv', 'sep=;\r\nt;a\r\nT1;1\r\nT1;2\r\n', { columns: { transaction_id: 't', amount: 'a' }, ...(delimiter ? { delimiter } : {}) });
       expect(r.findings.map((f) => [f.code, f.lines]), String(delimiter)).toEqual([['UNBALANCED', [3, 4]]]);
     }
-    // A broken header after the sep= line is on line 2, not 1.
-    expect(errorText(() => check('.csv', 'sep=;\r\nt;"a\r\n', { columns: { transaction_id: 't', amount: 'a' } }))).toMatch(/^PARSE_ERROR: Line 2: /);
+    // Review round 14: with lone-CR or LF line ends too; and a sep= line the data contradicts says so.
+    for (const [first, end] of [['sep=;', '\r'], ['sep=;', '\n'], ['"sep=;"', '\r\n'], ['sep=; ', '\n']] as const) {
+      const r = check('.csv', [first, 't;a', 'T1;1', 'T1;2', ''].join(end), { columns: { transaction_id: 't', amount: 'a' } });
+      expect(r.findings.map((f) => [f.code, f.lines]), JSON.stringify(first + end)).toEqual([['UNBALANCED', [3, 4]]]);
+    }
+    // An empty name, from a trailing delimiter, is never the one suggested (round 14).
+    expect(errorText(() => check('.csv', 'id,amt,\nT1,1,\n', { columns: { transaction_id: 'x', amount: 'amt' } }))).not.toContain('Did you mean ""');
+    // A sep= line in a form it does not read says to delete it, never to pass a delimiter.
+    for (const delimiter of [undefined, ';'] as const) {
+      const e = errorText(() => check('.csv', 'sep=;;\nt;a\nT1;1\n', { columns: { transaction_id: 't', amount: 'a' }, ...(delimiter ? { delimiter } : {}) }));
+      expect(e, String(delimiter)).toMatch(/^(?:COLUMN_NOT_FOUND|PARSE_ERROR): [^?]*Fix: The first line looks like Excel's "sep=" line, in a form money-guard does not read .*: delete that line, or write it so\.$/);
+    }
+    expect(errorText(() => check('.csv', 'SEP=;\nt,a\nT1,1\n', { columns: { transaction_id: 't', amount: 'a' } }))).toMatch(/Fix: The file looks separated by ",", but its first line, sep=, names ";", which wins over the delimiter parameter: fix or remove that line\.$/);
+    // A broken header after the sep= line is on line 2, not 1: after a BOM too (round 14).
+    for (const bom of ['', '\u{feff}']) {
+      expect(errorText(() => check('.csv', `${bom}sep=;\r\nt;"a\r\n`, { columns: { transaction_id: 't', amount: 'a' } })), bom).toMatch(/^PARSE_ERROR: Line 2: /);
+    }
     expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1},{"txn":{"id":"T1"},"a":-1}]', { columns: { transaction_id: 'txn.id', amount: 'a' } }))).toContain('Did you mean "/txn/id"?');
     expect(errorText(() => check('.json', '[{"txn":{"id":"T1"},"a":1}]', { columns: { transaction_id: 'txn.constructor', amount: 'a' } }))).not.toContain('/txn/constructor'); // its own fields only (round 13)
     expect(errorText(() => check('.json', '[{"t~x":{"id":"T1"},"a":1}]', { columns: { transaction_id: 't~x.id', amount: 'a' } }))).toContain('Did you mean "/t~0x/id"?'); // ~ written as ~0 (round 13)

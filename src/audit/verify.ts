@@ -167,7 +167,13 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   // The chain on its own: every seal and every link. The anchor is checked after, here: the library's
   // anchor pins the LAST entry, which suits a head the writer stores at each append, while an anchor
   // given to this tool is a head from an earlier run, which an honest log grows past (SPEC.md §5.3).
-  const verdict = verifyJsonl(bytes, keys.provider);
+  // A log whose last line has no LF is read once, with the LF added (review round 14: it was read twice,
+  // 8 s for 100 MiB). The entries before that line are the same bytes either way, so a break before it is
+  // the same break; at or after it, the log as given breaks there, torn.
+  const completed = bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a ? Buffer.concat([bytes, Buffer.from('\n')]) : null;
+  const read = verifyJsonl(completed ?? bytes, keys.provider);
+  const tornAt = completed === null ? -1 : jsonlLineCount(bytes);
+  const verdict = completed === null || (!read.ok && (read.brokenAt ?? 0) < tornAt) ? read : { ok: false, lastSeq: tornAt - 1, brokenAt: tornAt, reason: TORN_REASON };
   const notes: string[] = [];
   if (!anchor && bytes.length === 0) notes.push(EMPTY_NOTE);
   if (!anchor) notes.push(NO_ANCHOR_NOTE);
@@ -186,9 +192,15 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   });
 
   // A log whose only fault is a missing final LF (an editor or a copy can drop it) keeps every entry:
-  // say so, instead of "cut short" (review round 13).
-  const onlyFinalNewline = !verdict.ok && reasonCode(verdict.reason ?? '') === 'TORN_LAST_LINE' && bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a
-    && verifyJsonl(Buffer.concat([bytes, Buffer.from('\n')]), keys.provider).ok;
+  // say so, instead of "cut short" (review round 13). With an anchor, only when the completed log still
+  // holds the entries it covers, ending in the entry it recorded: otherwise entries were removed or the
+  // log replaced as well, and the anchor checks say so (review round 14).
+  const onlyFinalNewline = completed !== null && read.ok;
+  if (onlyFinalNewline && anchor) {
+    if (anchor.count > read.lastSeq + 1) return broken(bytes, verdict, anchor, notes, result);
+    const replaced = headMismatch(completed, anchor, result);
+    if (replaced) return replaced;
+  }
   if (!verdict.ok) return broken(bytes, verdict, anchor, notes, result, onlyFinalNewline);
 
   const count = verdict.lastSeq + 1;
@@ -208,6 +220,9 @@ export function verifyAuditLog(input: { file: string; bytes: Uint8Array; keys: A
   return result(`${intact}${tail}`, null, head, true);
 }
 
+/** sealed-audit-chain's reason for a last line without LF (its jsonl.js). */
+const TORN_REASON = 'last line is not terminated (torn)';
+
 const FINAL_NEWLINE_NOTE = 'Only the line end after the last entry is missing: with it, every entry verifies. A sealed log ends each line with LF; an editor or a copy may have dropped the last one.';
 
 const KEY_SETTING_NOTE = 'A wrong key setting gives this answer too, for an untouched log: check that MONEY_GUARD_AUDIT_KEYS holds the key that sealed the log before calling it tampered.';
@@ -221,10 +236,13 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   const index = verdict.brokenAt ?? 0;
   const crlf = firstCrlfLine(bytes);
   if (crlf !== null) notes.push(crlfNote(crlf));
-  const anchorChecked = anchor !== undefined && anchor.count <= index;
+  const anchorChecked = anchor !== undefined && (anchor.count <= index || onlyFinalNewline);
   const raw = verdict.reason ?? 'unknown';
   const code = reasonCode(raw);
-  if (anchor && anchorChecked) {
+  if (anchor && onlyFinalNewline) {
+    // The completed log matched the anchor (verifyAuditLog checked it).
+    if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
+  } else if (anchor && anchorChecked) {
     const replaced = headMismatch(bytes, anchor, result);
     if (replaced) return replaced;
     if (anchor.count > 0) notes.push('The entries the anchor covers are intact; the break comes after them.'); // count 0 covers none
@@ -253,6 +271,9 @@ function broken(bytes: Uint8Array, verdict: { brokenAt: number | null; reason: s
   let meaning: string;
   if (code === 'NOT_CANONICAL' && crlf === line) {
     meaning = 'ends with CR LF where the sealed log has LF: its line ends were converted after it was sealed';
+  } else if (onlyFinalNewline) {
+    // The summary, read first, must not say "a truncated file" while the notes say every entry verifies (round 14).
+    meaning = 'lacks the line end a sealed log puts after every entry; with it, every entry verifies';
   } else if (code === 'OTHER' || code === 'ANCHOR_COUNT_MISMATCH' || code === 'ANCHOR_HEAD_MISMATCH') {
     meaning = `failed: ${reason}`; // anchor codes cannot come from the library here: it is given no anchor
   } else {

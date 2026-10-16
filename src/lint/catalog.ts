@@ -98,18 +98,31 @@ export const DETAIL_SQL = `
     WHERE k.contype = 'c'
     GROUP BY m.root, m.attname
   ),
-  col_indexes AS (
-    SELECT m.root, m.attname,
-           pg_catalog.array_agg(pg_catalog.concat_ws(' AND ', pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid))) AS index_exprs
+  -- Each unique or exclusion index's text, read once per index (review round 14: read per column and
+  -- per dependency, one index of 1,000 terms on 1,000 columns ran the database thread out of memory).
+  idx AS MATERIALIZED (
+    SELECT i.indexrelid, i.indrelid,
+      -- Past 2,000 characters (MAX_EXPR_CHARS) a stand-in of 2,001, which counts as holding an amount as
+      -- the text would, so that a long text is not copied to every column.
+      CASE WHEN pg_catalog.length(x.expr) > 2000 THEN pg_catalog.repeat('x', 2001) ELSE x.expr END AS expr,
+      -- An index that reads the whole row ("WHERE t IS NOT NULL", written back as t.*) records no
+      -- dependency on it, and one of expressions (lower(sku)) records one on the whole table that reads
+      -- no other column: so the whole row is found in the text, not in pg_depend (review round 12).
+      -- Quoted names and string literals are dropped first, read left to right, so that a quote inside
+      -- one cannot start the other (rounds 13 and 14).
+      pg_catalog.strpos(pg_catalog.regexp_replace(x.expr, '''([^'']|'''')*''|"([^"]|"")*"', '', 'g'), '.*') > 0 AS whole_row
     FROM pg_catalog.pg_index i
-    JOIN pg_catalog.pg_depend p ON p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = i.indexrelid
-      AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = i.indrelid
-    -- An index that reads the whole row ("WHERE t IS NOT NULL", written back as t.*) records no
-    -- dependency on it, and one of expressions (lower(sku)) records one on the whole table that reads no
-    -- other column: so the whole row is found in the text, not in pg_depend (review round 12).
-    JOIN members m ON m.rel = p.refobjid AND (m.attnum = p.refobjsubid OR pg_catalog.strpos(pg_catalog.regexp_replace(pg_catalog.concat_ws(' ',
-      pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid)), '''([^'']|'''')*''', '', 'g'), '.*') > 0) -- not inside a string literal (round 13)
+    CROSS JOIN LATERAL (SELECT pg_catalog.concat_ws(' AND ', pg_catalog.pg_get_expr(i.indexprs, i.indrelid), pg_catalog.pg_get_expr(i.indpred, i.indrelid)) AS expr) x
     WHERE (i.indisunique OR i.indisexclusion) AND (i.indexprs IS NOT NULL OR i.indpred IS NOT NULL)
+  ),
+  col_indexes AS (
+    -- One row per index and column it reads, however many pg_depend rows say so.
+    SELECT m.root, m.attname, pg_catalog.array_agg(DISTINCT d.expr) AS index_exprs
+    FROM idx d
+    JOIN members m ON m.rel = d.indrelid AND (d.whole_row OR EXISTS (
+      SELECT FROM pg_catalog.pg_depend p
+      WHERE p.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.objid = d.indexrelid
+        AND p.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND p.refobjid = d.indrelid AND p.refobjsubid = m.attnum))
     GROUP BY m.root, m.attname
   ),
   chain AS (

@@ -188,6 +188,9 @@ describe('money_lint_schema: judging columns', () => {
       /^BAD_COLUMN_NAME: money_columns names "Orders\.GrossValue", which is not a column of any table the migrations create\. Did you mean "public\.orders\.grossvalue"\?/,
     );
     expect(await codeOf(files, { ignore_columns: ['orders.amount', 'orders.nothing_like_it'] })).toBe('BAD_COLUMN_NAME');
+  });
+
+  it('keeps long names whole in the suggestion, and counts an ignored numeric money column', async () => {
     // Review round 8: database names stay whole, the suggestion too (up to 191 characters).
     const [s, t] = ['s'.repeat(60), 't'.repeat(60)];
     const long = { 'db/migrations/0001.sql': `create schema ${s}; create table ${s}.${t} (price_total numeric(10,2));` };
@@ -195,6 +198,12 @@ describe('money_lint_schema: judging columns', () => {
     // Review round 11: an ignored numeric money column is counted, with accept_numeric left out.
     const ignoredNumeric = await lint({ 'db/migrations/0001.sql': 'create table orders (price numeric(10,2), fee numeric(10,2));' }, { ignore_columns: ['orders.fee'] });
     expect([ignoredNumeric.ignored_count, ignoredNumeric.summary.endsWith('1 ignored.')]).toEqual([1, true]);
+  });
+
+  it('suggests the column for an entry as written, in any case, and tells a table from a column', async () => {
+    // Review round 14: split from the test above, whose 13 lints passed 60 s on a busy machine.
+    const files = { 'db/migrations/0001.sql': 'create table orders (grossvalue numeric(10,2), amount numeric(10,2));' };
+    const t = 't'.repeat(60);
     // Review round 11: the entry as written, and a table named instead of a column is told so.
     // Review round 12: a column name that starts like another is not "a table".
     expect((await failure(files, { ignore_columns: ['public.orders.grossvalu'] })).message).toContain('Did you mean "public.orders.grossvalue"?');
