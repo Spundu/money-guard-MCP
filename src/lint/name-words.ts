@@ -29,7 +29,7 @@ export const MONEY_WORDS: ReadonlySet<string> = new Set([
 export const COUNT_WORDS: ReadonlySet<string> = new Set([
   'count', 'number', 'num', 'qty', 'quantity', 'attempts', 'retries', 'unit', 'units', 'rooms', 'seats', 'shares',
   'guests', 'users', 'members', 'customers', 'people', 'persons', 'visits', 'views', 'clicks', 'impressions',
-  'sessions', 'bytes', 'pages', 'rows', 'hits',
+  'sessions', 'bytes', 'pages', 'rows', 'hits', 'fte', 'headcount',
 ]);
 
 /** Rates and measures: the non-money last words that also say what a total measures. */
@@ -57,6 +57,8 @@ export const NOT_MONEY_LAST_WORDS: ReadonlySet<string> = new Set([
   ...MEASURE_WORDS,
   // groupings and terms
   'category', 'categories', 'list', 'lists', 'center', 'centre', 'terms', 'period',
+  // units of measure, after any money word (review round 24: amount_grams, amount_hrs got x100)
+  'grams', 'litres', 'liters', 'meters', 'metres', 'tons', 'tonnes', 'mins', 'hrs', 'secs', 'mb', 'gb', 'kw', 'watts', 'amps',
 ]);
 
 /** Words that say the column already holds minor units, so a fix must not multiply by 100. */
@@ -212,7 +214,10 @@ export const PRICED_MEASURE_WORDS: ReadonlySet<string> = new Set(['kg', 'g', 'mg
 export const SCALE_WORDS: ReadonlySet<string> = new Set(['k', 'thousand', 'thousands', 'm', 'mm', 'mn', 'mio', 'million', 'millions', 'bn', 'billion', 'billions', 'lakh', 'lakhs', 'lac', 'lacs', 'crore', 'crores', 'hundredths']); // not cr: credit (review round 23)
 
 /** Words after nav that make it navigation, not net asset value: "nav_order" (review round 23). */
-export const NAV_UI_WORDS: ReadonlySet<string> = new Set(['order', 'index', 'label', 'bar', 'item', 'items', 'link', 'links', 'menu', 'sort', 'position', 'title', 'icon', 'url', 'path', 'id', 'key']);
+export const NAV_MONEY_WORDS: ReadonlySet<string> = new Set(['per', 'share', 'shares', 'unit', 'units', 'fund', 'funds', 'value', 'values']);
+
+/** Money words that, alone, may be a percentage or a ratio (Odoo's sale_order_line.discount is "Discount (%)"): a guess (review round 24). */
+export const BARE_GUESS_WORDS: ReadonlySet<string> = new Set(['discount', 'discounts', 'markup', 'markups', 'commission', 'commissions', 'ltv']);
 
 /** Words that say a balance's state, looked past for what it holds: "pto_remaining_balance" (review round 22). */
 export const HELD_STATE_WORDS: ReadonlySet<string> = new Set(['remaining', 'available', 'accrued', 'opening', 'closing', 'current', 'used', 'unused', 'carried', 'starting', 'ending']);

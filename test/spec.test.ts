@@ -140,7 +140,9 @@ describe('SPEC.md and the code agree', () => {
       held: ['"time off", or one of ', ', right before'], // review rounds 18, 20, 21 and 22
       heldGuess: ['`cash_flow_balance`). With ', ' there'],
       heldState: ['past any of ', ' that say its state'], // review round 22
-      budgetHeld: ['generic money words, or one of ', ', stands there'], // review round 19
+      budgetHeld: ['but not growth), or one of ', ', stands there'], // review rounds 19 and 24
+      navMoney: ['a unit word or one of ', ' (`nav_per_share`'], // review round 24
+      bareGuess: ['**A bare ', '** is money'], // review round 24
       heldAfter: ['`overtime_balance`), or one of ', ' after it'],
       pricedMeasure: ['before a last word of ', ' (`price_kg`'],
       perOrdinary: ['below a penny (§3.6); a price per ', ' is an ordinary'], // review round 20

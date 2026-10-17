@@ -5,7 +5,7 @@ import { closest } from '../closest.js';
 import { clip, clipPath, ECHO_MAX, quoted } from '../echo.js';
 import { ToolError } from '../errors.js';
 import { JsonNumber } from './json.js';
-import { encodeToken, isRecord, resolvePointer } from './pointer.js';
+import { decodeToken, encodeToken, isRecord, resolvePointer } from './pointer.js';
 import type { ColumnMap, LedgerRow, MappedField } from './read.js';
 
 export const MAPPED_FIELDS: readonly MappedField[] = ['transaction_id', 'amount', 'side', 'debit', 'credit', 'currency'];
@@ -24,8 +24,8 @@ export function mappedEntries(columns: ColumnMap): Array<[MappedField, string]> 
  * suggestion of up to 200 characters gave back a whole token from 40 shown and a guess).
  */
 export function uncut(name: string, names: readonly string[]): string {
-  if (!name.includes('…') || names.includes(name)) return name;
-  // As shown, or with a quote in it written plainly, as a model reads \" (review round 23).
+  if (names.includes(name)) return name;
+  // As shown (cut, or escaped: review round 24), or with a quote in it written plainly, as a model reads \" (round 23).
   const shown = shownNames(names);
   const matches = names.filter((_, i) => shown[i] === name || shown[i]?.replaceAll('\\"', '"') === name);
   return matches.length === 1 ? (matches[0] ?? name) : name;
@@ -34,14 +34,52 @@ export function uncut(name: string, names: readonly string[]): string {
 /**
  * How results show each of `names`, inside quotes: escaped and cut at 40 characters; where two would show
  * alike, each cut in the middle instead, so its end shows too (review round 23: two long headers that began
- * alike could not be told apart, nor either mapped).
+ * alike could not be told apart, nor either mapped). A JSON Pointer is shown token by token, each cut so
+ * (review round 24: cut as a whole, "/money/currency_code_as_reported_by_the…" could not be passed back).
  */
 export function shownNames(names: readonly string[]): string[] {
-  const cut = names.map((n) => clip(n, ECHO_MAX, true));
+  const parts = names.map(pointerParts);
+  const cut = parts.map(([prefix, last]) => prefix + clip(last, ECHO_MAX, true));
   const count = new Map<string, number>();
   for (const c of cut) count.set(c, (count.get(c) ?? 0) + 1);
-  return names.map((n, i) => ((count.get(cut[i] ?? '') ?? 0) > 1 ? clipPath(n, ECHO_MAX, true) : (cut[i] ?? '')));
+  return parts.map(([prefix, last], i) => ((count.get(cut[i] ?? '') ?? 0) > 1 ? prefix + clipPath(last, ECHO_MAX, true) : (cut[i] ?? '')));
 }
+
+/** Most tokens before the last that a pointer is shown token by token with; a longer name is cut as a whole. */
+const SHOWN_TOKENS = 8;
+
+/** A name as the tokens before its last, each shown cut, and its last token; for a name that is no pointer, "" and itself. */
+function pointerParts(name: string): [prefix: string, last: string] {
+  const tokens = name.startsWith('/') ? name.slice(1).split('/') : [];
+  if (tokens.length === 0 || tokens.length > SHOWN_TOKENS + 1) return ['', name]; // a header cell of a thousand "/a" is cut at 40 too
+  const last = tokens.pop() ?? '';
+  return [`/${tokens.map((t) => `${clip(t, ECHO_MAX, true)}/`).join('')}`, last];
+}
+
+/**
+ * A JSON Pointer passed back as a result showed it: each token its object lacks, given cut or escaped as
+ * shown, resolved to the one key of that object shown so (review round 24: a records array or a nested
+ * field under a key past 40 characters could not be reached). Unchanged where a token matches no key, or several.
+ */
+export function uncutPointer(pointer: string, doc: unknown): string {
+  if (!pointer.startsWith('/')) return pointer;
+  let node = doc;
+  const out: string[] = [];
+  for (const raw of pointer.slice(1).split('/')) {
+    let token = raw;
+    if (isRecord(node) && !Object.hasOwn(node, decodeToken(raw))) {
+      const keys = Object.keys(node).map(encodeToken);
+      if (keys.length <= MAX_UNCUT_KEYS) token = uncut(raw, keys);
+    }
+    out.push(token);
+    const key = decodeToken(token);
+    node = isRecord(node) && Object.hasOwn(node, key) ? node[key] : Array.isArray(node) && /^(?:0|[1-9]\d*)$/.test(key) ? node[Number(key)] : undefined;
+  }
+  return `/${out.join('/')}`;
+}
+
+/** Most keys an object may have for a token of a pointer to be matched against them as shown. */
+const MAX_UNCUT_KEYS = 10_000;
 
 /**
  * The name `closest` suggests, judged only on what results show of each name, its first 40 characters
@@ -61,15 +99,22 @@ export function closestShown(name: string, names: readonly string[]): string | u
 export function didYouMean(name: string, near: string | undefined, names: readonly string[] = []): string {
   if (near === undefined) return '';
   const at = names.indexOf(near);
-  const shown = at >= 0 ? `"${shownNames(names)[at] ?? ''}"` : quoted(near);
-  const same = shown === quoted(name) ? ' (it differs past the 40 characters shown: pass it back as shown)' : '';
+  // A pointer built from a key and the name given (nestedPointer) is shown as every pointer is: token by token (round 24).
+  const shown = `"${(at >= 0 ? shownNames(names)[at] : shownNames([near])[0]) ?? ''}"`;
+  const same = shown === `"${shownNames([name])[0] ?? ''}"` ? ' (it differs past the 40 characters shown: pass it back as shown)' : '';
   return ` Did you mean ${shown}${same}?`;
 }
 
-/** The mapping with each name given cut replaced by the name it meant (`uncut`). */
-export function uncutColumns(columns: ColumnMap, names: readonly string[]): ColumnMap {
+/**
+ * The mapping with each name given as shown replaced by the name it meant: `uncut` against `names`, and a
+ * pointer token by token against the first record (`uncutPointer`).
+ */
+export function uncutColumns(columns: ColumnMap, names: readonly string[], first?: Record<string, unknown>): ColumnMap {
   const out: ColumnMap = { ...columns };
-  for (const [field, name] of mappedEntries(columns)) out[field] = uncut(name, names);
+  for (const [field, name] of mappedEntries(columns)) {
+    const meant = uncut(name, names);
+    out[field] = meant === name && first !== undefined ? uncutPointer(name, first) : meant;
+  }
   return out;
 }
 
@@ -108,7 +153,7 @@ export function describe(value: unknown): string {
   if (value === null) return 'null';
   if (isRecord(value)) {
     const keys = Object.keys(value);
-    const shown = keys.slice(0, 20).map((k) => quoted(k)).join(', '); // in quotes: a key can hold ". Fix:"
+    const shown = shownNames(keys.slice(0, 20)).map((k) => `"${k}"`).join(', '); // in quotes: a key can hold ". Fix:"
     return keys.length === 0 ? 'an empty object' : `an object with keys ${shown}${keys.length > 20 ? ', …' : ''}`;
   }
   return value instanceof JsonNumber ? 'a number' : Array.isArray(value) ? 'an array' : `a ${typeof value}`;

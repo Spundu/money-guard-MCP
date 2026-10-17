@@ -121,7 +121,11 @@ async function main() {
     try {
       await db.exec(script.text);
     } catch (err) {
-      send({ type: 'failed', step, error: dbError(err) });
+      // PGlite's own JavaScript failing is no answer of PostgreSQL's (review round 24: under a client encoding set
+      // by set_config, a failing statement on a name that is not ASCII gave "r is not a function", reported as
+      // the statement refused): the database no longer answers correctly.
+      if (err instanceof TypeError || err instanceof RangeError) send({ type: 'unusable', step });
+      else send({ type: 'failed', step, error: dbError(err) });
       return;
     }
     send({ type: 'executed', step });

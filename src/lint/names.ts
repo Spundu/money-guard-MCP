@@ -43,7 +43,8 @@ import {
   SCALE_WORDS,
   FOLDING_WORDS,
   HELD_STATE_WORDS,
-  NAV_UI_WORDS,
+  NAV_MONEY_WORDS,
+  BARE_GUESS_WORDS,
 } from './name-words.js';
 
 
@@ -135,7 +136,8 @@ export function moneyByGuess(name: string): boolean {
 }
 
 const HELD_WORDS: ReadonlySet<string> = new Set([...TOTALLED_WORDS, ...HELD_OWN_WORDS].filter((w) => w !== 'mileage'));
-const BUDGET_HELD_WORDS: ReadonlySet<string> = new Set([...GENERIC_MEASURE_WORDS, ...BUDGET_OWN_WORDS].filter((w) => w !== 'mileage'));
+// A budget of a count or a measure is not money either, as for totals, but growth's is (review round 24: "kwh_budget" got x100).
+const BUDGET_HELD_WORDS: ReadonlySet<string> = new Set([...TOTALLED_WORDS, ...BUDGET_OWN_WORDS].filter((w) => w !== 'mileage' && w !== 'growth'));
 
 /** A measure word that is part of a money word before it: cash flow is money (review round 20: "cash_flow_total"). */
 const partOfMoney = (ws: readonly string[], i: number) => (ws[i] === 'flow' || ws[i] === 'flows') && ws[i - 1] === 'cash';
@@ -164,8 +166,10 @@ function judgeWords(all: readonly string[]): Verdict {
   const last = ws.at(-1);
   if (last === undefined) return 'not';
   if (last === 'rate' && PAY_RATE_WORDS.has(ws.at(-2) ?? '')) return 'money'; // "room_rate_per_night" too (review round 22)
-  // "nav" is net asset value, money, but before a word of a menu it is navigation ("nav_order", review rounds 22 and 23).
-  if (all[0] === 'nav' && NAV_UI_WORDS.has(all[1] ?? '')) return 'not';
+  // "nav" is net asset value, money, alone or before a word that says money ("nav_per_share", "nav_usd"); before any
+  // other word it is navigation (review round 22: "nav_order"; round 24: "nav_lat" got x100).
+  const navNext = all[0] === 'nav' ? all[1] : undefined;
+  if (navNext !== undefined && !MONEY_WORDS.has(navNext) && !isUnitWord(navNext) && !NAV_MONEY_WORDS.has(navNext)) return 'not';
   // "amount_minor_units", "amount_in_smallest_unit": the unit of an amount, not a count of units;
   // "price_unit" (Odoo's unit price on every order line): a price per unit.
   const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
@@ -198,7 +202,10 @@ function judgeWords(all: readonly string[]): Verdict {
   // exponent), it is not an amount.
   // A tier's or a level's number kept ("price_tier_1") is sure money with a price; "commission_tier_1" may be a
   // percentage: a guess (review round 23).
+  // Without a money word a tier's or a level's number is no money at all (review round 24: "water_level_1" was a guess).
   const tiered = /^\d+$/.test(last) && ['tier', 'level', 'band'].includes(ws.at(-2) ?? '');
+  if (tiered && !ws.some((w) => MONEY_WORDS.has(w))) return 'not';
+  if (ws.length === 1 && BARE_GUESS_WORDS.has(last)) return 'guess'; // "discount" alone may be a percentage (round 24)
   if (tiered && !ws.some((w) => ['price', 'prices', 'cost', 'costs', 'fee', 'fees', 'amount', 'amounts'].includes(w))) return 'guess';
   if (ws.some((w) => MONEY_WORDS.has(w) && w !== 'minor' && !GENERIC_MONEY_WORDS.has(w))) return 'money';
   // A generic money word counts unless a measure follows it: "total_paid" and "net_ytd" are money,
@@ -219,6 +226,10 @@ function judgeWords(all: readonly string[]): Verdict {
   // word, beside words the rule cannot read is a guess ("totalkills", "stepstotal"), as in snake_case.
   const word = withoutUnit(last);
   const ending = FOLDED_MONEY_ENDINGS.find((e) => word.endsWith(e));
+  // A held word first and words the rule cannot read before the balance or allowance: a guess, as a held word
+  // further back is in snake_case (review round 24: "ptocarryoverbalance", "overtimebankbalance" got x100).
+  const heldFirst = (ending === 'balance' || ending === 'allowance') && [...HELD_OWN_WORDS].some((h) => word.startsWith(h) && word.length > h.length + ending.length);
+  if (heldFirst) return 'guess';
   if (ending !== undefined) return ending === 'total' && word !== 'total' ? 'guess' : 'money';
   const start = FOLDED_MONEY_ENDINGS.find((s) => word.startsWith(s));
   if (start === undefined || FOLDED_NOT_MONEY_ENDINGS.some((e) => word.endsWith(e))) return 'not';
@@ -356,4 +367,6 @@ export const RULE_WORDS: Readonly<Record<string, ReadonlySet<string>>> = {
   folding: FOLDING_WORDS,
   heldState: HELD_STATE_WORDS,
   scale: SCALE_WORDS,
+  navMoney: NAV_MONEY_WORDS,
+  bareGuess: BARE_GUESS_WORDS,
 };

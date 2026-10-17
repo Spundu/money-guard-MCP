@@ -56,6 +56,17 @@ describe('a pg_dump baseline among later migrations', () => {
   });
 });
 
+describe('the markers of node-pg-migrate', () => {
+  it('runs only what lies between the first up marker and the first down marker after it, as node-pg-migrate does', () => {
+    // Review round 24: a header before the up marker, and a second up marker after the down part, ran too.
+    const run = (sql: string) => prepareSql(sql).split('\n').filter((line) => line.trim() !== '');
+    expect(run('create table header (x int);\n-- Up Migration\ncreate table a (x int);\n-- Down Migration\ndrop table a;\n-- Up Migration\ncreate table b (x int);\n'))
+      .toEqual(['-- Up Migration', 'create table a (x int);']);
+    expect(run('-- Down Migration\ndrop table b;\n-- Up Migration\ncreate table b (x int);\n')).toEqual(['-- Up Migration', 'create table b (x int);']);
+    expect(run('-- migrate:up\ncreate table a (x int);\n-- migrate:down\ndrop table a;\n-- migrate:up\ncreate table b (x int);\n')).toEqual(['-- migrate:up', 'create table a (x int);', '-- migrate:up', 'create table b (x int);']); // dbmate as before
+  });
+});
+
 describe('a client encoding set some other way', () => {
   it('is put back after each file, so a name that is not ASCII is read in time', async () => {
     // Review round 23: set_config('client_encoding', 'LATIN1') is no line to blank; the catalog read hung to the limit.
@@ -63,5 +74,13 @@ describe('a client encoding set some other way', () => {
     const r = await lint({ 'db/migrations/0001.sql': "select pg_catalog.set_config('client_encoding', 'LATIN1', false);\ncreate table t (\"price_é\" double precision);\n" }, { timeout_seconds: 30 });
     expect(r.findings.map((f) => f.column)).toEqual(['price_é']);
     expect(performance.now() - started).toBeLessThan(25_000);
+  });
+
+  it('is not reported as PostgreSQL refusing a statement when PGlite itself fails under it', async () => {
+    // Review round 24: a failing statement under LATIN1 gave PGlite's "r is not a function" as the database's refusal.
+    const sql = "select pg_catalog.set_config('client_encoding', 'LATIN1', false);\ncreate table \"é\" (price float);\ncreate table \"é\" (x int);\n";
+    const text = await lint({ 'db/migrations/0001.sql': sql }, { timeout_seconds: 30 }).then(() => '', (err: { toText(): string }) => err.toText());
+    expect(text).toMatch(/^MIGRATION_FAILED: .*0001\.sql": after this file the database no longer answers correctly \(.*a change of client encoding\)\./);
+    expect(text).not.toContain('is not a function');
   });
 });

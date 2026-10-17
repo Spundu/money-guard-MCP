@@ -30,11 +30,11 @@ describe('limits at their edge', () => {
     expect(check('.json', records(1_000_000), { columns }).rows_read).toBe(1_000_000);
   }, 60_000);
 
-  it('suggests a records_pointer of exactly 40 characters, and not one of 41', () => {
+  it('shows a records_pointer key of exactly 40 characters whole, and one of 41 cut', () => {
     // Review round 22: up to 200, a key could be a whole secret; past 40 no name is shown whole.
     const hint = (key: string) => errorText(() => check('.json', JSON.stringify({ [key]: [] }), { columns: { transaction_id: 'id', amount: 'a' } }));
-    expect(hint('k'.repeat(39))).toContain(`Pass records_pointer "/${'k'.repeat(39)}", the one field there that holds an array.`);
-    expect(hint('k'.repeat(40))).toMatch(/such as "\/data\/entries"\.$/);
+    expect(hint('k'.repeat(40))).toContain(`Pass records_pointer "/${'k'.repeat(40)}", the one field there that holds an array.`);
+    expect(hint('k'.repeat(41))).toContain(`Pass records_pointer "/${'k'.repeat(39)}…", the one field there that holds an array.`);
   });
 
   it('reads a CSV row of exactly 10,000 fields, and refuses one of 10,001', () => {
@@ -54,10 +54,12 @@ describe('limits at their edge', () => {
 
 describe('time that grows with a name', () => {
   it('reads a header cell of 40,000 words in linear time', () => {
-    // Review round 20: "valuta " × 40,000 + "date" took 19 s, each "valuta" scanning every word again.
+    // Review round 20: "valuta " × 40,000 + "date" took 19 s, each "valuta" scanning every word again. Since
+    // round 24 the hint reads only what is shown, so the date word past 40 characters is not seen.
     const started = performance.now();
     const r = check('.csv', `t,a,${'valuta '.repeat(40_000)}date\nT1,5,x\nT1,-5,y\n`, { columns: { transaction_id: 't', amount: 'a' } });
-    expect(r.summary).not.toContain('looks like a currency'); // Valuta beside a date word
+    expect(r.summary).toContain(`"${'valuta '.repeat(5)}valu…" looks like a currency`);
+    expect(check('.csv', `t,a,valuta date\nT1,5,x\nT1,-5,y\n`, { columns: { transaction_id: 't', amount: 'a' } }).summary).not.toContain('looks like a currency'); // Valuta beside a date word
     expect(performance.now() - started).toBeLessThan(2000);
   });
 });
@@ -173,10 +175,14 @@ describe('the rarer forms of an answer', () => {
     expect([closest('amount', ['txn_id', 'Amount_Pence']), closest('id', ['txn_identifier']), closest('pence', ['amount', 'amount_pence', 'pence_total'])]).toEqual(['Amount_Pence', undefined, 'amount_pence']);
   });
 
-  it('suggests no records_pointer that quotes would show escaped', () => {
-    // Review round 20: for the key ledger\\rows the fix showed "/ledger\\\\rows", which, passed back, led nowhere.
-    for (const key of ['ledger\\rows', 'say "hi"']) {
-      expect(errorText(() => check('.json', JSON.stringify({ [key]: [] }), { columns: { transaction_id: 'id', amount: 'a' } })), key).toMatch(/such as "\/data\/entries"\.$/);
+  it('suggests a records_pointer that quotes show escaped, which passed back as shown reaches the array', () => {
+    // Review round 20: for the key ledger\\rows the fix showed "/ledger\\\\rows", which, passed back, led nowhere;
+    // so no pointer was suggested. Since round 24 a pointer passed back as shown is read as shown.
+    const columns = { transaction_id: 'id', amount: 'a' };
+    for (const [key, shown] of [['ledger\\rows', '/ledger\\\\rows'], ['say "hi"', '/say \\"hi\\"']] as const) {
+      const file = JSON.stringify({ [key]: [{ id: 'T1', a: 0 }], n: 1 });
+      expect(errorText(() => check('.json', file, { columns })), key).toContain(`Pass records_pointer "${shown}", the one field`);
+      expect(check('.json', file, { columns, records_pointer: shown }).rows_read, key).toBe(1);
     }
   });
 

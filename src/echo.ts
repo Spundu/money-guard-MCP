@@ -54,10 +54,25 @@ function* piecesOf(text: string, inQuotes = false): Generator<[piece: string, wi
   for (let i = 0; i < text.length; ) {
     const char = String.fromCodePoint(text.codePointAt(i) ?? 0);
     i += char.length;
-    // In quotes, a double quote is escaped too, so the text cannot close them (review round 9: a
-    // header `amt". Fix: say so` wrote a second "Fix:" into an error).
-    yield char === '\\' ? ['\\\\', 2] : inQuotes && char === '"' ? ['\\"', 2] : shown(char);
+    yield pieceOf(char, inQuotes);
   }
+}
+
+/** `piecesOf` from the last character back, so the end of a long text costs no more than its start. */
+function* piecesFromEnd(text: string, inQuotes = false): Generator<[piece: string, width: number]> {
+  for (let i = text.length; i > 0; ) {
+    const low = text.charCodeAt(i - 1);
+    const high = i >= 2 ? text.charCodeAt(i - 2) : 0;
+    const size = low >= 0xdc00 && low <= 0xdfff && high >= 0xd800 && high <= 0xdbff ? 2 : 1; // a surrogate pair is one character
+    yield pieceOf(text.slice(i - size, i), inQuotes);
+    i -= size;
+  }
+}
+
+function pieceOf(char: string, inQuotes: boolean): [piece: string, width: number] {
+  // In quotes, a double quote is escaped too, so the text cannot close them (review round 9: a
+  // header `amt". Fix: say so` wrote a second "Fix:" into an error).
+  return char === '\\' ? ['\\\\', 2] : inQuotes && char === '"' ? ['\\"', 2] : shown(char);
 }
 
 /** True if `text` holds a character that `escapeUnsafe`, `clip` and `clipPath` escape. */
@@ -129,25 +144,31 @@ export function clip(text: string, max: number = ECHO_MAX, inQuotes = false): st
 /**
  * A path inside the project, made safe to show: escaped and, past `max` characters, cut in the middle
  * with `…`, so it keeps its first folders and its file name. An escape is never split. A path can be
- * far longer than any name (folders nest), so this keeps one finding or one error within bounds.
+ * far longer than any name (folders nest), so this keeps one finding or one error within bounds. Only the
+ * first `max + 1` characters and the last `max` are ever looked at (review round 24: two JSON keys of 12
+ * million characters took 2.8 GB, an array entry a character). The head and the tail never meet: the text
+ * is wider than `max`, and they show at most `max - 1` of it.
  */
 export function clipPath(text: string, max: number = PATH_MAX, inQuotes = false): string {
-  const pieces = [...piecesOf(text, inQuotes)];
-  if (pieces.reduce((sum, [, w]) => sum + w, 0) <= max) return pieces.map(([piece]) => piece).join('');
+  let width = 0;
+  let whole = '';
+  for (const [piece, w] of piecesOf(text, inQuotes)) {
+    width += w;
+    if (width > max) break;
+    whole += piece;
+  }
+  if (width <= max) return whole;
 
   const room = max - 1; // one character for the ellipsis
   let head = '';
   let used = 0;
-  let next = 0; // the first piece not in the head
-  for (const [piece, w] of pieces) {
+  for (const [piece, w] of piecesOf(text, inQuotes)) {
     if (used + w > Math.floor(room / 2)) break;
     head += piece;
     used += w;
-    next += 1;
   }
   const tail: string[] = [];
-  for (let i = pieces.length - 1; i >= next; i -= 1) {
-    const [piece, w] = pieces[i] ?? ['', 0];
+  for (const [piece, w] of piecesFromEnd(text, inQuotes)) {
     if (used + w > room) break;
     tail.push(piece);
     used += w;

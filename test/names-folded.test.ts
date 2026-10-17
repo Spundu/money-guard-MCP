@@ -123,3 +123,35 @@ describe('folded names', () => {
     expect(names.filter((n) => !unknown.includes(n) && looksLikeMoney(n) && answer(n) !== answer(n.replaceAll('_', '')))).toEqual([]);
   });
 });
+
+describe('the name rule, review round 24', () => {
+  it('takes a tier, level or band number without a money word for no money', () => {
+    const names = ['water_level_1', 'zoom_level_2', 'battery_level_1', 'level_1', 'tier_2', 'band_3', 'confidence_level_95', 'risk_level_3', 'level1'];
+    expect(names.map(verdict)).toEqual(names.map(() => 'not'));
+    expect(['price_tier_1', 'commission_tier_1', 'fee_band_3'].map(verdict)).toEqual(['money', 'guess', 'money']);
+  });
+
+  it('takes a budget of a count or a measure for no money, as a total of one', () => {
+    const names = ['kwh_budget', 'qty_budget', 'power_budget', 'weight_budget', 'fte_budget', 'headcount_budget', 'seats_budget', 'bytes_budget', 'percent_budget'];
+    expect(names.map(verdict)).toEqual(names.map(() => 'not'));
+    expect(['marketing_budget', 'growth_budget', 'units_budget', 'holiday_budget'].map(verdict)).toEqual(['money', 'money', 'money', 'money']);
+  });
+
+  it('takes a folded held word first, before words it cannot read, for a guess', () => {
+    const names = ['ptocarryoverbalance', 'overtimebankbalance', 'leavecarryoverbalance', 'leavetravelallowance'];
+    expect(names.map(verdict)).toEqual(names.map(() => 'guess'));
+    expect(['leavebalance', 'accountbalance', 'travelallowance'].map(verdict)).toEqual(['not', 'money', 'money']);
+  });
+
+  it('takes nav before a word that is not money for navigation', () => {
+    expect(['nav_lat', 'nav_lon', 'nav_heading', 'nav_x', 'nav_visible', 'nav_order', 'navorder'].map(verdict)).toEqual(['not', 'not', 'not', 'not', 'not', 'not', 'not']);
+    expect(['nav', 'nav_per_share', 'nav_usd', 'nav_value', 'nav_amount', 'fund_nav'].map(verdict)).toEqual(['money', 'money', 'money', 'money', 'money', 'money']);
+  });
+
+  it('takes a unit of measure after a money word for no money, and a bare percentage word for a guess', () => {
+    const units = ['amount_grams', 'amount_litres', 'amount_hrs', 'amount_tons', 'amount_meters', 'amount_mins', 'amount_mb', 'amount_gb', 'amount_kw', 'amount_watts', 'deposit_litres', 'amountgrams'];
+    expect(units.map(verdict)).toEqual(units.map(() => 'not'));
+    expect(['cost_gb', 'price_mb', 'amount_gbp'].map(verdict)).toEqual(['money', 'money', 'money']);
+    expect(['discount', 'discounts', 'markup', 'commission', 'ltv', 'discount_amount', 'commission_paid'].map(verdict)).toEqual(['guess', 'guess', 'guess', 'guess', 'guess', 'money', 'money']);
+  });
+});

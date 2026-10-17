@@ -64,8 +64,8 @@ internet and never touches a real database.
   line per call (tool, milliseconds, and the outcome: `ok`, an error code, `CANCELLED` when the client
   cancelled the call, or `DISCONNECTED` when the client went away while a lint ran; a call the client
   gave up on gets no answer, whatever the tool did; a ledger or audit call, which cannot be stopped
-  part-way, is answered and logged `ok` even when stdin closes while it runs), and the type of any transport error (for example a message
-  over the SDK's 10 MiB stdio limit, after which the SDK closes the connection). A call the SDK refuses
+  part-way, is answered and logged `ok` even when stdin closes while it runs), and the type and error code of any transport error (a message
+  over the SDK's 10 MiB stdio limit, after which the SDK closes the connection, is logged as "a message over the 10 MiB limit"). A call the SDK refuses
   before the handler runs (bad arguments, an unknown tool) is not logged. No line contains file
   content, keys or absolute paths; an unexpected error is logged as its type, its error code (such as
   `EBUSY`) and its `file:line:column` locations only, then the same for its cause.
@@ -249,7 +249,10 @@ already read the files).
   shown so: a first line may be data, and with a whole name shown, 40 characters and a guess gave back a whole
   token (review round 22). Which name is suggested, and whether one is, is judged only on those 40 characters
   of each name, so no answer can tell what lies past them (round 23: whether a suggestion came at all gave a
-  secret back one character a call). A result never holds key material.
+  secret back one character a call), and so is every other hint on a name: the currency hint, the "written like a
+  value" note and the delimiter a fix names (review round 24). A JSON Pointer is shown token by token, each token
+  cut at 40 characters, and a name or pointer passed back as shown, cut or escaped, reaches the one name or key
+  shown so (`records_pointer` too). A result never holds key material.
   (A value can still be up to 40 characters of a file that holds a key: the tools refuse the files
   named in §2.3, and cannot know what every other file holds.)
 - **Hidden characters are always escaped,** by Unicode category: controls (Cc); format characters (Cf:
@@ -428,18 +431,22 @@ never converged: verify by executing, not by parsing.
     `-- Down Migration` (as its own parser reads them: indented, or with more dashes), and tern
     `---- create above / drop below ----`. A down marker counts only in a file that also holds its
     tool's up marker (tern has none), so a comment such as `-- Down migration (manual)` in an ordinary
-    file cuts nothing. A file that holds comments reading as both node-pg-migrate markers (`-- up
-    migration notes`, later `-- down migration is manual`) is cut as node-pg-migrate's own parser
-    would cut it. The down part becomes blank, so line numbers stay exact. Without this, the down
+    file cuts nothing. A node-pg-migrate file runs as node-pg-migrate's own parser runs it: only what lies between the
+    first up marker and the first down marker after it, so a header before the up marker, and a second up
+    marker after the down part, run nothing (review round 24), and a file that holds comments reading as both
+    markers (`-- up migration notes`, later `-- down migration is manual`) is cut so too. The down part becomes blank, so line numbers stay exact. Without this, the down
     part would drop what the up part created, and the lint would see nothing to check.
   - **pg_dump 17.6+/18:** lines starting `\restrict ` or `\unrestrict ` are blanked, keeping the same
     length, so line numbers stay exact.
   - **pg_dump's client encoding:** a line that only sets it (`SET client_encoding = 'WIN1252';`, `SET NAMES 'LATIN1';`,
-    `SET LOCAL …`, a `--` comment after it) is blanked the same way, and so is pg_dump's
-    `SELECT pg_catalog.set_config('search_path', '', false);`: the dump names every object with its schema, and
-    the empty search path broke unqualified names in every later file (review round 23). The file was read as UTF-8 already; under most other encodings PGlite stops answering,
-    and under LATIN1 a catalog read of a name that is not ASCII hangs (review round 22: a schema dump of a Windows
-    database, WIN1252, could not be linted). One that sets it some other way (`set_config`, a DO block) is put back to UTF8 after each file (review round 23).
+    `SET LOCAL …`, a `--` comment after it) is blanked the same way. The file was read as UTF-8 already; under most
+    other encodings PGlite stops answering, and under LATIN1 a catalog read of a name that is not ASCII hangs (review
+    round 22: a schema dump of a Windows database, WIN1252, could not be linted). One that sets it some other way
+    (`set_config`, a DO block) is put back to UTF8 after each file (review round 23); should PGlite itself fail under
+    it, the database counts as no longer answering correctly, not as refusing a statement (review round 24).
+  - **pg_dump's empty search path:** `SELECT pg_catalog.set_config('search_path', '', false);` is blanked too: the
+    dump names every object with its schema, and the empty search path broke unqualified names in every later
+    file (review round 23).
 
   Any other psql meta-command (a line starting `\`) fails with a hint. If no table exists after the
   files ran (a format with an unknown down marker, say), the summary says that nothing was checked.
@@ -612,7 +619,8 @@ word**, with these refinements:
   name gets the answer its snake_case form gets, for the minor-unit words too (`amountminorunits`,
   `pricecentsusd`: `fix_sql` only rounds). A number at the end is dropped (`price2`,
   `credit_card_last4`), but not after tier, level or band (`price_tier_1` is the price of tier 1; without price,
-  cost, fee or amount in the name it is a guess, as `commission_tier_1` may be a percentage). A one-word name that cannot be split into known words still counts when it
+  cost, fee or amount in the name it is a guess, as `commission_tier_1` may be a percentage, and without any money word
+  it is not money: `water_level_1`, `zoom_level_2`). A one-word name that cannot be split into known words still counts when it
   ends in a long money word (amount, allowance, balance, cost, payment, payout, price, refund, revenue, salary,
   subtotal, surcharge, total), maybe followed by a minor-unit word (below, except the short cent, sat
   and wei), or starts with one and does not end in a non-money word of four letters or more. Words
@@ -665,7 +673,7 @@ The word lists:
     days, night, nights, hour, hours, minutes, seconds, ms
   - counts: count, number, num, qty, quantity, attempts, retries, unit, units, rooms, seats, shares,
     guests, users, members, customers, people, persons, visits, views, clicks, impressions, sessions,
-    bytes, pages, rows, hits
+    bytes, pages, rows, hits, fte, headcount
   - order, and things that have a price: no, items, rank, ranks, tier, tiers, level, levels, band,
     position, priority, index, seq, sequence, step, steps, stage, stages, orders, records, lines, last,
     first, frequency, grade, schedule, cycle
@@ -674,6 +682,8 @@ The word lists:
     calories, kcal, energy, lb, lbs, rating, ratings, tonnage, area, size, length, width, height, depth,
     power, usage, capacity, speed, temperature, precision, scale, growth
   - groupings and terms: category, categories, list, lists, center, centre, terms, period
+  - units of measure, after any money word (`amount_grams`, `amount_hrs`): grams, litres, liters, meters, metres, tons,
+    tonnes, mins, hrs, secs, mb, gb, kw, watts, amps
 - **A balance, budget or allowance of something else** is not money: a count or measure word (not unit,
   units, margin or current, as for totals), "time off", or one
   of leave, holiday, holidays, pto, vacation, sick, error, baggage, luggage, mass, fluid, calorie,
@@ -686,21 +696,26 @@ The word lists:
   seconds, secs, tokens, points, leave, holiday, holidays, pto, vacation or sick after it
   (`balance_hours_remaining`, `allowance_days_left`, `budget_tokens_remaining`); bal counts as balance
   (`pto_bal`). A held word further back, with other words between, may be what it holds or not
-  (`pto_carryover_balance` is hours, India's `leave_travel_allowance` money): money by a guess. `account_balance`,
+  (`pto_carryover_balance` is hours, India's `leave_travel_allowance` money): money by a guess, and so is a one-word name
+  that starts with one of those words and has words the rule cannot read before its balance or allowance (`ptocarryoverbalance`,
+  the folded `ptoCarryoverBalance`). `account_balance`,
   `travel_allowance`, `balance_after` and `balance_change` are money, and so is cash flow (`cash_flow_total`, `cash_flow_balance`). With
   stock, inventory, data, time, mileage or flex there it may be either (an inventory balance is money in accounting,
   and so is `real_time_balance`), so it is money by a guess: a finding with a null `fix_sql`. A
-  budget is money unless a measure after generic money words, or one of error, token, calorie, calories,
+  budget is money unless a count or measure word (as for totals, but not growth), or one of error, token, calorie, calories,
   time, hour, hours, hrs, minute, minutes, mins, second, seconds, secs, ms, days, nights or weeks, stands there instead (`latency_budget`, `carbon_budget`,
-  `time_budget`); `holiday_budget`, `stock_budget` and `growth_budget` are money; a budget of data or mileage
+  `time_budget`, `kwh_budget`, `headcount_budget`); `holiday_budget`, `stock_budget` and `growth_budget` are money; a budget of data or mileage
   is a guess (`data_budget`, `mileage_budget`: a mileage allowance is paid in pence per mile).
 - **A price of a measure unit** is money: price, cost or fee as the word before a last word of kg, g,
   mg, lb, km, mile, kwh, ml, litre, liter, gb or mb (`price_kg`, `cost_kwh`), or after one as the last word
   (`kwh_price`, `litre_price`), with any unit or currency
   words left out (`price_kwh_pence`, `cost_kwh_gbp`, `price_pence_kwh`), a number before the unit
   (`price_100g`) and any three-letter word after it but a non-money last word, a currency code (`price_kwh_aud`;
-  `price_kg_qty` is not money): the price of one unit (§3.6). nav (net asset value) is money, but not before a word of a menu
-  (`nav_order`, `nav_index`: navigation).
+  `price_kg_qty` is not money): the price of one unit (§3.6). nav (net asset value) is money alone or before a money word, a unit word or one of
+  per, share, shares, unit, units, fund, funds, value or values (`nav_per_share`, `nav_usd`); before any other word it is navigation
+  (`nav_order`, `nav_lat`, `nav_heading`).
+- **A bare discount, discounts, markup, markups, commission, commissions or ltv** is money by a guess: alone it may be a percentage or a
+  ratio (Odoo's `sale_order_line.discount` is "Discount (%)"), so a finding with a null `fix_sql`. `discount_amount` is money.
 - **Minor-unit words** (`fix_sql` only rounds; the word right after "per" does not count, as it says
   what the amount is for, as in `price_per_cent`, but a unit word after that does: `price_per_unit_cents`
   is in cents, and `cost_per_click_micros`, `price_per_unit_kwd` and `price_per_month_minor_units`,
@@ -1110,7 +1125,8 @@ Those functions throw at the first problem. This tool returns **every** problem.
 - **A mapped field that no record has** is `COLUMN_NOT_FOUND`, listing the first record's fields (as a
   missing CSV column lists the header). A field that only some records lack is `MISSING_VALUE` on
   those rows.
-- **Transaction ids** are compared exactly. A JSON number id is its exact value as text: `1e3` is
+- **Transaction ids** are compared exactly once the spaces around a text id are trimmed, in CSV and JSON alike
+  (`" T1"` and `"T1 "` are one id). A JSON number id is its exact value as text: `1e3` is
   `1000`, and 1234567890123456789 stays itself. So the number `7` and the string `"7"` are one id,
   as they are in most exports that write ids either way. (The number `-0` is `0`, but the string `"-0"`
   stays itself: text is compared as written.)
@@ -1207,10 +1223,10 @@ The fields come in the order of this table. Findings are sorted by their first l
 | Code | When |
 |---|---|
 | `PARSE_ERROR` | Broken CSV (an unclosed quote, the wrong number of fields, a row of more than 1 MiB of values or more than 10,000 fields) or invalid JSON (`json` format). Gives the line (CSV) or the line and column (JSON). When the CSV header holds none of the delimiter but another one, the fix names it: "The header looks separated by ";", not ",": pass delimiter ";"." |
-| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match, or failing one a name that holds the whole name given, of three letters or more (`amount` in `amount_pence`), judged only on each name as shown (its first 40 characters; where two would show alike, each cut in the middle instead, so its end shows too, round 23) (≤ 40 characters, as every name shown: a first line may be data, a secret among it, so no name is shown whole past 40, review round 22). A name passed back as shown, cut with "…", maps the one column or field shown so. When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). When a header cell is written like a value (`999`, `-12.50`), the file may have no header line: the message adds `The first line holds "999", written like a value: the first line is always read as the column names, so a file without a header line loses its first row.`, and the fix says to add a header line if there is none (a real header may name a column "2023", so the closest match is kept). |
+| `COLUMN_NOT_FOUND` | A mapped CSV column is not in the header, or a mapped JSON field is in no record. Lists up to 30 header names or fields of the first record (each ≤ 40 characters) and the closest match, or failing one a name that holds the whole name given, of three letters or more (`amount` in `amount_pence`), judged only on each name as shown (its first 40 characters; where two would show alike, each cut in the middle instead, so its end shows too, round 23) (≤ 40 characters, as every name shown: a first line may be data, a secret among it, so no name is shown whole past 40, review round 22). A name passed back as shown, cut with "…" or escaped, maps the one column or field shown so; a nested field is suggested as a pointer, shown token by token (round 24). The delimiter and "written like a value" hints below are judged on what is shown of the header too (round 24). When the header was read as one column that holds another delimiter (`;`, a tab, `\|` or `,`), the fix names that `delimiter` (the one that occurs most). When a header cell is written like a value (`999`, `-12.50`), the file may have no header line: the message adds `The first line holds "999", written like a value: the first line is always read as the column names, so a file without a header line loses its first row.`, and the fix says to add a header line if there is none (a real header may name a column "2023", so the closest match is kept). |
 | `COLUMN_AMBIGUOUS` | A mapped name appears twice in the header. |
 | `MAPPING_INVALID` | The `columns` shape is not one of the three in §4.2. Says which fields clash ("amount cannot be mapped with debit.", "debit needs credit too."). |
-| `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. `an object with keys "data", "meta"` (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"), if it can be passed back as shown: at most 40 characters (a key could be a secret), with no character `records_pointer` refuses, and no backslash or double quote (which quotes show escaped). |
+| `RECORDS_NOT_ARRAY` | The JSON value at `records_pointer` is not an array. Says what it is, e.g. `an object with keys "data", "meta"` (≤ 20 keys, ≤ 40 characters each). When exactly one of its fields holds an array, the fix names that pointer ("/data"), shown as every pointer is: token by token, each cut at 40 characters (a key could be a secret) and escaped; passed back as shown, it reaches the array (review round 24). |
 | `TOO_MANY_ROWS` | More than 1,000,000 rows. |
 
 ### 4.8 Limits

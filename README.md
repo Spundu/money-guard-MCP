@@ -26,7 +26,7 @@ tested](#how-it-is-tested)). macOS is untested.
 Why run the migrations instead of reading them? Patterns over SQL text easily miss a later `ALTER
 COLUMN ... TYPE`, a domain, a rename or a comment. The catalog of a database that ran the migrations
 does not. It reads the SQL text only for file-format markers (the up and down parts of dbmate,
-goose and the like, and the pg_dump lines PGlite cannot run: `\restrict` and the client encoding) and for
+goose and the like, and the pg_dump lines PGlite cannot run: `\restrict`, the client encoding and the empty search path) and for
 its error hints; and, to decide whether to offer `fix_sql`, it looks at
 the defaults, CHECK constraints and index conditions as PostgreSQL writes them back, with simple,
 cautious patterns that withhold the fix when in doubt.
@@ -52,7 +52,9 @@ Then, in your own project's folder, add the server to Claude Code:
 claude mcp add --transport stdio money-guard -- node /path/to/money-guard-mcp/dist/index.js
 ```
 
-On Windows, write the path with forward slashes: `C:/Users/you/money-guard-mcp/dist/index.js`. Type
+This adds it to the current project only; add `--scope user` to have it in every project (the server
+follows the project Claude Code has open). On Windows, write the path with forward slashes:
+`C:/Users/you/money-guard-mcp/dist/index.js`. Type
 `/mcp` in Claude Code to see that the server is connected. (To verify audit logs, use the project
 file under [Settings](#settings) instead of this command: it passes the key. Claude Desktop and other
 MCP clients are set up under [Settings](#settings) too.)
@@ -254,7 +256,9 @@ Set the variable where Claude Code starts, then start Claude Code again:
 - Windows: run `[Environment]::SetEnvironmentVariable('MONEY_GUARD_AUDIT_KEYS', 'k1=<64 hex digits>',
   'User')` in PowerShell and open a new terminal.
 
-Better still, load it from a secret store in the terminal that starts Claude Code, and only there. A shell
+Better still, load it from a secret store in the terminal that starts Claude Code, and only there: on macOS
+`MONEY_GUARD_AUDIT_KEYS="k1=$(security find-generic-password -w -s money-guard)" claude`, on Linux
+`MONEY_GUARD_AUDIT_KEYS="k1=$(secret-tool lookup service money-guard)" claude`. A shell
 profile keeps the key in plain text in a file in your home folder, which any agent that can read files can
 read, no shell needed; a Windows user variable is kept in the registry. Either gives the key to every
 program started from then on.
@@ -357,8 +361,8 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   repeat a misspelt parameter name whole).
 - **A secrets file the name list misses is not safe from the ledger tool.** The agent chooses which
   columns to map, so with one mapping, paging through the findings can show any three columns of
-  every row, and with a few mappings every column. A column name that matches none also lists up
-  to 30 cells of the first line, which in a file with no header is data.
+  every row, and with a few mappings every column. A mapped column that matches no header name gets an error
+  listing up to 30 cells of the first line, which in a file with no header is data.
 - **Hidden characters are escaped.** In results and errors, characters that can hide text are shown
   as escapes, by Unicode category: control characters, the zero-width and direction characters of
   the "Trojan Source" trick, and the invisible TAG characters that can spell out instructions a person
@@ -392,6 +396,10 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 - MySQL, SQLite or SQL Server: PostgreSQL only. Extensions that PGlite does not have (PostGIS,
   pg_graphql, pg_net, pg_cron, pgsodium) make a migration fail with a clear error.
 - Money kept in text or JSON columns, per-currency decimal places, FX, or chart-of-accounts rules.
+- Know every money column by its name. The name rule is a heuristic over a few hundred words: it misses
+  some money names (`salvage_value`, `tuition`), takes a few others for money, and offers no `fix_sql`
+  where it only guesses. Name the columns it misses in `money_columns` and the ones it should leave alone
+  in `ignore_columns`; floats it does not take for money are still listed in `other_float_columns`.
 - Defend against a hostile migration. A migration runs as a Postgres superuser and could edit the
   catalog to hide a column. money-guard catches mistakes, not deception. Such a migration cannot
   slip SQL into the fix money-guard suggests, though: money-guard writes `fix_sql` itself and quotes
@@ -444,7 +452,7 @@ of [integer-pence-ledger](https://github.com/Spundu/integer-pence-ledger) and th
 [audit-chain](https://github.com/Spundu/audit-chain).
 
 Before publishing, it went through more than 20 rounds of review by AI agents: Claude, each in a fresh session that
-saw only the code and the docs, each with one lens (security, the checkers' correctness, MCP and
+saw the code, the docs and a short brief of what had changed, each with one lens (security, the checkers' correctness, MCP and
 agent use, tests and CI, and the docs as a hiring manager would read them). Each round found tens of
 problems, among them hidden characters reaching the model, a `fix_sql` that broke column defaults, a
 server that spun when its host closed stderr, a catalog query that grew with the square of the schema,

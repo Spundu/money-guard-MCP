@@ -108,7 +108,7 @@ describe('the stdio process', () => {
     child.stdin.write(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"money_lint_schema","arguments":{"migrations":"${pad}"}}}\n`);
     child.stdin.end();
     await exited;
-    expect(stderr).toMatch(/^money-guard-mcp: transport error \(\w+\)$/m);
+    expect(stderr).toMatch(/^money-guard-mcp: transport error \(a message over the 10 MiB limit\)$/m); // review round 24: not just "Error"
     expect(stderr).not.toContain('xxxxxxxx');
   }, 30_000);
 

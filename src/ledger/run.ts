@@ -10,6 +10,7 @@ import { ToolError } from '../errors.js';
 import type { AmountFormat } from '../money.js';
 import { readChecked, resolveInRoot, splitCamel, type Root } from '../paths.js';
 import { MAX_LISTED_FINDINGS, checkLedger, mappingMode, type Finding, type FindingCode } from './check.js';
+import { shownNames } from './fields.js';
 import { looksLikeValue, readLedger, type ColumnMap, type LedgerFormat } from './read.js';
 
 export const LEDGER_EXTENSIONS: readonly string[] = ['.csv', '.tsv', '.json', '.jsonl', '.ndjson'];
@@ -210,11 +211,13 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   };
   // "Valuta" alone may still be the value date: a name with another currency word comes first (ING: "Valuta", "Währung").
   // Each group is ranked on its own (review round 20: a plain "Valuta" was named before "Transaction Currency").
-  const found = names.filter(looksLikeCurrency);
+  // Judged on what results show of each name, and named so (review round 24: judged on whole names, whether it came
+  // told what lay past 40 characters, a key of 11 million characters took 6 s, and a cut name could not be mapped).
+  const found = shownNames(names).filter(looksLikeCurrency);
   const valuta = (n: string) => wordsOf(n).includes('valuta');
   const best = (group: readonly string[]) => group.find(plain) ?? group.find(endsLikeOne) ?? group[0];
   const name = best(found.filter((n) => !valuta(n))) ?? best(found.filter(valuta));
-  return name === undefined ? '' : ` ${quoted(name)} looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
+  return name === undefined ? '' : ` "${name}" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).`;
 }
 
 function summarise(

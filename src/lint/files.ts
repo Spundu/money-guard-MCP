@@ -86,13 +86,14 @@ function isDownFile(name: string): boolean {
  * ("-- +migrate Up"), node-pg-migrate ("-- Up Migration", as its own parser reads it: indented, or
  * with more dashes) and tern ("---- create above / drop below ----", which has no up marker). A down
  * marker counts only in a file that holds its tool's up marker, so a comment such as "-- Down migration
- * (manual)" in an ordinary file cuts nothing.
+ * (manual)" in an ordinary file cuts nothing. node-pg-migrate runs only what lies between its first up
+ * marker and the first down marker after it (`firstOnly`, as its getActions reads a file: review round 24).
  */
-const TOOLS: ReadonlyArray<{ up: RegExp | null; down: RegExp }> = [
+const TOOLS: ReadonlyArray<{ up: RegExp | null; down: RegExp; firstOnly?: true }> = [
   { up: /^--\s*migrate:up(?:\s|$)/, down: /^--\s*migrate:down(?:\s|$)/ },
   { up: /^--\s*\+goose\s+up(?:\s|$)/i, down: /^--\s*\+goose\s+down(?:\s|$)/i },
   { up: /^--\s*\+migrate\s+up(?:\s|$)/i, down: /^--\s*\+migrate\s+down(?:\s|$)/i },
-  { up: /^\s*--[\s-]*up\s+migration/i, down: /^\s*--[\s-]*down\s+migration/i },
+  { up: /^\s*--[\s-]*up\s+migration/i, down: /^\s*--[\s-]*down\s+migration/i, firstOnly: true },
   { up: null, down: /^-{4}\s*create above\s*\/\s*drop below\s*-{4}/i },
 ];
 
@@ -117,10 +118,13 @@ const EMPTY_SEARCH_PATH = /^\s*SELECT\s+pg_catalog\.set_config\('search_path',\s
 export function prepareSql(text: string): string {
   const lines = text.split('\n');
   const tool = TOOLS.find((t) => lines.some((line) => (t.up ?? t.down).test(line)));
+  const upAt = tool?.firstOnly === true && tool.up !== null ? lines.findIndex((line) => tool.up?.test(line)) : -1;
+  const downAt = upAt < 0 ? -1 : lines.findIndex((line, i) => i > upAt && tool?.down.test(line));
   let down = false;
   return lines
-    .map((line) => {
-      if (tool?.up?.test(line)) down = false;
+    .map((line, i) => {
+      if (upAt >= 0) down = i < upAt || (downAt >= 0 && i >= downAt); // what node-pg-migrate never runs
+      else if (tool?.up?.test(line)) down = false;
       else if (tool?.down.test(line)) down = true;
       return down || /^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) || CLIENT_ENCODING.test(line) || EMPTY_SEARCH_PATH.test(line) ? ' '.repeat(line.length) : line;
     })

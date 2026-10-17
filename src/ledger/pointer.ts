@@ -12,7 +12,7 @@ export function resolvePointer(doc: unknown, pointer: string): unknown {
   let tokens = TOKENS.get(pointer);
   if (tokens === undefined) {
     if (TOKENS.size >= 64) TOKENS.clear();
-    tokens = pointer.slice(1).split('/').map((raw) => raw.replaceAll('~1', '/').replaceAll('~0', '~'));
+    tokens = pointer.slice(1).split('/').map(decodeToken);
     TOKENS.set(pointer, tokens);
   }
   for (const token of tokens) {
@@ -26,6 +26,11 @@ export function resolvePointer(doc: unknown, pointer: string): unknown {
     }
   }
   return node;
+}
+
+/** One token of a pointer as the key it names: "~1" is "/", "~0" is "~" (RFC 6901). */
+export function decodeToken(token: string): string {
+  return token.replaceAll('~1', '/').replaceAll('~0', '~');
 }
 
 /** A key as one token of a pointer: "~" and "/" escaped, as RFC 6901 says. */

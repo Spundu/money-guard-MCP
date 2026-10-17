@@ -43,7 +43,7 @@ describe('money_lint_schema: fix_sql', () => {
     const r = await lint({
       'db/migrations/0001.sql':
         'create table o (id int, delivery_fee numeric(10,2) not null default 2.50, amount_cap numeric(10,2) check (amount_cap <= 1000.00), ' +
-        "subtotal double precision, total double precision default 0, discount numeric(10,2) default null, refund money default 0, price money default '1.50', refund_typed money default 0::money, " +
+        "subtotal double precision, total double precision default 0, discount_amount numeric(10,2) default null, refund money default 0, price money default '1.50', refund_typed money default 0::money, " +
         'refund_checked money check (refund_checked >= 0::money), ' +
         'fee_pence double precision default 2.5);\n' +
         'create unique index big_orders on o (id) where subtotal > 100;\n' +
@@ -56,9 +56,9 @@ describe('money_lint_schema: fix_sql', () => {
     // refund_typed, refund_checked: a money value cannot work on a bigint, so those ALTERs would fail.
     expect([fix.delivery_fee, fix.amount_cap, fix.subtotal, fix.price, fix.refund_typed, fix.refund_checked]).toEqual([null, null, null, null, null, null]);
     expect([fix.deposit, fix.refund_total]).toEqual([null, null]);
-    expect([fix.total, fix.discount, fix.refund, fix.fee_pence]).toEqual([
+    expect([fix.total, fix.discount_amount, fix.refund, fix.fee_pence]).toEqual([
       'ALTER TABLE public.o ALTER COLUMN total TYPE bigint USING pg_catalog.round(total OPERATOR(pg_catalog.*) 100)::bigint;',
-      'ALTER TABLE public.o ALTER COLUMN discount TYPE bigint USING pg_catalog.round(discount OPERATOR(pg_catalog.*) 100)::bigint;',
+      'ALTER TABLE public.o ALTER COLUMN discount_amount TYPE bigint USING pg_catalog.round(discount_amount OPERATOR(pg_catalog.*) 100)::bigint;',
       'ALTER TABLE public.o ALTER COLUMN refund TYPE bigint USING (refund::numeric OPERATOR(pg_catalog.*) 100)::bigint;',
       'ALTER TABLE public.o ALTER COLUMN fee_pence TYPE bigint USING pg_catalog.round(fee_pence)::bigint;', // minor units already: the default keeps its meaning
     ]);
