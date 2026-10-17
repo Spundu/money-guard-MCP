@@ -36,13 +36,28 @@ export function uncut(name: string, names: readonly string[]): string {
  * alike, each cut in the middle instead, so its end shows too (review round 23: two long headers that began
  * alike could not be told apart, nor either mapped). A JSON Pointer is shown token by token, each cut so
  * (review round 24: cut as a whole, "/money/currency_code_as_reported_by_the…" could not be passed back).
+ * Where even the middle cuts show alike, each is marked with its place among them, " #1", " #2" (review
+ * round 24: "Amount (minor units… settled by the bank" was both the debit and the credit column, and neither
+ * could be mapped). The mark tells nothing past what is shown but the order of the names.
  */
 export function shownNames(names: readonly string[]): string[] {
   const parts = names.map(pointerParts);
   const cut = parts.map(([prefix, last]) => prefix + clip(last, ECHO_MAX, true));
+  const cuts = tally(cut);
+  const middle = parts.map(([prefix, last], i) => ((cuts.get(cut[i] ?? '') ?? 0) > 1 ? prefix + clipPath(last, ECHO_MAX, true) : (cut[i] ?? '')));
+  const alike = tally(middle);
+  const seen = new Map<string, number>();
+  return middle.map((m) => {
+    if ((alike.get(m) ?? 0) < 2) return m;
+    seen.set(m, (seen.get(m) ?? 0) + 1);
+    return `${m} #${seen.get(m) ?? 0}`;
+  });
+}
+
+function tally(values: readonly string[]): Map<string, number> {
   const count = new Map<string, number>();
-  for (const c of cut) count.set(c, (count.get(c) ?? 0) + 1);
-  return parts.map(([prefix, last], i) => ((count.get(cut[i] ?? '') ?? 0) > 1 ? prefix + clipPath(last, ECHO_MAX, true) : (cut[i] ?? '')));
+  for (const v of values) count.set(v, (count.get(v) ?? 0) + 1);
+  return count;
 }
 
 /** Most tokens before the last that a pointer is shown token by token with; a longer name is cut as a whole. */
@@ -100,9 +115,9 @@ export function didYouMean(name: string, near: string | undefined, names: readon
   if (near === undefined) return '';
   const at = names.indexOf(near);
   // A pointer built from a key and the name given (nestedPointer) is shown as every pointer is: token by token (round 24).
-  const shown = `"${(at >= 0 ? shownNames(names)[at] : shownNames([near])[0]) ?? ''}"`;
-  const same = shown === `"${shownNames([name])[0] ?? ''}"` ? ' (it differs past the 40 characters shown: pass it back as shown)' : '';
-  return ` Did you mean ${shown}${same}?`;
+  const text = (at >= 0 ? shownNames(names)[at] : shownNames([near])[0]) ?? '';
+  const same = text === shownNames([name])[0] ? ' (it differs past the 40 characters shown: pass it back as shown)' : '';
+  return ` Did you mean "${text}"${same}?`;
 }
 
 /**

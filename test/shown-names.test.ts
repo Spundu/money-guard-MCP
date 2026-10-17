@@ -77,6 +77,42 @@ describe('a column name passed back as a hint showed it', () => {
     expect(errorText(() => check('.json', file, { columns: { transaction_id: 'id', amount: 'a' } }))).toContain(`keys "${'e'.repeat(19)}…${'e'.repeat(18)}_a", "${'e'.repeat(19)}…${'e'.repeat(18)}_b"`);
   });
 
+  it('lists two CSV headers that begin alike each cut in the middle, and maps each as listed', () => {
+    // Review round 24: only the JSON path was tested; a plain cut in the CSV list would bring back round 23's bug.
+    const [a, b] = ['Currency Code As Reported By The Issuing Bank Alpha', 'Currency Code As Reported By The Issuing Bank Betaa'];
+    const csv = `id,amt,${a},${b}\nT1,5,GBP,EUR\nT1,-5,GBP,EUR\n`;
+    const text = errorText(() => check('.csv', csv, { columns: { transaction_id: 'id', amount: 'amt', currency: 'nope' } }));
+    const listed = ['Currency Code As Re…e Issuing Bank Alpha', 'Currency Code As Re…e Issuing Bank Betaa'];
+    expect(text).toContain(`"id", "amt", "${listed[0]}", "${listed[1]}"`);
+    for (const name of listed) expect(check('.csv', csv, { columns: { transaction_id: 'id', amount: 'amt', currency: name } }).summary, name).toMatch(/^Balanced/);
+  });
+
+  it('marks two names that show alike even cut in the middle with their place, and maps each as marked', () => {
+    // Review round 24: both showed as "Amount (minor units… settled by the bank"; passed back, that mapped neither,
+    // and the hint said to pass it back as shown, so a model looped.
+    const [debit, credit] = ['debit', 'credit'].map((side) => `Amount (minor units) of the ledger line - ${side} side - as settled by the bank`);
+    const csv = `id,${debit},${credit}\nT1,5,0\nT1,0,5\n`;
+    const cut = 'Amount (minor units… settled by the bank';
+    const text = errorText(() => check('.csv', csv, { columns: { transaction_id: 'id', debit: 'Debit', credit: cut } }));
+    expect(text).toContain(`"${cut} #1", "${cut} #2"`);
+    expect(text).not.toContain('pass it back as shown');
+    const mapped = check('.csv', csv, { columns: { transaction_id: 'id', debit: `${cut} #1`, credit: `${cut} #2` } });
+    expect([mapped.rows_read, mapped.summary]).toEqual([2, 'Balanced: the 1 transaction nets to zero in whole minor units.']);
+  });
+
+  it('shows a suggestion that is the first name, and collides, as the list shows it', () => {
+    const csv = `${'q'.repeat(45)}_x,${'q'.repeat(45)}_y,amt\nT1,0,5\nT1,0,-5\n`;
+    expect(errorText(() => check('.csv', csv, { columns: { transaction_id: `${'q'.repeat(45)}_z`, amount: 'amt' } }))).toContain(`Did you mean "${'q'.repeat(19)}…${'q'.repeat(18)}_x"`);
+  });
+
+  it('lists exactly 30 names with no "and 0 more", in a CSV header and in a JSON record', () => {
+    // Round 24's tests: "> 30" made ">= 30" was caught by no test.
+    const names = Array.from({ length: 30 }, (_, i) => `c${i}`);
+    const csv = errorText(() => check('.csv', `${names.join(',')}\n${names.map(() => '1').join(',')}\n`, { columns: { transaction_id: 'x', amount: 'c1' } }));
+    const json = errorText(() => check('.json', JSON.stringify([Object.fromEntries(names.map((n) => [n, 1]))]), { columns: { transaction_id: 'x', amount: 'c1' } }));
+    for (const text of [csv, json]) expect(text).toMatch(/"c29"\. /);
+  });
+
   it('reads a JSONL file the same way, with the names of its first records', () => {
     const key = 'currency_code_as_reported_by_the_bank_of_issue';
     const jsonl = `{"id":"T1","money":{"value":5,"${key}":"GBP"}}\n{"id":"T1","money":{"value":-5,"${key}":"GBP"}}\n`;

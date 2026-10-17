@@ -146,6 +146,15 @@ describe('the name rule, review round 24', () => {
   it('takes nav before a word that is not money for navigation', () => {
     expect(['nav_lat', 'nav_lon', 'nav_heading', 'nav_x', 'nav_visible', 'nav_order', 'navorder'].map(verdict)).toEqual(['not', 'not', 'not', 'not', 'not', 'not', 'not']);
     expect(['nav', 'nav_per_share', 'nav_usd', 'nav_value', 'nav_amount', 'fund_nav'].map(verdict)).toEqual(['money', 'money', 'money', 'money', 'money', 'money']);
+    // Judged on the word after nav, whatever comes later (round 24's tests: only two-word names were tested).
+    expect(['nav_bar_opacity', 'nav_item_parent', 'nav_menu_style', 'nav_per_share_class', 'nav_usd_total'].map(verdict)).toEqual(['not', 'not', 'not', 'money', 'money']);
+  });
+
+  it('keeps a band number with a percentage word a guess, and reads every state word before a held word', () => {
+    // Round 24's tests: only the tier was tested, and only one state word.
+    expect(['commission_band_1', 'commission_level_2'].map(verdict)).toEqual(['guess', 'guess']);
+    const held = ['pto_accrued_remaining_balance', 'leave_current_available_balance', 'pto_remaining_unused_balance'];
+    expect(held.map(verdict)).toEqual(held.map(() => 'not'));
   });
 
   it('takes a unit of measure after a money word for no money, and a bare percentage word for a guess', () => {

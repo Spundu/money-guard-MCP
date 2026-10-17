@@ -184,6 +184,9 @@ describe('money_lint_schema: judging columns', () => {
     // a text column of that name, or one with a word between (payment_method_currency), is not.
     const odoo = await lint({ 'db/migrations/0001.sql': 'create table move_line (amount_currency numeric(14,2), balance_ccy float8, payment_method_currency float8, note_currency text);' });
     expect(odoo.findings.map((f) => f.column).sort()).toEqual(['amount_currency', 'balance_ccy']);
+    // Review round 24: of type real it is checked too; a total, net or gross with a currency is no amount in one.
+    const typed = await lint({ 'db/migrations/0001.sql': 'create table l (amount_currency real, total_currency numeric, net_currency numeric);' });
+    expect(typed.findings.map((f) => [f.code, f.column])).toEqual([['FLOAT_MONEY', 'amount_currency']]);
     // Round 23: an integer column of that name holds ISO 4217 numeric codes.
     expect((await lint({ 'db/migrations/0001.sql': 'create table c (price_currency smallint, amount_residual_currency numeric);' })).findings.map((f) => f.column)).toEqual(['amount_residual_currency']);
     // Review round 22: no fix_sql for a name with any backslash: in a result it reads otherwise than in the SQL.

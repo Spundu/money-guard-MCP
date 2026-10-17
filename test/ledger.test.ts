@@ -110,10 +110,10 @@ describe('money_check_double_entry: the rules', () => {
   it('reads an amount plus a debit/credit side', () => {
     const columns = { transaction_id: 't', amount: 'a', side: 's' };
     expect(check('.csv', 't,a,s\nA,100,D\nA,100,cr\nB,5,DEBIT\nB,5,Credit\n', { columns }).balanced).toBe(true);
-    const r = check('.csv', 't,a,s\nA,100,X\nA,100,C\nB,-5,D\nB,5,C\nC,7,\nC,7,C\n', { columns });
+    const r = check('.csv', 't,a,s\nA,100,X\nA,100,C\nB,-1,D\nB,1,C\nC,7,\nC,7,C\n', { columns });
     expect(r.findings.map((f) => [f.code, f.transaction_id, f.field, f.value])).toEqual([
       ['BAD_SIDE', 'A', 'side', 'X'],
-      ['NEGATIVE_WITH_SIDE', 'B', 'amount', '-5'],
+      ['NEGATIVE_WITH_SIDE', 'B', 'amount', '-1'], // the boundary: -1 minor unit (round 24's tests)
       ['MISSING_VALUE', 'C', 'side', undefined],
     ]);
     expect(r.transactions_not_checked).toBe(3);
@@ -356,6 +356,8 @@ describe('money_check_double_entry: the rules', () => {
       expect(r.findings.length).toBeGreaterThan(0);
       expect(r.findings.length).toBeLessThan(20);
       expect(r.limit).toBe(20);
+      // The paging sentence once, however often the page was shortened (round 24's tests).
+      expect(r.summary.split('Not every finding is listed').length - 1).toBe(r.next_offset === null ? 0 : 1);
       seen.push(...r.findings.map((f) => f.transaction_id));
       offset = r.next_offset;
     }

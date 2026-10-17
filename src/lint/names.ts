@@ -197,9 +197,6 @@ function judgeWords(all: readonly string[]): Verdict {
     // "leave_travel_allowance", money): a guess, so no x100 either way (review round 23).
     if (totalsAMeasure(ws, held, budget ? BUDGET_HELD_WORDS : HELD_WORDS)) return 'guess';
   }
-  // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
-  // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
-  // exponent), it is not an amount.
   // A tier's or a level's number kept ("price_tier_1") is sure money with a price; "commission_tier_1" may be a
   // percentage: a guess (review round 23).
   // Without a money word a tier's or a level's number is no money at all (review round 24: "water_level_1" was a guess).
@@ -207,6 +204,9 @@ function judgeWords(all: readonly string[]): Verdict {
   if (tiered && !ws.some((w) => MONEY_WORDS.has(w))) return 'not';
   if (ws.length === 1 && BARE_GUESS_WORDS.has(last)) return 'guess'; // "discount" alone may be a percentage (round 24)
   if (tiered && !ws.some((w) => ['price', 'prices', 'cost', 'costs', 'fee', 'fees', 'amount', 'amounts'].includes(w))) return 'guess';
+  // "minor" says the unit of an amount beside another money word ("amount_minor"); beside a version it
+  // is a version part ("version_minor"); alone, or with unit ("minor_unit", ISO 4217's currency
+  // exponent), it is not an amount.
   if (ws.some((w) => MONEY_WORDS.has(w) && w !== 'minor' && !GENERIC_MONEY_WORDS.has(w))) return 'money';
   // A generic money word counts unless a measure follows it: "total_paid" and "net_ytd" are money,
   // "total_co2" and "credit_utilization" measures. "units" after minor or smallest is the unit of the money.

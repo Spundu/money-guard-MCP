@@ -42,7 +42,7 @@ export default function build(): void {
     console.warn('\nNOTE: the tests run as root, who may read any file, so the 3 tests of files nobody may read skip here. CI runs them as an ordinary user.\n');
   }
   if (process.platform === 'win32') {
-    console.warn('\nNOTE: Windows has no POSIX file permissions, so the 3 tests of files nobody may read skip here, and 1 Linux-only test of the piped stderr. CI runs them on Linux.\n');
+    console.warn('\nNOTE: Windows has no POSIX file permissions, so the 3 tests of files nobody may read skip here, and 1 Linux-only test of the piped stderr; and 2 tests of relative link texts (junctions hold only absolute ones) and 1 of a quote in a folder name (Windows allows none) skip too. CI runs them on Linux.\n');
   }
   if (!('getHeapStatistics' in Worker.prototype)) {
     console.warn("\nNOTE: this Node.js cannot measure one thread's memory (22.16 and later can), so the 2 tests of that measure skip here.\n");
