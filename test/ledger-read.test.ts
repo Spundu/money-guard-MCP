@@ -153,6 +153,7 @@ describe('money_check_double_entry: reading CSV', () => {
   it('suggests a name within 2 edits, or a third of its length, among the first 5,000 candidates', () => {
     expect(closest('amnt', ['currency', 'amount'])).toBe('amount'); // 2 edits from a 4-letter name
     expect(closest('amt', ['currency', 'amount'])).toBe(undefined); // 3 edits: too far for a guess
+    expect([closest('txn', ['amount', 'txn_id']), closest('tx', ['amount', 'tx_reference'])]).toEqual(['txn_id', undefined]); // held whole from 3 letters (round 25)
     // Review round 9: a third of the length, rounded down: 3 edits are too many for 7 letters, not for 9.
     expect([closest('abcdefg', ['xyzdefg']), closest('abcdefghi', ['xyzdefghi'])]).toEqual([undefined, 'xyzdefghi']);
     // Ties go to the first: amount and amoun are both 1 edit from amout (review round 8).

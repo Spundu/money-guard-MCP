@@ -81,6 +81,8 @@ describe('parseAuditKeys', () => {
       [`k1=${KEY_A},k1=${KEY_B}`, /pair 2 repeats the id of pair 1/],
       [`${KEY_B}=${KEY_A}`, /pair 1 has an id that looks like a key \(32 or more hex digits\)/],
       [`${KEY_A}=${KEY_B}`, /pair 1 has an id that looks like a key \(32 or more hex digits\)/], // the shortest key
+      [`${KEY_A.toUpperCase()}=${KEY_B}`, /pair 1 has an id that looks like a key/], // in capitals, or mixed (review round 25)
+      [`${KEY_A.slice(0, 16)}${KEY_A.slice(16).toUpperCase()}=${KEY_B}`, /pair 1 has an id that looks like a key/],
       [`k1\u{200b}=${KEY_A}`, /pair 1 has an id with a control or invisible character/],
       [`k1=${KEY_A}0`, /has a key with an odd number of hex digits/],
       [`k1=${KEY_A.slice(0, -2)}zz`, /not hex digits only \(0-9, a-f; no 0x; pairs separated by commas\)/], // round 21: said apart

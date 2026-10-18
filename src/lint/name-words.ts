@@ -20,6 +20,7 @@ export const MONEY_WORDS: ReadonlySet<string> = new Set([
   'contribution', 'contributions', 'proceeds', 'postage', 'rrp', 'cash', 'gmv', 'aov', 'arpu', 'notional', 'emi', 'nav', 'pension', 'pensions',
   'bal', 'bals', 'deduction', 'deductions', 'markup', 'markups', 'gratuity', 'gratuities', 'duty', 'duties', 'excise', 'tariff',
   'tariffs', 'brokerage', 'freight', 'toll', 'tolls', 'ltv', 'ebitda', 'severance', 'debt', 'debts',
+  'valuation', 'valuations', 'cpc', 'cpm', 'cac', // advertising's cost per click and per thousand, the cost to acquire a customer (review round 25)
   // minor units of other currencies
   'paisa', 'kobo', 'sats', 'satoshi', 'satoshis', 'centavo', 'centavos', 'kopek', 'kopeks', 'kopeck',
   'kopecks', 'wei', 'lamport', 'lamports', 'msat', 'msats',
@@ -119,7 +120,7 @@ export const PRICED_UNITS: ReadonlySet<string> = new Set(['hour', 'day', 'night'
 export const VALUE_WORDS: ReadonlySet<string> = new Set([
   'order', 'orders', 'cart', 'basket', 'invoice', 'contract', 'deal', 'transaction', 'purchase', 'sale', 'sales', 'voucher', 'coupon',
   'gift', 'card', 'item', 'lifetime', 'portfolio', 'inventory', 'stock', 'trade', 'loan', 'asset', 'assets', 'claim', 'policy',
-  'market', 'book', 'fair', 'face', 'par', 'line', 'net', 'gross', 'total',
+  'market', 'book', 'fair', 'face', 'par', 'line', 'net', 'gross', 'total', 'collateral', 'tx', 'txn',
 ]);
 
 /**
@@ -131,7 +132,7 @@ export const OTHER_WORDS: ReadonlySet<string> = new Set([
   'platform', 'service', 'late', 'sales', 'sale', 'base', 'retail', 'wholesale', 'delivery', 'handling', 'processing', 'booking',
   'cancellation', 'setup', 'transfer', 'exchange', 'monthly', 'annual', 'yearly', 'initial', 'final', 'original', 'max', 'min',
   'limit', 'due', 'paid', 'owed', 'outstanding', 'remaining', 'pending', 'grand', 'line', 'item', 'order', 'invoice', 'account',
-  'opening', 'closing', 'current', 'available', 'card', 'per', 'in', 'value', 'after', 'before', 'smallest', 'lowest', 'denomination',
+  'opening', 'closing', 'current', 'available', 'card', 'per', 'in', 'value', 'after', 'before', 'smallest', 'lowest', 'major', 'denomination',
   'unit', 'old', 'new', 'prev', 'previous', 'holiday', 'sick', 'overtime', 'take', 'home', 'sub', 'cart', 'basket', 'running', 'store',
   'refunded', 'invoiced', 'charged', 'billed', 'spent', 'earned', 'collected', 'withdrawn', 'deposited', 'accrued', 'credited', 'debited', 'settled', 'disbursed', 'reimbursed', 'received',
 ]);
@@ -208,7 +209,7 @@ export const PER_ORDINARY_WORDS: ReadonlySet<string> = new Set([
 ]);
 
 /** The measure units a price can be given per without "per": "price_kg", "cost_kwh", "fuel_price_litre" (review round 19). */
-export const PRICED_MEASURE_WORDS: ReadonlySet<string> = new Set(['kg', 'g', 'mg', 'lb', 'km', 'mile', 'kwh', 'ml', 'litre', 'liter', 'gb', 'mb']);
+export const PRICED_MEASURE_WORDS: ReadonlySet<string> = new Set(['kg', 'g', 'mg', 'lb', 'km', 'mile', 'kw', 'kwh', 'ml', 'litre', 'liter', 'gb', 'mb']);
 
 /** A scale other than pounds: "revenue_millions", "amount_k" hold thousands or millions of pounds (review round 20). */
 export const SCALE_WORDS: ReadonlySet<string> = new Set(['k', 'thousand', 'thousands', 'm', 'mm', 'mn', 'mio', 'million', 'millions', 'bn', 'billion', 'billions', 'lakh', 'lakhs', 'lac', 'lacs', 'crore', 'crores', 'hundredths']); // not cr: credit (review round 23)

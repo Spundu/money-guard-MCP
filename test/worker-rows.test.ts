@@ -2,7 +2,7 @@
 // (round 18) were tested only with a megabyte of "x", which every check refuses. Each limit here is
 // tested at its edge, with the numbers written out, so that changing one fails a test.
 import { describe, expect, it } from 'vitest';
-import { bounded, saneSnapshot } from '../src/lint/worker-rows.js';
+import { bounded, brokePGlite, saneSnapshot } from '../src/lint/worker-rows.js';
 
 describe('saneSnapshot', () => {
   it('passes the rows PostgreSQL gives: a column key and a type oid or "float"', () => {
@@ -65,5 +65,13 @@ describe('bounded', () => {
 
   it('passes on a value that is not text, for the main thread to refuse', () => {
     expect(bounded([row({ defaults: 'not an array', checks: [7] })])).toEqual([row({ defaults: 'not an array', checks: [7] })]);
+  });
+});
+
+describe('brokePGlite', () => {
+  it("takes PGlite's own TypeError or RangeError for a database that no longer answers, never PostgreSQL's refusal", () => {
+    // Review round 25: only the TypeError half was tested.
+    expect([new TypeError('r is not a function'), new RangeError('Maximum call stack size exceeded'), new RangeError('Invalid string length')].map(brokePGlite)).toEqual([true, true, true]);
+    expect([new Error('relation "x" does not exist'), Object.assign(new Error('syntax error'), { code: '42601' }), 'text', undefined].map(brokePGlite)).toEqual([false, false, false, false]);
   });
 });

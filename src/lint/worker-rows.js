@@ -1,7 +1,8 @@
 // @ts-check
 // The checks the database thread makes on catalog rows before it sends them (SPEC.md §3.4). A migration
 // can replace the functions the catalog queries are built with and make their results huge, which the main
-// thread would keep to the end of the lint, past this thread's limits (review rounds 17 and 18). Kept apart
+// thread would keep to the end of the lint, past this thread's limits (review rounds 17 and 18); and what a
+// statement's failure says of the database (brokePGlite). Kept apart
 // from worker.js, which starts a database when it is loaded, so that the tests can call them directly.
 
 /** A column's key: its table oid and column number, as PostgreSQL's own functions write them. */
@@ -70,4 +71,15 @@ export function bounded(rows) {
     const row = /** @type {Record<string, unknown>} */ (r);
     return { ...row, declared: short(row.declared), domain_name: short(row.domain_name), defaults: bound(row.defaults, 'x'.repeat(MAX_TEXT_CHARS + 1)), checks: bound(row.checks, null), index_exprs: bound(row.index_exprs, null) };
   });
+}
+
+/**
+ * Whether a statement's failure is PGlite's own JavaScript failing, not PostgreSQL refusing it: then the
+ * database no longer answers correctly (review round 24: under a client encoding set by set_config, a
+ * failing statement on a name that is not ASCII gave "r is not a function", reported as the statement
+ * refused). A TypeError or a RangeError (a stack overflow, a string too long) is no answer of PostgreSQL's.
+ * @param {unknown} err
+ */
+export function brokePGlite(err) {
+  return err instanceof TypeError || err instanceof RangeError;
 }

@@ -65,6 +65,12 @@ describe('the markers of node-pg-migrate', () => {
     expect(run('-- Down Migration\ndrop table b;\n-- Up Migration\ncreate table b (x int);\n')).toEqual(['-- Up Migration', 'create table b (x int);']);
     expect(run('-- migrate:up\ncreate table a (x int);\n-- migrate:down\ndrop table a;\n-- migrate:up\ncreate table b (x int);\n')).toEqual(['-- migrate:up', 'create table a (x int);', '-- migrate:up', 'create table b (x int);']); // dbmate as before
   });
+
+  it('cuts nothing for a lone comment that reads as an up marker in an ordinary file', () => {
+    // Review round 25: the tables above "-- Up migration of payouts" were blanked, and their float total never checked.
+    const sql = 'create table orders (id bigserial primary key, total double precision not null);\n\n-- Up migration of the payouts feature (ticket 12)\ncreate table payouts (id bigserial primary key, amount_pence bigint not null);\n';
+    expect(prepareSql(sql)).toBe(sql);
+  });
 });
 
 describe('a client encoding set some other way', () => {

@@ -12,8 +12,8 @@ network.
 
 **Status:** 0.1.0. Not on npm yet: run it from a clone (below). It speaks MCP 2026-07-28, and the 2025
 protocol versions for older clients. [SPEC.md](SPEC.md) fixes every parameter, result field, code and
-limit. Its CI has not run yet; the tests pass on Windows and Linux machines ([How it is
-tested](#how-it-is-tested)). macOS is untested.
+limit. CI runs the tests on Linux and Windows on every push ([How it is tested](#how-it-is-tested)).
+macOS is untested.
 
 ## What it checks
 
@@ -256,7 +256,10 @@ Set the variable where Claude Code starts, then start Claude Code again:
 - Windows: run `[Environment]::SetEnvironmentVariable('MONEY_GUARD_AUDIT_KEYS', 'k1=<64 hex digits>',
   'User')` in PowerShell and open a new terminal.
 
-Better still, load it from a secret store in the terminal that starts Claude Code, and only there: on macOS
+Better still, keep it in a secret store and load it in the terminal that starts Claude Code, and only
+there. Store it once (each command asks for the 64 hex digits): on macOS `security
+add-generic-password -s money-guard -a "$USER" -w`, on Linux `secret-tool store --label=money-guard
+service money-guard`. Then start Claude Code with it: on macOS
 `MONEY_GUARD_AUDIT_KEYS="k1=$(security find-generic-password -w -s money-guard)" claude`, on Linux
 `MONEY_GUARD_AUDIT_KEYS="k1=$(secret-tool lookup service money-guard)" claude`. A shell
 profile keeps the key in plain text in a file in your home folder, which any agent that can read files can
@@ -359,6 +362,10 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   and column names stay whole, so the agent can act on them; a path over 400 characters is cut in the
   middle. A result is at most 20,000 characters (the SDK's own input-validation errors excepted: they
   repeat a misspelt parameter name whole).
+- **A path that does not exist is answered with what is near it.** The error lists up to 20 names in
+  the nearest folder of the project that exists: its folders and the files of the tool's own types,
+  never a link, a credentials folder such as `.aws`, or a name the secrets-file list refuses. So an
+  agent with no tool to list files can find an export, and an agent can learn those names, no more.
 - **A secrets file the name list misses is not safe from the ledger tool.** The agent chooses which
   columns to map, so with one mapping, paging through the findings can show any three columns of
   every row, and with a few mappings every column. A mapped column that matches no header name gets an error
@@ -408,11 +415,10 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
 
 ## How it is tested
 
-- `npm test` runs about 1,000 tests, about 500 of them rows of the column-name table. They pass on
-  Windows (Node 24) and on Linux (Node 22, in WSL; last run on 2026-10-16), where the file-link and permission tests that
-  Windows skips run too. The CI workflow is set up to run them on Linux and Windows with Node 22,
-  24 and 26, and on Node 22.12, the oldest the package supports; it has not run yet, and the badge
-  at the top will show its latest run.
+- `npm test` runs about 1,100 tests, about 500 of them rows of the column-name table. CI runs them on
+  every push, on Linux and Windows with Node 22, 24 and 26, and on Node 22.12, the oldest the package
+  supports; the badge at the top shows its latest run. On Linux the file-link and permission tests that
+  Windows skips run too.
   - This README's example output and JSON, and the example results in SPEC.md (field by field, in
     order), are checked against what the tools return on the demo project.
   - Every sealed-audit-chain failure reason maps to a code that names it: none falls through to `OTHER`.
@@ -426,7 +432,7 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
     stderr through Node's streams and console, as PGlite prints, is fully contained, and that test fails
     when the capture is removed. (A thread could still write to file descriptor 1 directly; PGlite
     does not.)
-- Outside the suite, and in CI once it runs: the official
+- Outside the suite, and in CI on every push: the official
   [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 2.11.0 in both protocol eras
   (`--strict` finds no schema-portability problem); the packed npm tarball installed into an empty
   project and started over stdio; the Claude Desktop bundle built, unpacked into an empty folder,

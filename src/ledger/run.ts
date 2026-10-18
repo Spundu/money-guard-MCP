@@ -178,7 +178,7 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   // nor one that ends in a rate or a ratio. A plain currency name ("Currency", "ccy", "Currency Code")
   // is preferred to one that says which currency it is ("Original Currency"), and a name that ends in
   // its currency word or in "code" to the others.
-  const AMOUNT_WORDS = ['amount', 'amounts', 'balance', 'balances', 'bal', 'bals', 'debit', 'credit', 'total', 'price', 'fee', 'value', 'values', 'period', 'rate', 'rates', 'factor', 'ratio', 'in'];
+  const AMOUNT_WORDS = ['amount', 'amounts', 'amt', 'amts', 'balance', 'balances', 'bal', 'bals', 'debit', 'credit', 'total', 'price', 'fee', 'value', 'values', 'period', 'rate', 'rates', 'factor', 'ratio', 'in'];
   // For a JSON Pointer, the field's own name: "/amount/currency" is a currency beside an amount.
   const wordsOf = (name: string) =>
     splitCamel(name.startsWith('/') ? name.slice(name.lastIndexOf('/') + 1) : name, ' ') // "ISOCurrencyCode" too (round 16)
@@ -188,7 +188,8 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
       .filter((w) => w !== '');
   // hledger, beancount: commodity; German, French, Spanish (two words), Italian and Dutch; ISO 4217 (review rounds 15, 17)
   // Round 21: "Waehrung" written in ASCII.
-  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities', 'währung', 'waehrung', 'wahrung', 'devise', 'moneda', 'divisa', 'valuta', '4217'];
+  // Round 25: French "Monnaie", Polish "Waluta" (PKO, mBank), Portuguese "Moeda".
+  const CURRENCY = ['currency', 'currencies', 'ccy', 'curr', 'commodity', 'commodities', 'währung', 'waehrung', 'wahrung', 'devise', 'monnaie', 'moneda', 'moeda', 'divisa', 'valuta', 'waluta', '4217'];
   // A crypto exchange's asset or coin (Kraken), alone or with code or symbol, not "asset_id"; "ISO Code" (round 21).
   const coin = (ws: readonly string[]) => ['asset', 'coin'].includes(ws[0] ?? '') && (ws.length === 1 || (ws.length === 2 && ['code', 'symbol'].includes(ws[1] ?? '')));
   const isoCode = (ws: readonly string[]) => ws.length === 2 && ws[0] === 'iso' && ws[1] === 'code';
@@ -213,7 +214,10 @@ function currencyHint(columns: ColumnMap, names: readonly string[]): string {
   // Each group is ranked on its own (review round 20: a plain "Valuta" was named before "Transaction Currency").
   // Judged on what results show of each name, and named so (review round 24: judged on whole names, whether it came
   // told what lay past 40 characters, a key of 11 million characters took 6 s, and a cut name could not be mapped).
-  const found = shownNames(names).filter(looksLikeCurrency);
+  // Never a column the mapping already reads, as given or as shown (review round 25: "Ccy Amt", the amount, was named).
+  const mapped = new Set(Object.values(columns));
+  const shown = shownNames(names);
+  const found = shown.filter((n, i) => !mapped.has(n) && !mapped.has(names[i]) && looksLikeCurrency(n));
   const valuta = (n: string) => wordsOf(n).includes('valuta');
   const best = (group: readonly string[]) => group.find(plain) ?? group.find(endsLikeOne) ?? group[0];
   const name = best(found.filter((n) => !valuta(n))) ?? best(found.filter(valuta));

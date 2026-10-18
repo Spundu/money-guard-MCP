@@ -180,6 +180,12 @@ describe('clipPath', () => {
     expect(out.replace('…', '')).toMatch(/^(?:\\u0085)+$/);
   });
 
+  it('never splits an astral character at the end it keeps (review round 25: piecesFromEnd)', () => {
+    const out = clipPath(`${'a'.repeat(500)}😀`, 40);
+    expect([out.endsWith('😀'), /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(out), width(out)]).toEqual([true, false, 40]);
+    expect(clipPath(`${'a'.repeat(500)}${'😀'.repeat(30)}`, 40)).toMatch(/…(?:😀)+$/u);
+  });
+
   it('keeps any path within PATH_MAX characters', () => {
     expect(width(clipPath('x/'.repeat(10_000)))).toBe(PATH_MAX);
     expect(width(clipPath(`${'\u{e0041}'.repeat(5000)}.sql`))).toBeLessThanOrEqual(PATH_MAX);

@@ -254,7 +254,11 @@ already read the files).
   cut at 40 characters, and a name or pointer passed back as shown, cut or escaped, reaches the one name or key
   shown so (`records_pointer` too). Two names that would show alike are each cut in the middle instead (round
   23), and two that still show alike are each marked with their place among them, ` #1`, ` #2`, which maps each
-  (round 24's tests: neither could be mapped, and the hint said to pass back what mapped neither). A result never holds key material.
+  (round 24's tests: neither could be mapped, and the hint said to pass back what mapped neither), never with a
+  mark another name already shows (`Amt #1` beside two `Amt`: their marks are ` #2`, ` #3`). How a name shows
+  depends on the names beside it, so every hint shows it among the same names it is read back against: a
+  JSON record's fields among the fields of the first 1,000 records, a pointer's keys among the keys of their
+  object (review round 25). A result never holds key material.
   (A value can still be up to 40 characters of a file that holds a key: the tools refuse the files
   named in §2.3, and cannot know what every other file holds.)
 - **Hidden characters are always escaped,** by Unicode category: controls (Cc); format characters (Cf:
@@ -301,7 +305,7 @@ Shared error codes:
 | `ROOT_INVALID` | The root is missing, cannot be listed or entered (permission denied), is not a folder, or is a filesystem root; or the setting is an unfilled placeholder, a drive letter alone (`C:`), or keeps the quotes around it (`MONEY_GUARD_ROOT` only, and only when no folder has that name: a folder may end in an apostrophe). A missing root given as `~/…`, `$VAR`, `%VAR%` or `file:` is told those are not expanded, to give an absolute path. | Set `MONEY_GUARD_ROOT` to the project folder. |
 | `PATH_INVALID` | Empty, too long, NUL, a device/UNC path, or (on Windows) a colon anywhere but after a drive letter, which names an alternate data stream. | Pass a path relative to the project root. |
 | `PATH_OUTSIDE_ROOT` | Resolves outside the root (including through a symlink). | Use a path inside the project. On Windows, for a path that starts with one `/`, it adds that such a path begins at the root of the drive: Git Bash paths (`/c/Users/...`) are not understood. |
-| `PATH_NOT_FOUND` | Nothing at that path, or its links cannot be followed (a loop, or past the limits of §2.3 rule 2). | Names the nearest existing parent folder and what it holds: its folders and the files of the tool's types, never a link or a file §2.3 refuses as secret, at most 20 in code-unit order ("and N more"), each cut at 40 characters, from at most 10,000 entries read; or that it holds none (a live test, 2026-10-18: a model with no tool to list files guessed four names and gave up). For links, says to remove the loop or shorten the chain. |
+| `PATH_NOT_FOUND` | Nothing at that path, or its links cannot be followed (a loop, or past the limits of §2.3 rule 2). | Names the nearest existing parent folder and what it holds: its folders (`q3/`) and the files of the tool's types, never a link or junction (judged by lstat, so a Windows reparse point such as a OneDrive placeholder is listed as what it is), a credentials folder of §2.3 or a file §2.3 refuses as secret; at most 20 in code-unit order ("and N more"), each whole (a path as §2.4 shows it), so that one can be passed back as shown; from at most 10,000 entries read ("and at least N more", "and maybe more", "whose first 10,000 entries hold no folder and no .csv file" when entries were left unread); or that it holds none. When only the last name is missing, it adds "Did you mean" with the closest name it holds (`closest`), also one past the first 20 (a live test, 2026-10-18: a model with no tool to list files guessed four names and gave up; review round 25). For links, says to remove the loop or shorten the chain. |
 | `NOT_A_FILE` | A folder where a file is needed, or something that is neither a file nor a folder. | Says which one the tool expects. |
 | `FILE_TYPE_NOT_ALLOWED` | The extension is not in the tool's list. | Lists the allowed extensions. For `migrations` given a migration written as code (.ts, .js, .py and the like), says to generate SQL first, as `NO_SQL_FILES` does. A `files` entry is named as written and told to leave the file out of `files`. |
 | `SENSITIVE_PATH` | Matches the secrets list in §2.3. | The tools never read secret files. A ledger-type file in a folder where command-line tools keep their logins (§2.3) is named as inside that folder, and the fix says to copy the export to another folder of the project. |
@@ -436,7 +440,9 @@ never converged: verify by executing, not by parsing.
     file cuts nothing. A node-pg-migrate file runs as node-pg-migrate's own parser runs it: only what lies between the
     first up marker and the first down marker after it, so a header before the up marker, and a second up
     marker after the down part, run nothing (review round 24), and a file that holds comments reading as both
-    markers (`-- up migration notes`, later `-- down migration is manual`) is cut so too. The down part becomes blank, so line numbers stay exact. Without this, the down
+    markers (`-- up migration notes`, later `-- down migration is manual`) is cut so too. A file with no down
+    marker after its first up marker is not read so: a lone comment such as `-- Up migration of payouts` in an
+    ordinary file cuts nothing (review round 25). The down part becomes blank, so line numbers stay exact. Without this, the down
     part would drop what the up part created, and the lint would see nothing to check.
   - **pg_dump 17.6+/18:** lines starting `\restrict ` or `\unrestrict ` are blanked, keeping the same
     length, so line numbers stay exact.
@@ -583,13 +589,13 @@ word**, with these refinements:
   `per_diem_amount` are money, not prices per something.
 - **"value"** after order, orders, cart, basket, invoice, contract, deal, transaction, purchase, sale,
   sales, voucher, coupon, gift, card, item, lifetime, portfolio, inventory, stock, trade, loan, asset,
-  assets, claim, policy, market, book, fair, face, par, line, net, gross or total is what that is
+  assets, claim, policy, market, book, fair, face, par, line, net, gross, total, collateral, tx or txn is what that is
   worth, so money (`order_value`, `market_value`). Other values are not.
 - **An amount "in" a currency:** a name that ends in currency or ccy after "in" is judged by the words
   before "in": `debit_in_account_currency` is money; `amount_currency` and `payment_method_currency`
   are not.
-- **Units:** unit and units are non-money last words (`net_units`), except after minor, smallest or lowest,
-  where they name the unit of an amount (`amount_minor_units`, `amount_in_smallest_unit`), and after
+- **Units:** unit and units are non-money last words (`net_units`), except after minor, major, smallest or lowest,
+  where they name the unit of an amount (`amount_minor_units`, `amount_major_units`, `amount_in_smallest_unit`), and after
   price or cost, where they make a unit price (`price_unit`, Odoo's price on every order line).
 - **Generic money words:** total, net, gross, credit, charge, principal and interest also start many
   measures (`total_co2`, `net_change`, `credit_utilization`, `interest_coverage`). When they are
@@ -648,7 +654,7 @@ The word lists:
     royalties, arrears, overdraft, overdrafts, payable, payables, receivable, receivables, spending,
     contribution, contributions, proceeds, postage, rrp, cash, gmv, aov, arpu, notional, emi, nav, pension, pensions, bal, bals,
     deduction, deductions, markup, markups, gratuity, gratuities, duty, duties, excise, tariff, tariffs,
-    brokerage, freight, toll, tolls, ltv, ebitda, severance, debt, debts
+    brokerage, freight, toll, tolls, ltv, ebitda, severance, debt, debts, valuation, valuations, cpc, cpm, cac
   - minor units of other currencies: paisa, kobo, sats, satoshi, satoshis, centavo, centavos, kopek,
     kopeks, kopeck, kopecks, wei, lamport, lamports, msat, msats
 - **Generic money word list:** total, totals, net, gross, credit, credits, charge, charges, principal,
@@ -664,7 +670,7 @@ The word lists:
   platform, service, late, sales, sale, base, retail, wholesale, delivery, handling, processing,
   booking, cancellation, setup, transfer, exchange, monthly, annual, yearly, initial, final, original,
   max, min, limit, due, paid, owed, outstanding, remaining, pending, grand, line, item, order, invoice,
-  account, opening, closing, current, available, card, per, in, value, after, before, smallest, lowest,
+  account, opening, closing, current, available, card, per, in, value, after, before, smallest, lowest, major,
   denomination, unit,
   old, new, prev, previous, holiday, sick, overtime, take, home, sub, cart, basket, running, store, refunded, invoiced, charged, billed, spent, earned, collected, withdrawn, deposited, accrued, credited, debited, settled, disbursed, reimbursed, received
 - **Non-money last words:**
@@ -709,7 +715,7 @@ The word lists:
   `time_budget`, `kwh_budget`, `headcount_budget`); `holiday_budget`, `stock_budget` and `growth_budget` are money; a budget of data or mileage
   is a guess (`data_budget`, `mileage_budget`: a mileage allowance is paid in pence per mile).
 - **A price of a measure unit** is money: price, cost or fee as the word before a last word of kg, g,
-  mg, lb, km, mile, kwh, ml, litre, liter, gb or mb (`price_kg`, `cost_kwh`), or after one as the last word
+  mg, lb, km, mile, kw, kwh, ml, litre, liter, gb or mb (`price_kg`, `cost_kwh`), or after one as the last word
   (`kwh_price`, `litre_price`), with any unit or currency
   words left out (`price_kwh_pence`, `cost_kwh_gbp`, `price_pence_kwh`), a number before the unit
   (`price_100g`) and any three-letter word after it but a non-money last word, a currency code (`price_kwh_aud`;
@@ -1105,7 +1111,8 @@ Those functions throw at the first problem. This tool returns **every** problem.
     `\n`, `\r\n` or a lone `\r` (old Mac Excel); line numbers count all three.
   - Quoted fields may hold delimiters, `""` and line breaks.
   - Every row must have as many fields as the header (else `PARSE_ERROR` with the line). Blank lines
-    are skipped.
+    are skipped, and so are rows of empty cells (`,,`), which spreadsheets write for formatted rows below
+    the data (review round 25).
   - Spaces around every value are ignored, and around a transaction id even inside quotes (`"T1 "` is
     `T1`; a quoted blank id is missing).
 - **JSON:** the value at `records_pointer` must be an array. An element that is not an object is a
@@ -1210,7 +1217,7 @@ The fields come in the order of this table. Findings are sorted by their first l
 ### 4.6 Output (`structuredContent`)
 | Field | Type | Meaning |
 |---|---|---|
-| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung (or Waehrung, Wahrung), Devise, Moneda, Divisa, Valuta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`, nor Valuta beside a date word, date, data, datum, dt, tag, giorno or Wertstellung, which is the value date: `Data valuta`, `Wertstellung (Valuta)`), or cur alone or before code, or asset or coin alone or before code or symbol (a crypto exchange's, not `asset_id`), or "ISO Code", unless it also holds amount, amounts, balance, balances, bal, bals, debit, credit, total, price, fee, value, values, period, rate, rates, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name with Valuta is named only when no other name looks like one (ING Germany's "Valuta" is a date, beside "Währung"), and the order below applies within each group; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` In a CSV, when a mapped column is named like a value (`999`, `-12.50`), it adds: `The mapped column "999" is named like a value: if the file has no header line, its first row was read as the column names, and was not checked.` |
+| `summary` | string | e.g. "Not balanced: 2 errors. ..." (§4.9). It adds the pounds hint (§4.4) when it applies, and, when `currency` is not mapped but the file has a column or field whose name looks like a currency (the word currency, currencies, ccy, curr, commodity or commodities, or Währung (or Waehrung, Wahrung), Devise, Monnaie, Moneda, Moeda, Divisa, Valuta, Waluta or 4217 (`iso_4217`, `ISO4217`), anywhere in it (but not curr before a date or a period word: `curr_month`, nor Valuta beside a date word, date, data, datum, dt, tag, giorno or Wertstellung, which is the value date: `Data valuta`, `Wertstellung (Valuta)`), or cur alone or before code, or asset or coin alone or before code or symbol (a crypto exchange's, not `asset_id`), or "ISO Code", unless it is a column the mapping already reads, or also holds amount, amounts, amt, amts, balance, balances, bal, bals, debit, credit, total, price, fee, value, values, period, rate, rates, factor, ratio, pair or "in", or starts with is or has: `amount_currency` is an amount in another currency, `debit_in_account_currency` a debit; a name with Valuta is named only when no other name looks like one (ING Germany's "Valuta" is a date, beside "Währung"), and the order below applies within each group; a plain name ("Currency", "ccy", "Currency Code") is named first, then one that ends in its currency word or in "code"; for a JSON Pointer, its last field: `Currency`, `Gross Currency`, `Currency (ISO)`, `iso_currency_code`, `baseCurrency`, `txn_ccy`; in JSON, a field of the first 1,000 records, or one beside a mapped JSON Pointer, such as `/amount/currency`; a currency field elsewhere in a record is not looked for): `"Currency" looks like a currency and is not mapped: map it as currency to check each currency on its own (now every row counts as one).` In a CSV, when a mapped column is named like a value (`999`, `-12.50`), it adds: `The mapped column "999" is named like a value: if the file has no header line, its first row was read as the column names, and was not checked.` |
 | `file`, `format`, `file_sha256` | string | `file_sha256` tells the model the file did not change between pages. |
 | `rows_read` | integer | |
 | `transactions_found`, `transactions_checked`, `transactions_balanced`, `transactions_not_checked` | integer | |
@@ -1446,7 +1453,7 @@ After someone changes `alice` to `mallory` in the first entry (`logs/audit-tampe
 ---
 
 ## 7. How it is proven (the test suite)
-The tests are in `test/` (Vitest, about 1,000); each file starts with a comment saying what it proves.
+The tests are in `test/` (Vitest, about 1,100); each file starts with a comment saying what it proves.
 - **Projects are built inside the tests.** Each test writes a small project (migrations, an export or a
   log) into a temporary folder, so every case sits next to its expected answer. `fixtures/shop` is the
   one shared demo project: the README example, the stdio, Inspector and bundle tests use it. Its audit
@@ -1535,7 +1542,7 @@ The tests are in `test/` (Vitest, about 1,000); each file starts with a comment 
   lint result; the server instructions, tool descriptions and `fixes` texts here are compared with the
   code; the bundle manifest is compared with `package.json`; no text file holds a raw hidden character
   (checked over the files git tracks, or the whole folder where git tracks none).
-- **Set up in CI, outside the suite** (run by hand so far, until CI runs): the official MCP Inspector
+- **Run in CI on every push, outside the suite:** the official MCP Inspector
   in both eras (`--strict` reports nothing); the packed tarball installed into an empty project; the
   Claude Desktop bundle built and started from its manifest; Node.js 22.12, the oldest the package
   supports. The whole suite has passed on Windows (Node 24) and on Linux (Node 22, in WSL), where the

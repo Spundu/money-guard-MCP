@@ -38,7 +38,9 @@ export function uncut(name: string, names: readonly string[]): string {
  * (review round 24: cut as a whole, "/money/currency_code_as_reported_by_the…" could not be passed back).
  * Where even the middle cuts show alike, each is marked with its place among them, " #1", " #2" (review
  * round 24: "Amount (minor units… settled by the bank" was both the debit and the credit column, and neither
- * could be mapped). The mark tells nothing past what is shown but the order of the names.
+ * could be mapped). The mark tells nothing past what is shown but the order of the names, and is never a
+ * name another shows ("Phone #1" beside two "Phone": round 25). A name's shown form depends on the names
+ * beside it: show each from the same list its resolver (`uncut`, `uncutPointer`) reads it back against.
  */
 export function shownNames(names: readonly string[]): string[] {
   const parts = names.map(pointerParts);
@@ -46,11 +48,16 @@ export function shownNames(names: readonly string[]): string[] {
   const cuts = tally(cut);
   const middle = parts.map(([prefix, last], i) => ((cuts.get(cut[i] ?? '') ?? 0) > 1 ? prefix + clipPath(last, ECHO_MAX, true) : (cut[i] ?? '')));
   const alike = tally(middle);
+  const taken = new Set(middle);
   const seen = new Map<string, number>();
   return middle.map((m) => {
     if ((alike.get(m) ?? 0) < 2) return m;
-    seen.set(m, (seen.get(m) ?? 0) + 1);
-    return `${m} #${seen.get(m) ?? 0}`;
+    let n = seen.get(m) ?? 0;
+    do n += 1;
+    while (taken.has(`${m} #${n}`));
+    seen.set(m, n);
+    taken.add(`${m} #${n}`);
+    return `${m} #${n}`;
   });
 }
 
@@ -97,6 +104,24 @@ export function uncutPointer(pointer: string, doc: unknown): string {
 const MAX_UNCUT_KEYS = 10_000;
 
 /**
+ * A pointer into `doc` as `uncutPointer` reads it back: each token shown as shownNames shows it among
+ * the keys of its object (review round 25: shown on its own, a key beside a long "_meta" sibling was cut
+ * at its head, and the pointer suggested led nowhere).
+ */
+export function shownPointer(pointer: string, doc: unknown): string {
+  let node = doc;
+  const out: string[] = [];
+  for (const token of pointer.slice(1).split('/')) {
+    const keys = isRecord(node) ? Object.keys(node).map(encodeToken) : [];
+    const at = keys.length <= MAX_UNCUT_KEYS ? keys.indexOf(token) : -1;
+    out.push(at >= 0 ? (shownNames(keys)[at] ?? '') : clip(token, ECHO_MAX, true));
+    const key = decodeToken(token);
+    node = isRecord(node) && Object.hasOwn(node, key) ? node[key] : Array.isArray(node) && /^(?:0|[1-9]\d*)$/.test(key) ? node[Number(key)] : undefined;
+  }
+  return `/${out.join('/')}`;
+}
+
+/**
  * The name `closest` suggests, judged only on what results show of each name, its first 40 characters
  * (review round 23: judged on the whole names, whether a suggestion came at all answered "does the hidden
  * part hold this?", and a secret past 40 characters came back one character a call).
@@ -109,13 +134,13 @@ export function closestShown(name: string, names: readonly string[]): string | u
 
 /**
  * " Did you mean \"…\"?", or nothing. When the name given and the one suggested look the same cut at 40
- * characters, say so, or the two read as a contradiction (review round 23).
+ * characters, say so, or the two read as a contradiction (review round 23). `near` is one of `names`, or
+ * a pointer into `doc` built from its keys (nestedPointer), shown as uncutPointer reads it back.
  */
-export function didYouMean(name: string, near: string | undefined, names: readonly string[] = []): string {
+export function didYouMean(name: string, near: string | undefined, names: readonly string[], doc?: unknown): string {
   if (near === undefined) return '';
   const at = names.indexOf(near);
-  // A pointer built from a key and the name given (nestedPointer) is shown as every pointer is: token by token (round 24).
-  const text = (at >= 0 ? shownNames(names)[at] : shownNames([near])[0]) ?? '';
+  const text = (at >= 0 ? shownNames(names)[at] : near.startsWith('/') && doc !== undefined ? shownPointer(near, doc) : shownNames([near])[0]) ?? '';
   const same = text === shownNames([name])[0] ? ' (it differs past the 40 characters shown: pass it back as shown)' : '';
   return ` Did you mean "${text}"${same}?`;
 }
@@ -168,7 +193,7 @@ export function describe(value: unknown): string {
   if (value === null) return 'null';
   if (isRecord(value)) {
     const keys = Object.keys(value);
-    const shown = shownNames(keys.slice(0, 20)).map((k) => `"${k}"`).join(', '); // in quotes: a key can hold ". Fix:"
+    const shown = shownNames(keys.map(encodeToken)).slice(0, 20).map((k) => `"${k}"`).join(', '); // in quotes: a key can hold ". Fix:"; among all the keys, as uncutPointer reads them back (round 25)
     return keys.length === 0 ? 'an empty object' : `an object with keys ${shown}${keys.length > 20 ? ', …' : ''}`;
   }
   return value instanceof JsonNumber ? 'a number' : Array.isArray(value) ? 'an array' : `a ${typeof value}`;
@@ -185,18 +210,35 @@ function nestedPointer(name: string, record: Record<string, unknown>): string | 
 }
 
 /**
- * JSON and JSONL: a mapped field that no record has is a wrong mapping, not a problem in every row.
- * Report it once, with the first record's fields, as a missing CSV column is reported.
+ * The pointer of a key beside the one `pointer` names, in the object its parent leads to in `record`,
+ * close to its last token as shown ("/amount/currency" for {"amount": {"currency_code": …}}: review round 25).
  */
-export function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, first: Record<string, unknown> | undefined): void {
+function siblingPointer(pointer: string, record: Record<string, unknown>): string | undefined {
+  const parent = pointer.slice(0, pointer.lastIndexOf('/'));
+  const node = parent === '' ? record : resolvePointer(record, parent);
+  if (!isRecord(node)) return undefined;
+  const keys = Object.keys(node).map(encodeToken);
+  const near = keys.length <= MAX_UNCUT_KEYS ? closestShown(pointer.slice(parent.length + 1), keys) : undefined;
+  return near === undefined ? undefined : `${parent}/${near}`;
+}
+
+/**
+ * JSON and JSONL: a mapped field that no record has is a wrong mapping, not a problem in every row.
+ * Report it once, with the first record's fields, as a missing CSV column is reported. `names` are the
+ * field names the mapping was read back against (namesOf): each is shown, and suggested, as among them.
+ */
+export function requireMappedFields(rows: readonly LedgerRow[], columns: ColumnMap, first: Record<string, unknown> | undefined, names: readonly string[]): void {
   if (first === undefined) return; // no record is an object: each row says so already
   const good = rows.filter((row) => row.bad === undefined);
   for (const [field, name] of mappedEntries(columns)) {
     if (good.some((row) => row.values[field] !== undefined)) continue;
     const keys = Object.keys(first);
-    const near = name.startsWith('/') ? nestedPointer(name, first) : (dottedPointer(name, first) ?? nestedPointer(name, first) ?? closestShown(name, keys));
-    const hint = didYouMean(name, near, keys); // cut at 40 like every name shown (round 22)
-    const shown = shownNames(keys).slice(0, 30).map((k) => `"${k}"`).join(', ');
+    const near = name.startsWith('/') ? (nestedPointer(name, first) ?? siblingPointer(name, first)) : (dottedPointer(name, first) ?? nestedPointer(name, first) ?? closestShown(name, names));
+    const hint = didYouMean(name, near, names, first); // cut at 40 like every name shown (round 22)
+    // Shown among all the names, as uncutColumns reads them back (round 25: shown among the first record's
+    // keys alone, a key that a later record's key shares 39 characters with could not be passed back).
+    const all = shownNames(names);
+    const shown = keys.slice(0, 30).map((k) => `"${all[names.indexOf(k)] ?? ''}"`).join(', ');
     const fields = keys.length === 0 ? 'The first record has no fields.' : `The first record's fields are: ${shown}${keys.length > 30 ? ` and ${keys.length - 30} more` : ''}.`;
     throw new ToolError(
       'COLUMN_NOT_FOUND',

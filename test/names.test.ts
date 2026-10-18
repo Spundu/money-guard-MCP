@@ -146,6 +146,18 @@ describe('looksLikeMoney', () => {
     expect(MONEY.length + NOT_MONEY.length).toBeGreaterThanOrEqual(490);
     expect(MONEY.length + NOT_MONEY.length).toBeLessThan(520); // "about 500": the SPEC number moves with the table (review round 10)
   });
+
+  it('reads units after major as the unit of an amount, as after minor (review round 25)', () => {
+    const names = ['amount_major_units', 'price_major_units', 'amount_in_major_units', 'amountMajorUnits', 'total_major_units'];
+    expect(names.filter((n) => !looksLikeMoney(n))).toEqual([]);
+    expect(['major_units', 'units'].filter(looksLikeMoney)).toEqual([]);
+  });
+
+  it('knows valuation, advertising costs, collateral and transaction values, and a price per kW (review round 25)', () => {
+    const names = ['valuation', 'market_valuation', 'cpc', 'max_cpc', 'cpm', 'cac', 'collateral_value', 'tx_value', 'txn_value', 'price_kw', 'cost_kw'];
+    expect(names.filter((n) => !looksLikeMoney(n))).toEqual([]);
+    expect(['cpu_count', 'cpm_rate', 'power_kw', 'kw_total', 'tx_count', 'collateral_ratio', 'cac_payback_months', 'capacity'].filter(looksLikeMoney)).toEqual([]);
+  });
 });
 
 describe('moneyByGuess', () => {

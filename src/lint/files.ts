@@ -87,7 +87,9 @@ function isDownFile(name: string): boolean {
  * with more dashes) and tern ("---- create above / drop below ----", which has no up marker). A down
  * marker counts only in a file that holds its tool's up marker, so a comment such as "-- Down migration
  * (manual)" in an ordinary file cuts nothing. node-pg-migrate runs only what lies between its first up
- * marker and the first down marker after it (`firstOnly`, as its getActions reads a file: review round 24).
+ * marker and the first down marker after it (`firstOnly`, as its getActions reads a file: review round 24),
+ * and only in a file that holds both, as its template writes them: a lone "-- Up migration of payouts"
+ * comment in an ordinary file cuts nothing either (round 25: the tables above it were never checked).
  */
 const TOOLS: ReadonlyArray<{ up: RegExp | null; down: RegExp; firstOnly?: true }> = [
   { up: /^--\s*migrate:up(?:\s|$)/, down: /^--\s*migrate:down(?:\s|$)/ },
@@ -118,12 +120,13 @@ const EMPTY_SEARCH_PATH = /^\s*SELECT\s+pg_catalog\.set_config\('search_path',\s
 export function prepareSql(text: string): string {
   const lines = text.split('\n');
   const tool = TOOLS.find((t) => lines.some((line) => (t.up ?? t.down).test(line)));
-  const upAt = tool?.firstOnly === true && tool.up !== null ? lines.findIndex((line) => tool.up?.test(line)) : -1;
-  const downAt = upAt < 0 ? -1 : lines.findIndex((line, i) => i > upAt && tool?.down.test(line));
+  const firstUp = tool?.firstOnly === true && tool.up !== null ? lines.findIndex((line) => tool.up?.test(line)) : -1;
+  const downAt = firstUp < 0 ? -1 : lines.findIndex((line, i) => i > firstUp && tool?.down.test(line));
+  const upAt = downAt < 0 ? -1 : firstUp;
   let down = false;
   return lines
     .map((line, i) => {
-      if (upAt >= 0) down = i < upAt || (downAt >= 0 && i >= downAt); // what node-pg-migrate never runs
+      if (upAt >= 0) down = i < upAt || i >= downAt; // what node-pg-migrate never runs
       else if (tool?.up?.test(line)) down = false;
       else if (tool?.down.test(line)) down = true;
       return down || /^\\(?:restrict|unrestrict)(?:\s|$)/.test(line) || CLIENT_ENCODING.test(line) || EMPTY_SEARCH_PATH.test(line) ? ' '.repeat(line.length) : line;

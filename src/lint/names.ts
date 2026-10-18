@@ -172,7 +172,7 @@ function judgeWords(all: readonly string[]): Verdict {
   if (navNext !== undefined && !MONEY_WORDS.has(navNext) && !isUnitWord(navNext) && !NAV_MONEY_WORDS.has(navNext)) return 'not';
   // "amount_minor_units", "amount_in_smallest_unit": the unit of an amount, not a count of units;
   // "price_unit" (Odoo's unit price on every order line): a price per unit.
-  const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
+  const unitOfAmount = (last === 'unit' || last === 'units') && ['minor', 'major', 'smallest', 'lowest', 'price', 'cost'].includes(ws.at(-2) ?? '');
   if (pricesAMeasure(ws)) return 'money'; // "price_kg", "cost_kwh": a price per unit (review round 19)
   if (NOT_MONEY_LAST_WORDS.has(last) && !unitOfAmount) return 'not';
   if ((last === 'value' || last === 'values') && VALUE_WORDS.has(ws.at(-2) ?? '')) return 'money'; // "order_value"
@@ -216,7 +216,7 @@ function judgeWords(all: readonly string[]): Verdict {
   if (generic >= 0) {
     if ((ws[generic] === 'total' || ws[generic] === 'totals') && totalsAMeasure(ws, generic)) return 'not';
     const after = ws.slice(generic + 1);
-    const unitOfMoney = (w: string, i: number) => (w === 'unit' || w === 'units') && ['minor', 'smallest', 'lowest'].includes(after[i - 1] ?? '');
+    const unitOfMoney = (w: string, i: number) => (w === 'unit' || w === 'units') && ['minor', 'major', 'smallest', 'lowest'].includes(after[i - 1] ?? '');
     if (after.some((w, i) => GENERIC_MEASURE_WORDS.has(w) || (NOT_MONEY_LAST_WORDS.has(w) && !unitOfMoney(w, i)))) return 'not';
     const before = ws.slice(0, generic).filter((w) => !GENERIC_MONEY_WORDS.has(w));
     return after.every((w, i) => SAYS_MONEY.has(w) || unitOfMoney(w, i)) && before.every((w) => SAYS_MONEY.has(w)) ? 'money' : 'guess';

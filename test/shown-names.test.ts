@@ -105,6 +105,40 @@ describe('a column name passed back as a hint showed it', () => {
     expect(errorText(() => check('.csv', csv, { columns: { transaction_id: `${'q'.repeat(45)}_z`, amount: 'amt' } }))).toContain(`Did you mean "${'q'.repeat(19)}…${'q'.repeat(18)}_x"`);
   });
 
+  it('shows a pointer of up to 8 tokens before its last token by token, a longer one cut whole', () => {
+    // Review round 25: `> SHOWN_TOKENS + 1` made `>=` was caught by no test.
+    const long = 'p'.repeat(50);
+    const hint = (inner: number) => {
+      const ks = Array.from({ length: inner }, (_, i) => `k${inner - 1 - i}`);
+      const record = (value: number) => {
+        let node: unknown = { value, currency: 'GBP' };
+        for (const k of [...ks].reverse()) node = { [k]: node };
+        return { id: 'T1', [long]: node };
+      };
+      const file = JSON.stringify([record(5), record(-5)]);
+      return check('.json', file, { columns: { transaction_id: 'id', amount: `/${[long, ...ks, 'value'].join('/')}` } }).summary;
+    };
+    // Eight tokens before "currency": each shown, the first cut on its own.
+    expect(hint(7)).toContain(`"/${'p'.repeat(39)}…/k6/k5/k4/k3/k2/k1/k0/currency" looks like a currency`);
+    // Nine: the whole name is cut, in the middle, as it begins like the amount's.
+    expect(hint(8)).toContain(`"/${'p'.repeat(18)}…k3/k2/k1/k0/currency" looks like a currency`);
+  });
+
+  it('describes an object’s keys as pointer tokens, each among all the keys, as uncutPointer reads them back', () => {
+    // Review round 25: shown among the first 20 alone, a key whose twin came later was cut at its head.
+    const e = 'e'.repeat(45);
+    const rows = { 'a/b': 1, [`${e}_x`]: 1, ...Object.fromEntries(Array.from({ length: 18 }, (_, i) => [`k${i}`, 1])), [`${e}_y`]: 1 };
+    const text = errorText(() => check('.json', JSON.stringify({ rows }), { columns: { transaction_id: 'id', amount: 'a' }, records_pointer: '/rows' }));
+    expect(text).toContain(`keys "a~1b", "${'e'.repeat(19)}…${'e'.repeat(18)}_x", "k0"`);
+  });
+
+  it('describes an object of exactly 20 keys with no ellipsis, and one of 21 with it', () => {
+    const keys = (n: number) => JSON.stringify({ rows: Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, 1])) });
+    const columns = { transaction_id: 'id', amount: 'a' };
+    expect(errorText(() => check('.json', keys(20), { columns, records_pointer: '/rows' }))).toMatch(/"k19", not an array/);
+    expect(errorText(() => check('.json', keys(21), { columns, records_pointer: '/rows' }))).toMatch(/"k19", …, not an array/);
+  });
+
   it('lists exactly 30 names with no "and 0 more", in a CSV header and in a JSON record', () => {
     // Round 24's tests: "> 30" made ">= 30" was caught by no test.
     const names = Array.from({ length: 30 }, (_, i) => `c${i}`);
@@ -118,6 +152,42 @@ describe('a column name passed back as a hint showed it', () => {
     const jsonl = `{"id":"T1","money":{"value":5,"${key}":"GBP"}}\n{"id":"T1","money":{"value":-5,"${key}":"GBP"}}\n`;
     const mapped = check('.jsonl', jsonl, { columns: { transaction_id: 'id', amount: '/money/value', currency: `/money/${key.slice(0, 39)}…` } });
     expect(mapped.summary).toBe('Balanced: the 1 transaction nets to zero in whole minor units.');
+  });
+});
+
+describe('every hint shows a name as its resolver reads it back (review round 25)', () => {
+  // A name's shown form depends on the names beside it; each hint had built its own list.
+  const fieldsListed = (text: string) => [...(/The first record's fields are: (.*?)\. Fix:/.exec(text)?.[1] ?? '').matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1] ?? '');
+
+  it('lists the first record’s fields as among the names of later records too, and each maps as listed', () => {
+    const key = 'transaction_identifier_as_written_by_the_bank';
+    const records = [{ [`${key}_primary`]: 'T1', amt: 5 }, { [`${key}_primary`]: 'T1', amt: -5 }, { [`${key}_primary`]: 'T2', [`${key}_secondary`]: 'x', amt: 0 }];
+    for (const [ext, text] of [['.json', JSON.stringify(records)], ['.jsonl', records.map((r) => JSON.stringify(r)).join('\n')]] as const) {
+      const listed = fieldsListed(errorText(() => check(ext, text, { columns: { transaction_id: 'txn', amount: 'amt' } })));
+      expect(listed, ext).toEqual(['transaction_identif…_by_the_bank_primary', 'amt']);
+      expect(check(ext, text, { columns: { transaction_id: listed[0] ?? '', amount: 'amt' } }).rows_read, ext).toBe(3);
+    }
+  });
+
+  it('suggests a records_pointer beside a sibling that begins alike, cut as its object shows it', () => {
+    const key = 'general_ledger_journal_entries_exported_from_xero';
+    const file = JSON.stringify({ [key]: [{ id: 'T1', a: 0 }], [`${key}_meta`]: {} });
+    const pointer = suggested(errorText(() => check('.json', file, { columns: { transaction_id: 'id', amount: 'a' } })));
+    expect(pointer).toBe(`/${key.slice(0, 19)}…${key.slice(-20)}`);
+    expect(check('.json', file, { columns: { transaction_id: 'id', amount: 'a' }, records_pointer: pointer ?? '' }).rows_read).toBe(1);
+  });
+
+  it('never marks a name with a mark another name shows: "Amt #1" beside two "Amt"', () => {
+    const csv = 'id,Amt #1,Amt,Amt\nT1,3,1,7\nT1,-3,-1,0\n';
+    expect(errorText(() => check('.csv', csv, { columns: { transaction_id: 'id', amount: 'nope' } }))).toContain('"id", "Amt #1", "Amt #2", "Amt #3"');
+    expect(check('.csv', csv, { columns: { transaction_id: 'id', amount: 'Amt #1' } }).summary).toMatch(/^Balanced/);
+  });
+
+  it('suggests a field beside the one a mapped pointer names, close to it', () => {
+    const file = JSON.stringify([{ id: 'T1', amount: { value: 5, currency_code: 'GBP' } }, { id: 'T1', amount: { value: -5, currency_code: 'GBP' } }]);
+    const columns = { transaction_id: 'id', amount: '/amount/value' };
+    expect(errorText(() => check('.json', file, { columns: { ...columns, currency: '/amount/curency_code' } }))).toContain('Did you mean "/amount/currency_code"?');
+    expect(errorText(() => check('.json', file, { columns: { ...columns, transaction_id: '/idd' } }))).toContain('Did you mean "/id"?');
   });
 });
 

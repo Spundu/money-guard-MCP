@@ -7,7 +7,7 @@ import { clip, quoted } from '../echo.js';
 import { MAX_FIELDS, MAX_ROW_CHARS, rowWithTooManyFields, startLines } from './csv-lines.js';
 import { ToolError } from '../errors.js';
 import { JsonLimitError, JsonSyntaxError, MAX_FIELD_NAMES, MAX_OBJECT_KEYS, parseLedgerJson, type JsonBudget } from './json.js';
-import { closestShown, describe, didYouMean, shownNames, mappedEntries, NAMED_RECORDS, namesOf, requireMappedFields, uncut, uncutColumns, uncutPointer, valuesOf } from './fields.js';
+import { closestShown, describe, didYouMean, shownNames, shownPointer, mappedEntries, NAMED_RECORDS, namesOf, requireMappedFields, uncut, uncutColumns, uncutPointer, valuesOf } from './fields.js';
 import { encodeToken, isRecord, resolvePointer } from './pointer.js';
 
 export type LedgerFormat = 'csv' | 'json' | 'jsonl';
@@ -211,11 +211,16 @@ function readCsv(bytes: Uint8Array, columns: ColumnMap, given: string): Ledger {
   if (data.length > MAX_ROWS) throw tooManyRows();
   const indexes = mappedEntries(columns).map(([field, name]) => [field, findColumn(header, field, name, delimiter, sepEnd > 0)] as const);
   const lines = lineStarts(ends);
-  const rows = data.map((record, seq) => {
-    const values: Partial<Record<MappedField, unknown>> = {};
-    for (const [field, index] of indexes) values[field] = record[index];
-    return { seq, line: lines[seq + 1] ?? 0, values };
-  });
+  // A row of empty cells (",,") is a blank line too: spreadsheets write one for each formatted row below the
+  // data (review round 25: each was a row with no transaction_id). Skipped after parsing, so lines stay true.
+  const rows = data
+    .map((record, i) => ({ record, line: lines[i + 1] ?? 0 }))
+    .filter(({ record }) => record.some((cell) => cell !== ''))
+    .map(({ record, line }, seq) => {
+      const values: Partial<Record<MappedField, unknown>> = {};
+      for (const [field, index] of indexes) values[field] = record[index];
+      return { seq, line, values };
+    });
   return { rows, names: header };
 }
 
@@ -235,25 +240,27 @@ function parseOrThrow(text: string): unknown {
 
 function readJson(text: string, columns: ColumnMap, recordsPointer: string): Ledger {
   const doc = parseOrThrow(text);
-  const records = resolvePointer(doc, uncutPointer(recordsPointer, doc)); // passed back as shown, keys cut (round 24)
+  const reached = uncutPointer(recordsPointer, doc); // passed back as shown, keys cut (round 24)
+  const records = resolvePointer(doc, reached);
   if (!Array.isArray(records)) {
     const where = recordsPointer === '' ? 'The top of the file' : `The value at ${quoted(recordsPointer, 80)}`;
-    // One field that holds an array is very likely the rows: name its pointer (review round 18), as every pointer
-    // is shown, token by token, each cut at 40 characters; passed back so, it reaches the array (round 24).
+    // One field that holds an array is very likely the rows: name its pointer (review round 18), token by
+    // token as uncutPointer reads it back (rounds 24, 25), so that, passed back so, it reaches the array.
     const arrays = isRecord(records) ? Object.keys(records).filter((k) => Array.isArray(records[k])) : [];
-    const one = arrays.length === 1 ? shownNames([`${recordsPointer}/${encodeToken(arrays[0] ?? '')}`])[0] : undefined;
+    const one = arrays.length === 1 ? shownPointer(`${reached}/${encodeToken(arrays[0] ?? '')}`, doc) : undefined;
     throw new ToolError('RECORDS_NOT_ARRAY', `${where} is ${describe(records)}, not an array of records.`, one === undefined ? 'Pass records_pointer: the JSON Pointer of the array of ledger rows, such as "/data/entries".' : `Pass records_pointer "${one}", the one field there that holds an array.`);
   }
   if (records.length > MAX_ROWS) throw tooManyRows();
   const named = records.filter(isRecord).slice(0, NAMED_RECORDS);
   const first = named[0];
   // Names as the hints show them, from the same records (round 24: the hints' nested names could not be passed back).
-  columns = first === undefined ? columns : uncutColumns(columns, namesOf(named, columns), first);
+  const given = namesOf(named, columns);
+  columns = first === undefined ? columns : uncutColumns(columns, given, first);
   const rows = records.map((record: unknown, seq): LedgerRow => {
     const pointer = `${recordsPointer}/${seq}`;
     return isRecord(record) ? { seq, pointer, values: valuesOf(record, columns) } : { seq, pointer, values: {}, bad: 'the record is not a JSON object' };
   });
-  requireMappedFields(rows, columns, first);
+  requireMappedFields(rows, columns, first, given);
   return { rows, names: namesOf(named, columns) };
 }
 
@@ -280,12 +287,13 @@ function readJsonl(text: string, columns: ColumnMap): Ledger {
     parsed.push({ base, value });
   }
   const named = parsed.flatMap((p) => ('value' in p && isRecord(p.value) ? [p.value] : [])).slice(0, NAMED_RECORDS); // for hints
-  if (named[0] !== undefined) columns = uncutColumns(columns, namesOf(named, columns), named[0]);
+  const given = namesOf(named, columns);
+  if (named[0] !== undefined) columns = uncutColumns(columns, given, named[0]);
   const rows = parsed.map((p): LedgerRow => {
     if ('bad' in p) return { ...p.base, values: {}, bad: p.bad };
     return isRecord(p.value) ? { ...p.base, values: valuesOf(p.value, columns) } : { ...p.base, values: {}, bad: 'the line is not a JSON object' };
   });
-  requireMappedFields(rows, columns, named[0]);
+  requireMappedFields(rows, columns, named[0], given);
   return { rows, names: namesOf(named, columns) };
 }
 

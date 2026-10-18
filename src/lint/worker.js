@@ -44,7 +44,7 @@ import { tsm_system_time } from '@electric-sql/pglite/contrib/tsm_system_time';
 import { unaccent } from '@electric-sql/pglite/contrib/unaccent';
 import { uuid_ossp } from '@electric-sql/pglite/contrib/uuid_ossp';
 import { vector } from '@electric-sql/pglite-pgvector';
-import { bounded, saneSnapshot } from './worker-rows.js';
+import { bounded, brokePGlite, saneSnapshot } from './worker-rows.js';
 
 /**
  * @typedef {{ name: string, text: string }} Script
@@ -121,10 +121,7 @@ async function main() {
     try {
       await db.exec(script.text);
     } catch (err) {
-      // PGlite's own JavaScript failing is no answer of PostgreSQL's (review round 24: under a client encoding set
-      // by set_config, a failing statement on a name that is not ASCII gave "r is not a function", reported as
-      // the statement refused): the database no longer answers correctly.
-      if (err instanceof TypeError || err instanceof RangeError) send({ type: 'unusable', step });
+      if (brokePGlite(err)) send({ type: 'unusable', step }); // PGlite's own JavaScript failed: no answer of PostgreSQL's
       else send({ type: 'failed', step, error: dbError(err) });
       return;
     }

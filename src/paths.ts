@@ -5,10 +5,11 @@
 // is touched, so the answer never reveals whether something outside the project exists; through a link
 // that leads outside, a path that exists and one that does not get the same answer.
 
-import { opendirSync, readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
+import { lstatSync, opendirSync, readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { clip, ECHO_MAX, NAME_MAX, quoted, quotedPath } from './echo.js';
+import { closest } from './closest.js';
+import { clip, NAME_MAX, quoted, quotedPath } from './echo.js';
 import { ToolError } from './errors.js';
 import { isInside, leadsTo, MAX_LINK_HOPS, MAX_LINK_PARTS, type LinkWalk } from './links.js';
 
@@ -195,33 +196,60 @@ const HELD_SHOWN = 20;
 const HELD_READ = 10_000;
 
 /**
- * ", which holds: \"journal.csv\", \"q3/\"": the folders and the files of the tool's types in the nearest
- * existing folder, so a host with no tool to list files (Claude Desktop) can find an export by name (a live
- * test, 2026-10-18: a model guessed four names and gave up). Never a link, a secret or a credential folder's
- * file; each name cut at 40 characters, in code-unit order; and at most HELD_READ entries are read.
+ * ", which holds: \"journal.csv\", \"q3/\". Did you mean \"exports/journal.csv\"?": the folders and the files
+ * of the tool's types in the nearest existing folder, so a host with no tool to list files (Claude Desktop)
+ * can find an export by name (a live test, 2026-10-18: a model guessed four names and gave up). Never a link,
+ * a secret or a credential folder; names whole, so that one can be passed back as shown (a file name is far
+ * shorter than PATH_MAX), in code-unit order; at most HELD_READ entries are read, and the message says so
+ * when entries were left unread. `missing` is the name asked for below the nearest folder, when that is
+ * all that is missing: the closest listed name to it is suggested, even one past the first HELD_SHOWN.
  */
-function whatItHolds(root: Root, near: { shown: string; real: string }, rule: PathRule): string {
+function whatItHolds(root: Root, near: { shown: string; real: string }, rule: PathRule, missing: string | undefined): string {
   const extensions = rule.extensions ?? [];
   const names: string[] = [];
-  let read = 0;
+  let unread: boolean;
   let dir;
   try {
     dir = opendirSync(near.real);
-    for (let entry = dir.readSync(); entry !== null && read < HELD_READ; entry = dir.readSync(), read += 1) {
-      const rel = toPosix(path.relative(root.real, path.join(near.real, entry.name)));
-      if (isSensitive(rel)) continue;
-      if (entry.isDirectory()) names.push(`${entry.name}/`);
-      else if (entry.isFile() && extensions.includes(path.extname(entry.name).toLowerCase())) names.push(entry.name);
+    let entry = dir.readSync();
+    for (let read = 0; entry !== null && read < HELD_READ; entry = dir.readSync(), read += 1) {
+      const full = path.join(near.real, entry.name);
+      if (isSensitive(toPosix(path.relative(root.real, full)))) continue;
+      // On Windows a Dirent calls every reparse point a link, a OneDrive placeholder too (review round 25):
+      // lstat, as resolveInRoot uses, tells a real link or junction from a file. A type the folder
+      // listing does not give (DT_UNKNOWN) is asked of lstat too.
+      const kind = entry.isFile() || entry.isDirectory() ? entry : lstatOrNone(full);
+      if (kind?.isDirectory() === true && !CREDENTIAL_FOLDERS.has(entry.name.toLowerCase())) names.push(`${entry.name}/`);
+      else if (kind?.isFile() === true && extensions.includes(path.extname(entry.name).toLowerCase())) names.push(entry.name);
     }
+    unread = entry !== null; // the entry the cap stopped on was not read
   } catch {
-    return ''; // a folder that cannot be listed: the error says no more than it did before
+    return '.'; // a folder that cannot be listed: the error says no more than it did before
   } finally {
     dir?.closeSync();
   }
-  if (names.length === 0) return `, which holds no folder and no ${extensions.join(', ')} file`;
+  const kinds = `no folder and no ${extensions.join(', ')} file`;
+  if (names.length === 0) return unread ? `, whose first ${HELD_READ.toLocaleString('en-GB')} entries hold ${kinds}.` : `, which holds ${kinds}.`;
   names.sort();
-  const more = read >= HELD_READ ? ' and more' : names.length > HELD_SHOWN ? ` and ${names.length - HELD_SHOWN} more` : '';
-  return `, which holds: ${names.slice(0, HELD_SHOWN).map((n) => quoted(n, ECHO_MAX)).join(', ')}${more}`;
+  const more = names.length > HELD_SHOWN ? ` and ${unread ? 'at least ' : ''}${names.length - HELD_SHOWN} more` : unread ? ' and maybe more' : '';
+  const guess = missing === undefined ? undefined : closest(missing, names.map((n) => n.replace(/\/$/, '')));
+  const mean = guess === undefined ? '' : ` Did you mean ${quotedPath(near.shown === '.' ? guess : `${near.shown}/${guess}`)}?`;
+  return `, which holds: ${names.slice(0, HELD_SHOWN).map((n) => quotedPath(n)).join(', ')}${more}.${mean}`;
+}
+
+/** What lstat says `full` is; undefined when it cannot say (gone, or denied): that entry is not listed. */
+function lstatOrNone(full: string): Stats | undefined {
+  try {
+    return lstatSync(full);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The one name missing below the nearest existing folder ("jornal.csv" of "exports/jornal.csv"); undefined when more is missing. */
+function missingName(root: Root, near: { shown: string }, lexical: string): string | undefined {
+  const below = path.relative(path.resolve(root.real, near.shown), lexical);
+  return below === '' || below.includes(path.sep) ? undefined : below;
 }
 
 /** For a path whose links go round, or chain past MAX_LINK_HOPS: nothing about where they lead. */
@@ -276,7 +304,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     if (deniedOrLocked(err)) throw unreadable(toPosix(lexRel), err);
     throw new ToolError(
       'PATH_NOT_FOUND',
-      `${shown(input)} does not exist. The nearest existing folder is ${quotedPath(near.shown)}${whatItHolds(root, near, rule)}.`,
+      `${shown(input)} does not exist. The nearest existing folder is ${quotedPath(near.shown)}${whatItHolds(root, near, rule, missingName(root, near, lexical))}`,
       `Check the spelling. Paths are relative to the project folder "${root.name}".`,
     );
   }
