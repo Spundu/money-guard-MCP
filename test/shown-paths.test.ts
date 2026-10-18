@@ -70,8 +70,9 @@ describe('a long path with hidden characters', () => {
 
   it('is shown escaped and cut in PATH_NOT_FOUND, both the path given and the nearest folder', () => {
     const shown = quotedIn(() => resolveInRoot(root, `${DEEP}/missing/x.csv`, { kind: 'file', extensions: ['.csv'] }));
-    expect(shown).toHaveLength(2);
-    for (const p of shown) expectShownWell(p);
+    // The two paths first; what the nearest folder holds follows them (each name cut at 40, tested in paths.test.ts).
+    expect(shown.length).toBeGreaterThanOrEqual(2);
+    for (const p of shown.slice(0, 2)) expectShownWell(p);
   });
 
   it('is shown escaped and cut in FILE_UNREADABLE', () => {

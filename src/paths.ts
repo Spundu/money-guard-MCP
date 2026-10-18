@@ -5,10 +5,10 @@
 // is touched, so the answer never reveals whether something outside the project exists; through a link
 // that leads outside, a path that exists and one that does not get the same answer.
 
-import { readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
+import { opendirSync, readFileSync, realpathSync, statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { clip, NAME_MAX, quoted, quotedPath } from './echo.js';
+import { clip, ECHO_MAX, NAME_MAX, quoted, quotedPath } from './echo.js';
 import { ToolError } from './errors.js';
 import { isInside, leadsTo, MAX_LINK_HOPS, MAX_LINK_PARTS, type LinkWalk } from './links.js';
 
@@ -190,6 +190,40 @@ function nearestExisting(root: Root, lexical: string): { shown: string; real: st
   return { shown: '.', real: root.real };
 }
 
+/** Most entries of a folder a PATH_NOT_FOUND names, and most it reads to find them. */
+const HELD_SHOWN = 20;
+const HELD_READ = 10_000;
+
+/**
+ * ", which holds: \"journal.csv\", \"q3/\"": the folders and the files of the tool's types in the nearest
+ * existing folder, so a host with no tool to list files (Claude Desktop) can find an export by name (a live
+ * test, 2026-10-18: a model guessed four names and gave up). Never a link, a secret or a credential folder's
+ * file; each name cut at 40 characters, in code-unit order; and at most HELD_READ entries are read.
+ */
+function whatItHolds(root: Root, near: { shown: string; real: string }, rule: PathRule): string {
+  const extensions = rule.extensions ?? [];
+  const names: string[] = [];
+  let read = 0;
+  let dir;
+  try {
+    dir = opendirSync(near.real);
+    for (let entry = dir.readSync(); entry !== null && read < HELD_READ; entry = dir.readSync(), read += 1) {
+      const rel = toPosix(path.relative(root.real, path.join(near.real, entry.name)));
+      if (isSensitive(rel)) continue;
+      if (entry.isDirectory()) names.push(`${entry.name}/`);
+      else if (entry.isFile() && extensions.includes(path.extname(entry.name).toLowerCase())) names.push(entry.name);
+    }
+  } catch {
+    return ''; // a folder that cannot be listed: the error says no more than it did before
+  } finally {
+    dir?.closeSync();
+  }
+  if (names.length === 0) return `, which holds no folder and no ${extensions.join(', ')} file`;
+  names.sort();
+  const more = read >= HELD_READ ? ' and more' : names.length > HELD_SHOWN ? ` and ${names.length - HELD_SHOWN} more` : '';
+  return `, which holds: ${names.slice(0, HELD_SHOWN).map((n) => quoted(n, ECHO_MAX)).join(', ')}${more}`;
+}
+
 /** For a path whose links go round, or chain past MAX_LINK_HOPS: nothing about where they lead. */
 export function tooManyLinks(input: string): ToolError {
   return new ToolError('PATH_NOT_FOUND', `${shown(input)} goes through more links than can be followed (a loop, a chain of more than ${MAX_LINK_HOPS}, or more parts of link texts than one call reads, ${MAX_LINK_PARTS.toLocaleString('en-GB')}).`, 'Remove the loop, or shorten the chain of links.');
@@ -242,7 +276,7 @@ export function resolveInRoot(root: Root, input: string, rule: PathRule): Resolv
     if (deniedOrLocked(err)) throw unreadable(toPosix(lexRel), err);
     throw new ToolError(
       'PATH_NOT_FOUND',
-      `${shown(input)} does not exist. The nearest existing folder is ${quotedPath(near.shown)}.`,
+      `${shown(input)} does not exist. The nearest existing folder is ${quotedPath(near.shown)}${whatItHolds(root, near, rule)}.`,
       `Check the spelling. Paths are relative to the project folder "${root.name}".`,
     );
   }
