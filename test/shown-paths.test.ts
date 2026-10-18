@@ -9,9 +9,9 @@ import { resolveConfig } from '../src/config.js';
 import { ToolError } from '../src/errors.js';
 import { checkLedgerFile } from '../src/ledger/run.js';
 import { collectSources } from '../src/lint/files.js';
-import { lintSchema } from '../src/lint/run.js';
 import { resolveInRoot, unreadable, type Root } from '../src/paths.js';
 import { RAW_HIDDEN } from './support/hidden.js';
+import { lintTracked } from './support/lint.js';
 import { rootOf, tempDir, writeTree } from './support/tmp.js';
 
 // Four folders of 122 characters: over 400 characters before any escaping.
@@ -56,7 +56,7 @@ describe('a long path with hidden characters', () => {
   });
 
   it('is shown escaped and cut in a lint result', async () => {
-    const r = await lintSchema(root, { migrations: `${DEEP}/db` });
+    const r = await lintTracked(root, { migrations: `${DEEP}/db` });
     expectShownWell(r.migrations);
     expectShownWell(r.files_applied[0]);
   });

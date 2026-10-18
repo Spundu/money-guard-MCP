@@ -5,9 +5,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ToolError, type ErrorCode } from '../src/errors.js';
 import { collectSources, prepareSql } from '../src/lint/files.js';
-import { lintSchema } from '../src/lint/run.js';
 import { RAW_HIDDEN, inTags } from './support/hidden.js';
-import { codeOf, failure, lastDir, lint, newDir, projectRoot } from './support/lint.js';
+import { codeOf, failure, lastDir, lint, lintTracked, newDir, projectRoot } from './support/lint.js';
 import { rootOf, tempDir, trySymlink, writeTree } from './support/tmp.js';
 
 describe('money_lint_schema: names from a hostile project', () => {
@@ -62,7 +61,7 @@ describe('money_lint_schema: names from a hostile project', () => {
     });
     const errors: string[] = [];
     for (const params of [{ migrations: `${dir}/${H}` }, { migrations: `${dir}/none${H}` }, { migrations: `${dir}/${H}`, files: [`x${H}.sql`] }]) {
-      errors.push(await lintSchema(projectRoot(), params).then(() => 'no error', (e: unknown) => (e instanceof ToolError ? e.toText() : String(e))));
+      errors.push(await lintTracked(projectRoot(), params).then(() => 'no error', (e: unknown) => (e instanceof ToolError ? e.toText() : String(e))));
     }
     expect(errors.map((e) => e.replace(/:.*$/s, ''))).toEqual(['MIGRATION_FAILED', 'NO_SQL_FILES', 'FILE_NOT_IN_FOLDER']);
     for (const text of errors) expect(RAW_HIDDEN.test(text), text).toBe(false);
@@ -227,7 +226,7 @@ describe('money_lint_schema: which files run', () => {
     // Two folders of 150 characters (a folder name may hold at most 255) and a 109-character file name.
     const rel = `db/migrations/${'a'.repeat(150)}/${'a'.repeat(150)}/${'b'.repeat(100)}_0002.sql`;
     writeTree(path.join(projectRoot().real, dir), { [rel]: Buffer.from([0x73, 0xff]) });
-    const e = await lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` }).then(
+    const e = await lintTracked(projectRoot(), { migrations: `${dir}/db/migrations` }).then(
       () => undefined,
       (err: unknown) => err as ToolError,
     );
@@ -291,7 +290,7 @@ describe('money_lint_schema: which files run', () => {
   it('says so without pointing at files when no table is left after the one file migrations names', async () => {
     const dir = newDir();
     writeTree(path.join(projectRoot().real, dir), { 'schema.sql': 'create table t (price double precision);\ndrop table t;\n' });
-    const r = await lintSchema(projectRoot(), { migrations: `${dir}/schema.sql` });
+    const r = await lintTracked(projectRoot(), { migrations: `${dir}/schema.sql` });
     expect(r.summary).toBe('No tables exist after the migration file, so nothing was checked. If it also holds its down step, that step dropped what the file created: lint a copy without the down step.');
   });
 
@@ -308,11 +307,11 @@ describe('money_lint_schema: which files run', () => {
     );
     // Named as the migrations, or as the only entry of files, it is not run twice, nor as nothing (review round 6).
     const dir = lastDir();
-    await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations/setup.sql`, setup: `${dir}/db/migrations/setup.sql` })).rejects.toMatchObject({
+    await expect(lintTracked(projectRoot(), { migrations: `${dir}/db/migrations/setup.sql`, setup: `${dir}/db/migrations/setup.sql` })).rejects.toMatchObject({
       code: 'NO_SQL_FILES',
       message: `"${dir}/db/migrations/setup.sql" holds no migrations to run: it is the setup file, which runs once, as setup.`,
     });
-    await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations`, files: ['setup.sql'], setup: `${dir}/db/migrations/setup.sql` })).rejects.toMatchObject({
+    await expect(lintTracked(projectRoot(), { migrations: `${dir}/db/migrations`, files: ['setup.sql'], setup: `${dir}/db/migrations/setup.sql` })).rejects.toMatchObject({
       code: 'NO_SQL_FILES',
       message: `"${dir}/db/migrations" holds no migrations to run: files names only the setup file, which runs once, as setup.`,
     });
@@ -336,7 +335,7 @@ describe('money_lint_schema: which files run', () => {
     expect(await codeOf(files, { files: ['../other.sql'] })).toBe('FILE_NOT_IN_FOLDER');
     const dir = newDir();
     writeTree(path.join(projectRoot().real, dir), files);
-    await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations/a.sql`, files: ['a.sql'] })).rejects.toMatchObject({ code: 'FILE_NOT_IN_FOLDER' });
+    await expect(lintTracked(projectRoot(), { migrations: `${dir}/db/migrations/a.sql`, files: ['a.sql'] })).rejects.toMatchObject({ code: 'FILE_NOT_IN_FOLDER' });
   });
 
   it('lints one schema file, such as a pg_dump 18 file with \\restrict lines and an empty search_path', async () => {
@@ -353,7 +352,7 @@ describe('money_lint_schema: which files run', () => {
     ].join('\n');
     const dir = newDir();
     writeTree(path.join(projectRoot().real, dir), { 'schema.sql': dump });
-    const r = await lintSchema(projectRoot(), { migrations: `${dir}/schema.sql` });
+    const r = await lintTracked(projectRoot(), { migrations: `${dir}/schema.sql` });
     expect(r.findings.map((f) => `${f.table}.${f.column}`)).toEqual(['public.invoices.amount']);
   });
 
@@ -373,7 +372,7 @@ describe('money_lint_schema: which files run', () => {
     for (const [inside, holds] of [['db/migrations/empty', 'It holds folders but no files.'], ['db/migrations', 'It is empty.']] as const) {
       const dir = newDir();
       mkdirSync(path.join(projectRoot().real, dir, inside), { recursive: true });
-      await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'NO_SQL_FILES', message: `"${dir}/db/migrations" holds no .sql files. ${holds}`, fix: expect.stringMatching(/^Check that migrations points at the folder of migrations\. /) }); // the wrong folder first (round 11)
+      await expect(lintTracked(projectRoot(), { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'NO_SQL_FILES', message: `"${dir}/db/migrations" holds no .sql files. ${holds}`, fix: expect.stringMatching(/^Check that migrations points at the folder of migrations\. /) }); // the wrong folder first (round 11)
     }
   });
 
@@ -381,8 +380,8 @@ describe('money_lint_schema: which files run', () => {
     const big = `-- ${'x'.repeat(5 * 1024 * 1024)}`;
     const dir = newDir();
     writeTree(path.join(projectRoot().real, dir), { 'schema.sql': big, 'setup.sql': big, 'db/0001.sql': 'select 1;' });
-    await expect(lintSchema(projectRoot(), { migrations: `${dir}/schema.sql` })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE', fix: 'Split the file into a folder of smaller files, and lint the folder.' });
-    await expect(lintSchema(projectRoot(), { migrations: `${dir}/db`, setup: `${dir}/setup.sql` })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE', fix: 'Keep only what the migrations need in the setup file.' });
+    await expect(lintTracked(projectRoot(), { migrations: `${dir}/schema.sql` })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE', fix: 'Split the file into a folder of smaller files, and lint the folder.' });
+    await expect(lintTracked(projectRoot(), { migrations: `${dir}/db`, setup: `${dir}/setup.sql` })).rejects.toMatchObject({ code: 'FILE_TOO_LARGE', fix: 'Keep only what the migrations need in the setup file.' });
   });
 
   it('refuses more than 2,000 files, a file over 5 MiB, and more than 20 MiB in all', async () => {

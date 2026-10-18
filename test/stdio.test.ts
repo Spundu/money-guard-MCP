@@ -96,7 +96,7 @@ describe('the stdio process', () => {
     } finally {
       await client.close();
     }
-  }, 60_000);
+  });
 
   it('logs a message too large for stdio (the SDK stops reading past 10 MiB) instead of ending in silence', async () => {
     const child = spawn(process.execPath, [ENTRY], { env: { ...getDefaultEnvironment(), MONEY_GUARD_ROOT: SHOP }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -234,7 +234,7 @@ describe('the stdio process', () => {
     } finally {
       server.child.kill();
     }
-  }, 60_000);
+  });
 
   it('answers a ledger call and logs it ok when the cancel comes only while it runs: it cannot be stopped part-way', async () => {
     // SPEC.md §2.6. A million rows take seconds to check; the cancel is read only once the check has ended.
@@ -254,7 +254,7 @@ describe('the stdio process', () => {
     } finally {
       server.child.kill();
     }
-  }, 60_000);
+  });
 
   it('answers a ledger call and logs it ok when stdin closes while it runs, then exits', async () => {
     // Review round 16: SPEC.md §2.1 promised it, and no test ran it.
@@ -275,7 +275,7 @@ describe('the stdio process', () => {
     } finally {
       server.child.kill();
     }
-  }, 60_000);
+  });
 
   it('keeps serving after an error that no handler caught and a rejection that no one handled, and logs only their types', async () => {
     const signal = path.join(tempDir(), 'throw');

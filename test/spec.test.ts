@@ -9,9 +9,9 @@ import { parseAuditKeys } from '../src/config.js';
 import { checkLedgerFile } from '../src/ledger/run.js';
 import { FIXES, NULL_FIX_NOTE } from '../src/lint/catalog.js';
 import { RULE_WORDS, SUB_LISTS, WORD_LISTS, moneyByGuess } from '../src/lint/names.js';
-import { lintSchema } from '../src/lint/run.js';
 import { AUDIT_DESCRIPTION, INSTRUCTIONS, LEDGER_DESCRIPTION, LINT_DESCRIPTION } from '../src/text.js';
 import type { ToolError } from '../src/errors.js';
+import { lintTracked } from './support/lint.js';
 import { rootOf, tempDir, writeTree } from './support/tmp.js';
 
 const SPEC = readFileSync(path.resolve(import.meta.dirname, '..', 'SPEC.md'), 'utf8');
@@ -61,7 +61,7 @@ describe('SPEC.md §3.8', () => {
     const example = /\*\*Example\*\*[^`]*`(MIGRATION_FAILED:[^`]*)`/.exec(SPEC.slice(SPEC.indexOf('### 3.8')))?.[1] ?? 'no example';
     const dir = tempDir();
     writeTree(dir, { 'db/migrations/0004_rls.sql': 'create table orders (id bigint);\n\ngrant select on public.orders to authenticated;\n' });
-    const err = await lintSchema(rootOf(dir), { migrations: 'db/migrations' }).then(
+    const err = await lintTracked(rootOf(dir), { migrations: 'db/migrations' }).then(
       () => undefined,
       (e: unknown) => e as ToolError,
     );
@@ -92,7 +92,7 @@ describe('SPEC.md and the code agree', () => {
     if (!keys.ok) throw new Error(keys.error.toText());
     const audit = (file: string) => verifyAuditLog({ file, bytes: readFileSync(path.join(SHOP, file)), keys: keys.value });
     const pairs: Array<[unknown, unknown]> = [
-      [await lintSchema(root, { migrations: 'db/migrations' }), jsonBlocksAfter('### 3.10 Example')[0]],
+      [await lintTracked(root, { migrations: 'db/migrations' }), jsonBlocksAfter('### 3.10 Example')[0]],
       [checkLedgerFile(root, { file: 'exports/journal.csv', columns: { transaction_id: 'txn_id', amount: 'amount_pence', currency: 'currency' } }), jsonBlocksAfter('### 4.9 Example')[0]],
       [audit('logs/audit.jsonl'), jsonBlocksAfter('### 5.8 Example')[0]],
       [audit('logs/audit-tampered.jsonl'), jsonBlocksAfter('### 5.8 Example')[1]],

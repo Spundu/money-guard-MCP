@@ -39,13 +39,22 @@ export function lastDir(): string {
   return `p${n}`;
 }
 
+/**
+ * lintSchema, cancelled when the test ends as every lint of a test must be: a lint called directly outside
+ * this kept running past a test that ran out of time, and every later test of the file got BUSY (CI on a
+ * 2-CPU runner, 2026-10-18: one slow test failed 20 more).
+ */
+export function lintTracked(at: Root, params: LintParams, signal?: AbortSignal): ReturnType<typeof lintSchema> {
+  const result = lintSchema(at, params, signal === undefined ? ending.signal : AbortSignal.any([ending.signal, signal]));
+  last = result;
+  return result;
+}
+
 /** Write `files` under a fresh folder of the project and lint it. */
 export async function lint(files: Record<string, string>, params: Partial<LintParams> = {}) {
   const dir = newDir();
   writeTree(path.join(root.real, dir), files);
-  const result = lintSchema(root, { migrations: `${dir}/db/migrations`, ...params, ...(params.setup ? { setup: `${dir}/${params.setup}` } : {}) }, ending.signal);
-  last = result;
-  return result;
+  return lintTracked(root, { migrations: `${dir}/db/migrations`, ...params, ...(params.setup ? { setup: `${dir}/${params.setup}` } : {}) });
 }
 
 export async function failure(files: Record<string, string>, params: Partial<LintParams> = {}): Promise<ToolError> {

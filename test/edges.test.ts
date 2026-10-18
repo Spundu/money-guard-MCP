@@ -28,7 +28,7 @@ describe('limits at their edge', () => {
     const columns = { transaction_id: 't', amount: 'a' };
     expect(errorText(() => check('.json', records(1_000_001), { columns }))).toMatch(/^TOO_MANY_ROWS: The file has more than 1,000,000 rows\./);
     expect(check('.json', records(1_000_000), { columns }).rows_read).toBe(1_000_000);
-  }, 60_000);
+  });
 
   it('shows a records_pointer key of exactly 40 characters whole, and one of 41 cut', () => {
     // Review round 22: up to 200, a key could be a whole secret; past 40 no name is shown whole.

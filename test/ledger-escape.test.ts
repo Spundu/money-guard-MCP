@@ -36,5 +36,5 @@ describe('records_pointer in findings', () => {
     const started = performance.now();
     try { check('.json', content, { columns: { transaction_id: '/t', amount: deep } }); } catch { /* no record has the field */ }
     expect((performance.now() - started) / plain).toBeLessThan(3);
-  }, 60_000);
+  });
 });

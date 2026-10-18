@@ -13,7 +13,7 @@ describe('money_lint_schema: the texts it reads of each column', () => {
     const cols = Array.from({ length: 1000 }, (_, i) => `c${i} text`).join(', ');
     const terms = Array.from({ length: 1000 }, (_, i) => `c${i} is not null`).join(' and ');
     const schema = `create table w (${cols}, price double precision);\ncreate unique index w_u on w (c0) where ${terms} and w is not null;`;
-    const r = await lint({ 'db/migrations/0001.sql': schema }, { timeout_seconds: 30 });
+    const r = await lint({ 'db/migrations/0001.sql': schema }, { timeout_seconds: 120 }); // 30 s ran out on a 2-CPU CI runner
     expect([r.findings.length, r.findings[0]?.fix_sql]).toEqual([1, null]); // past 2,000 characters: may hold an amount
     // Each column gets the index's text once, cut to the stand-in: 1,001 columns, not 24 MB of copies.
     const rows = (await sql([schema], DETAIL_SQL)) as Array<{ index_exprs: string[] | null }>;
@@ -23,7 +23,7 @@ describe('money_lint_schema: the texts it reads of each column', () => {
     const chain = [`create table c0 (price double precision default (0 + ${'0 + '.repeat(600)}0));`, ...Array.from({ length: 40 }, (_, i) => `create table c${i + 1} () inherits (c${i});`)];
     const inherited = (await sql(chain, DETAIL_SQL)) as Array<{ defaults: string[] | null }>;
     expect(inherited.map((row) => row.defaults)).toEqual([['x'.repeat(2001)]]);
-  }, 60_000);
+  });
 
   it('reads at most 50 expressions of a column, in the database thread, past which it may hold an amount', async () => {
     // Review round 17: the SQL's cut() relies on functions a migration can replace, and distinct texts
@@ -43,7 +43,7 @@ describe('money_lint_schema: the texts it reads of each column', () => {
     const chain = (t: string, n: number) => [`create table ${t}0 (amount double precision default 0);`, ...Array.from({ length: n }, (_, i) => `create table ${t}${i + 1} () inherits (${t}0);\nalter table ${t}${i + 1} alter amount set default 0.${'0'.repeat(i + 1)};`)].join('\n');
     const d = await lint({ 'db/migrations/0001.sql': `${chain('few', 40)}\n${chain('many', 60)}` });
     expect(d.findings.filter((f) => f.table.endsWith('0')).map((f) => [f.table, f.fix_sql === null])).toEqual([['public.few0', false], ['public.many0', true]]);
-  }, 60_000);
+  });
 });
 
 describe('money_lint_schema: defaults written short', () => {

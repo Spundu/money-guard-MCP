@@ -13,7 +13,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 45 # a 2-CPU Windows runner took 15 min with failures cutting it short (2026-10-18)
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +51,7 @@ jobs:
     # 22.13, so this job typechecks and tests without linting.
     name: Test on the lowest supported Node.js (22.12.0)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v7

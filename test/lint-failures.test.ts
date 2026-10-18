@@ -4,8 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { describe, expect, it } from 'vitest';
-import { lintSchema } from '../src/lint/run.js';
-import { SPEC_FILES, codeOf, failure, lastDir, lint, newDir, projectRoot } from './support/lint.js';
+import { SPEC_FILES, codeOf, failure, lastDir, lint, lintTracked, newDir, projectRoot } from './support/lint.js';
 import { tempDir, writeTree } from './support/tmp.js';
 
 describe('money_lint_schema: failures', () => {
@@ -136,8 +135,8 @@ describe('money_lint_schema: failures', () => {
   it('refuses a migration that is not UTF-8, and a setup file that is not as SETUP_FAILED', async () => {
     const dir = newDir();
     writeTree(path.join(projectRoot().real, dir), { 'db/migrations/0001.sql': Buffer.from([0x73, 0x65, 0x6c, 0xff]), 'ok/0001.sql': 'select 1;', 'setup.sql': Buffer.from([0xff]) });
-    await expect(lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'MIGRATION_FAILED' });
-    await expect(lintSchema(projectRoot(), { migrations: `${dir}/ok`, setup: `${dir}/setup.sql` })).rejects.toMatchObject({ code: 'SETUP_FAILED' });
+    await expect(lintTracked(projectRoot(), { migrations: `${dir}/db/migrations` })).rejects.toMatchObject({ code: 'MIGRATION_FAILED' });
+    await expect(lintTracked(projectRoot(), { migrations: `${dir}/ok`, setup: `${dir}/setup.sql` })).rejects.toMatchObject({ code: 'SETUP_FAILED' });
   });
 
   it('names only the causes there can be of an object created twice: no setup file or order when there is none', async () => {
@@ -146,7 +145,7 @@ describe('money_lint_schema: failures', () => {
     const twice = 'create table a (id int);\ncreate table a (id int);\n';
     writeTree(path.join(projectRoot().real, dir), { 'dump.sql': twice, 'db/0001.sql': 'create table b (id int);', 'db/0002.sql': 'create table b (id int);', 'setup.sql': 'create table b (id int);', 'one/0001.sql': 'select 1;', 'twice/0001.sql': twice, 'pub/0001.sql': 'create schema public;', 'lang/0001.sql': 'create language plpgsql;' });
     const fixOf = async (params: { migrations: string; setup?: string; preset?: 'supabase' }) =>
-      lintSchema(projectRoot(), params).then(
+      lintTracked(projectRoot(), params).then(
         () => '',
         (e: { fix: string }) => e.fix,
       );
@@ -361,12 +360,12 @@ describe('money_lint_schema: safety', () => {
     writeTree(path.join(projectRoot().real, dir), { 'db/migrations/0001.sql': statement, 'ok/0001.sql': 'create table t (price double precision);' });
     const controller = new AbortController();
     const started = Date.now();
-    const run = lintSchema(projectRoot(), { migrations: `${dir}/db/migrations` }, controller.signal);
+    const run = lintTracked(projectRoot(), { migrations: `${dir}/db/migrations` }, controller.signal);
     setTimeout(() => controller.abort(new Error('cancelled by the client')), 2500);
     await expect(run).rejects.toThrow('cancelled by the client');
     expect(Date.now() - started).toBeLessThan(5000);
     // The next lint's database starts only once the cancelled one's thread has ended (SPEC.md §3.4).
-    expect((await lintSchema(projectRoot(), { migrations: `${dir}/ok` })).error_count).toBe(1);
+    expect((await lintTracked(projectRoot(), { migrations: `${dir}/ok` })).error_count).toBe(1);
   });
 
   it('runs one lint at a time and says BUSY to a second', async () => {

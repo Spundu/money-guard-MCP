@@ -160,9 +160,16 @@ describe('money_lint_schema: fix_sql', () => {
   it('reads a long CHECK in time that grows with its length, not its square', async () => {
     // Review round 10: 120,000 characters with no "::" took 35 s on the server's main thread, where
     // neither the time limit nor a cancellation can stop it, and nothing else was answered meanwhile.
-    const started = performance.now();
-    const r = await lint({ 'db/migrations/0001.sql': `create table orders (id int, amount double precision check (amount > 0 or '${'a'.repeat(120_000)}' = 'x'));` });
-    expect(performance.now() - started).toBeLessThan(15_000);
+    // Timed against the same lint with a short CHECK: on a busy CI runner starting the database alone took 8 s
+    // (2026-10-18), so only what the length adds is measured.
+    const timed = async (length: number) => {
+      const started = performance.now();
+      const result = await lint({ 'db/migrations/0001.sql': `create table orders (id int, amount double precision check (amount > 0 or '${'a'.repeat(length)}' = 'x'));` });
+      return { result, ms: performance.now() - started };
+    };
+    const short = await timed(10);
+    const { result: r, ms } = await timed(120_000);
+    expect(ms - short.ms).toBeLessThan(15_000);
     expect(r.findings.map((f) => [f.column, f.fix_sql])).toEqual([['amount', null]]);
   });
 
