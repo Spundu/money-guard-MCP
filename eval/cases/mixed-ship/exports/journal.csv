@@ -1,0 +1,7 @@
+txn_id,account,amount_pence
+J100,cash,2500
+J100,sales,-2500
+J101,cash,1999
+J101,sales,-1900
+J102,bank,-4200
+J102,fees,4200

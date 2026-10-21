@@ -27,3 +27,10 @@ npm-debug.log*
 *.tgz
 pack.json
 *.mcpb
+
+# eval: the Python environment, caches, and every log except the published run
+eval/.venv/
+__pycache__/
+.pytest_cache/
+eval/logs/*
+!eval/logs/run1/

@@ -1,0 +1,5 @@
+Txn Ref,Acct,Ccy Amt,Ccy
+T6,cash,5000,GBP
+T6,sales,-5000,GBP
+T7,cash,1234,GBP
+T7,sales,-1243,GBP

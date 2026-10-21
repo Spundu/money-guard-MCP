@@ -283,8 +283,8 @@ already read the files).
   `fix_sql` (§3.6).
 - **Deterministic.** The same files and the same arguments give byte-identical results on the same
   Node.js version (which characters have no character, Cn, follows that version's Unicode). Findings are
-  sorted; there are no timestamps, durations or random ids. The tests rely on this, and so will the
-  planned agent evaluation, which will cache results.
+  sorted; there are no timestamps, durations or random ids. The tests rely on this, and so does the
+  agent evaluation's oracle (`eval/check_cases.mjs`).
 - An optional parameter sent as `null` means "not given". Models sometimes send `null`, which zod's
   `.optional()` alone would refuse. A test proves it (§7).
 
@@ -377,8 +377,8 @@ Shared error codes:
 Dev only: `@modelcontextprotocol/client` (the tests and the README demo), typescript, vitest with
 vite, eslint with `@eslint/js` and typescript-eslint, and `@types/node`.
 Fetched by npm when needed, pinned: the mcpb CLI (`@anthropic-ai/mcpb` 2.1.2, by `npm run bundle`) and
-the MCP Inspector (2.11.0, by `scripts/inspector-smoke.sh`). The planned agent evaluation (not built
-yet) will use `@anthropic-ai/sdk`.
+the MCP Inspector (2.11.0, by `scripts/inspector-smoke.sh`). The agent evaluation (`eval/`, outside
+the package) is Python: Inspect, the Anthropic SDK and pytest, pinned in `eval/requirements.txt`.
 
 ### 2.9 Stability promise
 Tool names, parameter names, output field names, finding codes and error codes are public API. A

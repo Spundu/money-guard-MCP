@@ -1,0 +1,4 @@
+{"transfer":"W1","account":"wallet:alice","pence":-500}
+{"transfer":"W1","account":"wallet:bob","pence":500}
+{"transfer":"W2","account":"wallet:bob","pence":-250}
+{"transfer":"W2","account":"wallet:carol","pence":205}

@@ -1,0 +1,273 @@
+[
+  {
+    "id": "schema-float",
+    "tags": [
+      "schema",
+      "positive"
+    ],
+    "prompt": "Check this project for money problems and tell me exactly what to fix.",
+    "expected": [
+      "invoices.total"
+    ],
+    "decoys": [
+      "invoices.vat_rate"
+    ],
+    "files": [
+      "db/migrations/001_init.sql"
+    ]
+  },
+  {
+    "id": "schema-money-type",
+    "tags": [
+      "schema",
+      "positive"
+    ],
+    "prompt": "Are my database migrations storing prices safely?",
+    "expected": [
+      "products.price"
+    ],
+    "decoys": [
+      "products.weight_kg"
+    ],
+    "files": [
+      "migrations/0001_products.sql"
+    ]
+  },
+  {
+    "id": "schema-alter-later",
+    "tags": [
+      "schema",
+      "positive"
+    ],
+    "prompt": "Check this project for money problems and tell me exactly what to fix.",
+    "expected": [
+      "payments.amount_pence"
+    ],
+    "decoys": [],
+    "files": [
+      "db/migrations/001_payments.sql",
+      "db/migrations/002_widen.sql"
+    ]
+  },
+  {
+    "id": "schema-clean",
+    "tags": [
+      "schema",
+      "negative"
+    ],
+    "prompt": "Check this project for money problems and tell me exactly what to fix.",
+    "expected": [],
+    "decoys": [
+      "orders.tax_rate"
+    ],
+    "files": [
+      "db/migrations/001_init.sql",
+      "db/migrations/002_refunds.sql"
+    ]
+  },
+  {
+    "id": "schema-numeric",
+    "tags": [
+      "schema",
+      "positive"
+    ],
+    "prompt": "Review my migrations: do any money columns need changing?",
+    "expected": [
+      "refunds.refund_amount",
+      "fees.fee"
+    ],
+    "decoys": [
+      "fees.exchange_rate"
+    ],
+    "files": [
+      "sql/001_refunds.sql",
+      "sql/002_fees.sql"
+    ]
+  },
+  {
+    "id": "schema-dbmate",
+    "tags": [
+      "schema",
+      "positive"
+    ],
+    "prompt": "Check this project for money problems and tell me exactly what to fix.",
+    "expected": [
+      "subscriptions.monthly_price"
+    ],
+    "decoys": [],
+    "files": [
+      "db/migrations/20260101120000_subscriptions.sql"
+    ]
+  },
+  {
+    "id": "ledger-unbalanced",
+    "tags": [
+      "ledger",
+      "positive"
+    ],
+    "prompt": "Does the ledger export in exports/ balance?",
+    "expected": [
+      "txn:J101"
+    ],
+    "decoys": [
+      "txn:J100",
+      "txn:J102"
+    ],
+    "files": [
+      "exports/journal.csv"
+    ]
+  },
+  {
+    "id": "ledger-clean",
+    "tags": [
+      "ledger",
+      "negative"
+    ],
+    "prompt": "Does the ledger export in exports/ balance?",
+    "expected": [],
+    "decoys": [
+      "txn:J200",
+      "txn:J201"
+    ],
+    "files": [
+      "exports/journal.csv"
+    ]
+  },
+  {
+    "id": "ledger-json-fraction",
+    "tags": [
+      "ledger",
+      "positive"
+    ],
+    "prompt": "Check data/ledger.json for money problems.",
+    "expected": [
+      "txn:P2"
+    ],
+    "decoys": [
+      "txn:P1"
+    ],
+    "files": [
+      "data/ledger.json"
+    ]
+  },
+  {
+    "id": "ledger-odd-headers",
+    "tags": [
+      "ledger",
+      "positive"
+    ],
+    "prompt": "Is the bank export in exports/ balanced?",
+    "expected": [
+      "txn:T7"
+    ],
+    "decoys": [
+      "txn:T6"
+    ],
+    "files": [
+      "exports/bank-2026-09.csv"
+    ]
+  },
+  {
+    "id": "ledger-currency",
+    "tags": [
+      "ledger",
+      "positive"
+    ],
+    "prompt": "Check this project for money problems and tell me exactly what to fix.",
+    "expected": [
+      "txn:X1"
+    ],
+    "decoys": [
+      "txn:X2"
+    ],
+    "files": [
+      "exports/fx.jsonl"
+    ]
+  },
+  {
+    "id": "audit-tampered",
+    "tags": [
+      "audit",
+      "positive"
+    ],
+    "prompt": "Has anyone edited our audit log in logs/?",
+    "expected": [
+      "audit.jsonl#2"
+    ],
+    "decoys": [],
+    "files": [
+      "logs/audit.jsonl"
+    ]
+  },
+  {
+    "id": "audit-intact",
+    "tags": [
+      "audit",
+      "negative"
+    ],
+    "prompt": "Has anyone edited our audit log in logs/?",
+    "expected": [],
+    "decoys": [],
+    "files": [
+      "logs/audit.jsonl"
+    ]
+  },
+  {
+    "id": "mixed-ship",
+    "tags": [
+      "mixed",
+      "positive"
+    ],
+    "prompt": "I'm about to ship this project. Check its database migrations and the ledger export in exports/ for money problems, and tell me exactly what to fix.",
+    "expected": [
+      "invoices.total",
+      "refunds.refund_amount",
+      "txn:J101"
+    ],
+    "decoys": [
+      "invoices.vat_rate"
+    ],
+    "files": [
+      "db/migrations/001_init.sql",
+      "db/migrations/002_refunds.sql",
+      "exports/journal.csv"
+    ]
+  },
+  {
+    "id": "mixed-clean",
+    "tags": [
+      "mixed",
+      "negative"
+    ],
+    "prompt": "Before I launch: is there anything wrong with how this app handles money?",
+    "expected": [],
+    "decoys": [
+      "orders.discount_rate",
+      "txn:L1"
+    ],
+    "files": [
+      "db/migrations/001_init.sql",
+      "exports/ledger.csv",
+      "logs/audit.jsonl"
+    ]
+  },
+  {
+    "id": "mixed-vague",
+    "tags": [
+      "mixed",
+      "positive"
+    ],
+    "prompt": "Before I launch: is there anything wrong with how this app handles money?",
+    "expected": [
+      "wallets.balance",
+      "txn:W2"
+    ],
+    "decoys": [
+      "txn:W1"
+    ],
+    "files": [
+      "db/migrations/001_wallets.sql",
+      "exports/transfers.jsonl"
+    ]
+  }
+]

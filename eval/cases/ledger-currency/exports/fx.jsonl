@@ -1,0 +1,4 @@
+{"id":"X1","account":"cash_gbp","amount_minor":1000,"currency":"GBP"}
+{"id":"X1","account":"cash_eur","amount_minor":-1000,"currency":"EUR"}
+{"id":"X2","account":"cash","amount_minor":300,"currency":"GBP"}
+{"id":"X2","account":"sales","amount_minor":-300,"currency":"GBP"}

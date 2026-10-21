@@ -1,0 +1,6 @@
+# The eval's Python packages, pinned to the versions it was run with (2026-10-21).
+# Inspect 0.3.282 does not work with anthropic 2.0.0 yet, so the SDK stays on 1.17.0.
+inspect-ai==0.3.282
+anthropic==1.17.0
+mcp==2.3.0
+pytest==9.1.1

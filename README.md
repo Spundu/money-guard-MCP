@@ -438,6 +438,23 @@ file and 20 MiB in all, 2,000 migration files ([SPEC.md](SPEC.md) has them all).
   project and started over stdio; the Claude Desktop bundle built, unpacked into an empty folder,
   started from its manifest and called, with the audit keys set and with them left blank.
 
+## Does Claude use it well?
+
+An [agent evaluation](eval/README.md), built with the UK AI Security Institute's
+[Inspect](https://inspect.aisi.org.uk), gives a model only money-guard's tools and a developer's
+request on 16 small projects with planted money problems, clean projects and decoys. A case passes
+when the report names every planted problem and nothing else. Each case ran twice per model
+(21 October 2026):
+
+| Model | Pass | False alarms | Cost per run |
+|---|---|---|---|
+| Claude Opus 5.5 | 32 / 32 | 0 | $0.037 |
+| Claude Sonnet 5.5 | 32 / 32 | 0 | $0.018 |
+| Claude Haiku 5.5 | 29 / 32 | 0 | $0.001 |
+
+Haiku's misses were about finding the files, not reading the results. [eval/README.md](eval/README.md)
+has the cases, the transcripts, the limits and how to run it.
+
 ## Development
 
 Development needs Node.js 22.13 or newer (ESLint 10 does); the server itself runs on 22.12.
