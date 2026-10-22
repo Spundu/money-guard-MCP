@@ -110,8 +110,7 @@ internet and never touches a real database.
   can re-seal a forged log so that it verifies. Where the agent must not be able to do that, verify
   logs in a client where no tool can run commands or read the user's files (Claude Desktop with no
   extension that can).
-- Claude Code project config, once the package is on npm (until then `"command": "node"` with the
-  path to `dist/index.js`). `${VAR:-}` expansion keeps the key out of the file and out of the repo:
+- Claude Code project config (from a clone: `"command": "node"` with the path to `dist/index.js`). `${VAR:-}` expansion keeps the key out of the file and out of the repo:
   ```json
   { "mcpServers": { "money-guard": { "type": "stdio", "command": "npx", "args": ["-y", "money-guard-mcp"],
       "env": { "MONEY_GUARD_AUDIT_KEYS": "${MONEY_GUARD_AUDIT_KEYS:-}" } } } }
@@ -371,7 +370,7 @@ Shared error codes:
 | `zod` ^4.6 | Schemas (SDK v2 needs ^4.2) | MIT |
 | `@electric-sql/pglite` **0.5.9 exactly** | PostgreSQL 18.6 in WebAssembly for tool 1 (its version appears in results) | Apache-2.0 |
 | `@electric-sql/pglite-pgvector` **0.0.10 exactly** | `CREATE EXTENSION vector` (common in AI apps) | Apache-2.0 |
-| `sealed-audit-chain` | Tool 3. Comes from npm once published; until then `github:Spundu/audit-chain#5fd1fec` | MIT (same author) |
+| `sealed-audit-chain` **0.1.0 exactly** | Tool 3 (the log format and its verifier) | MIT (same author) |
 | `csv-parse` ^7 | RFC 4180 CSV with line numbers | MIT |
 
 Dev only: `@modelcontextprotocol/client` (the tests and the README demo), typescript, vitest with

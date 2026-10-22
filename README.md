@@ -10,7 +10,7 @@ Each answer names the exact file, column or line, and, for a schema finding, how
 It only reads files. It never edits anything, never connects to a database and never uses the
 network.
 
-**Status:** 0.1.0. Not on npm yet: run it from a clone (below). It speaks MCP 2026-07-28, and the 2025
+**Status:** 0.1.0, [on npm](https://www.npmjs.com/package/money-guard-mcp). It speaks MCP 2026-07-28, and the 2025
 protocol versions for older clients. [SPEC.md](SPEC.md) fixes every parameter, result field, code and
 limit. CI runs the tests on Linux and Windows on every push ([How it is tested](#how-it-is-tested)).
 macOS is untested.
@@ -33,29 +33,21 @@ cautious patterns that withhold the fix when in doubt.
 
 ## Quick start with Claude Code
 
-You need Node.js 22.12 or newer, and git. (On 22.12, `npm ci` warns that ESLint wants 22.13; the
-warning is harmless, as ESLint is only used in development. Until sealed-audit-chain is on npm, it
-comes from GitHub at a pinned commit, so `npm ci` also warns that it skips an integrity check for
-that git dependency. The warning and the lockfile name an `ssh://` address, but npm downloads it over
-HTTPS: no GitHub account or SSH key is needed.) On Node.js 24 a rare V8 bug can end the server while a
-lint runs (see "How it works"); Node.js 22 or 26 avoids it.
+You need Node.js 22.12 or newer. On Node.js 24 a rare V8 bug can end the server while a lint runs
+(see "How it works"); Node.js 22 or 26 avoids it.
+
+In your own project's folder, add the server to Claude Code:
 
 ```sh
-git clone https://github.com/Spundu/money-guard-mcp.git
-cd money-guard-mcp
-npm ci    # installs the dependencies, then builds dist/
+claude mcp add --transport stdio money-guard -- npx -y money-guard-mcp
 ```
 
-Then, in your own project's folder, add the server to Claude Code:
-
-```sh
-claude mcp add --transport stdio money-guard -- node /path/to/money-guard-mcp/dist/index.js
-```
+On native Windows, `npx` needs a shell to start it:
+`claude mcp add --transport stdio money-guard -- cmd /c npx -y money-guard-mcp`.
 
 This adds it to the current project only; add `--scope user` to have it in every project (the server
-follows the project Claude Code has open). On Windows, write the path with forward slashes:
-`C:/Users/you/money-guard-mcp/dist/index.js`. Type
-`/mcp` in Claude Code to see that the server is connected. (To verify audit logs, use the project
+follows the project Claude Code has open). Type `/mcp` in Claude Code to see that the server is
+connected. (To verify audit logs, use the project
 file under [Settings](#settings) instead of this command: it passes the key. Claude Desktop and other
 MCP clients are set up under [Settings](#settings) too.)
 
@@ -69,6 +61,19 @@ take is relative to that folder. Then ask, for example:
 
 The server tells Claude when to use each tool. It also says to fix a schema finding with a new
 migration, and never to repair an audit log that fails.
+
+To run it from a clone instead, to read or change the code (you also need git):
+
+```sh
+git clone https://github.com/Spundu/money-guard-mcp.git
+cd money-guard-mcp
+npm ci    # installs the dependencies, then builds dist/
+```
+
+Then use `node /path/to/money-guard-mcp/dist/index.js` wherever this README says
+`npx -y money-guard-mcp`. On Windows, write the path with forward slashes:
+`C:/Users/you/money-guard-mcp/dist/index.js`. (On Node.js 22.12, `npm ci` warns that ESLint wants
+22.13; the warning is harmless, as ESLint is only used in development.)
 
 ## Try it without an agent
 
@@ -232,22 +237,25 @@ made up for money-guard cannot verify anything: the check answers `UNKNOWN_KEY_I
 To verify audit logs in Claude Code, keep the key in your environment and pass it through a file
 named `.mcp.json` in your project's root folder, instead of the `claude mcp add` command above. If you
 ran that command, remove its entry first (`claude mcp remove money-guard`): an entry added with the
-command takes precedence over the file's. The file holds no secret, only a reference to the variable;
-its path to `dist/index.js` is the one on your machine (with forward slashes on Windows too), so if
-the project is shared, add `.mcp.json` to `.gitignore` or let each person keep their own:
+command takes precedence over the file's. The file holds no secret, only a reference to the variable,
+so it can be shared with the project:
 
 ```json
 {
   "mcpServers": {
     "money-guard": {
       "type": "stdio",
-      "command": "node",
-      "args": ["/path/to/money-guard-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "money-guard-mcp"],
       "env": { "MONEY_GUARD_AUDIT_KEYS": "${MONEY_GUARD_AUDIT_KEYS:-}" }
     }
   }
 }
 ```
+
+On native Windows, write `"command": "cmd"` and `"args": ["/c", "npx", "-y", "money-guard-mcp"]`.
+From a clone, write `"command": "node"` and `"args": ["/path/to/money-guard-mcp/dist/index.js"]`; that
+path is the one on your machine, so keep such a file out of a shared repo (add it to `.gitignore`).
 
 Set the variable where Claude Code starts, then start Claude Code again:
 
@@ -279,7 +287,7 @@ Open that file with Claude Desktop: double-click it, or use Settings → Extensi
 Desktop keeps them in the system keychain. The bundle passes the official `mcpb` validator, and its
 test starts it the way its manifest says, but it has not yet been tried in Claude Desktop itself.
 
-**Other MCP clients:** run `node /path/to/money-guard-mcp/dist/index.js` over stdio, with
+**Other MCP clients:** run `npx -y money-guard-mcp` over stdio, with
 `MONEY_GUARD_ROOT` set to the project folder.
 
 ## The tools in brief
